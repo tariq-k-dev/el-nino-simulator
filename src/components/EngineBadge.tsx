@@ -86,7 +86,38 @@ export function EngineBadge({ now = Date.now() }: { now?: number }) {
       status.firstEventAt,
       now,
     );
+
+    /**
+     * Zero progress events yet.
+     *
+     * This is a genuinely distinct phase, not just "unknown percentage": the
+     * 755 KB worker script is still downloading, and no `InstantiationProgress`
+     * event can exist until it has executed (measured in 2B: the first event
+     * lands 1.5–4.9 s after boot starts). Showing "Loading DuckDB" with a
+     * pulsing bar implies data is arriving when nothing is being reported at all,
+     * so this says what is actually happening.
+     *
+     * `firstEventAt === null` is the precise signal: the store stamps it on the
+     * first progress report, so null means zero events.
+     */
+    const awaitingFirstEvent = status.firstEventAt === null;
     const indeterminate = pct === null;
+
+    if (awaitingFirstEvent) {
+      return (
+        <div
+          className="pointer-events-auto flex min-h-[44px] items-center gap-2 rounded-full border border-white/[0.08] bg-black/40 px-2.5 backdrop-blur-md"
+          aria-live="polite"
+          aria-busy="true"
+        >
+          <Loader2 size={11} className="animate-spin text-sky-400" />
+          <span className="num text-[9.5px] tracking-tight text-slate-300">Starting DuckDB…</span>
+          <span className="relative block h-[3px] w-14 overflow-hidden rounded-full bg-white/10">
+            <span className="block h-full w-1/3 animate-pulse rounded-full bg-sky-400" />
+          </span>
+        </div>
+      );
+    }
 
     return (
       <div
