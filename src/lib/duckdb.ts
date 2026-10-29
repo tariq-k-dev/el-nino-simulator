@@ -273,6 +273,9 @@ SELECT
   drought_index_se_asia,
   risk_tier_pacific
 FROM enso_historical
+-- The date tie-break is mandatory for parity with TsEngine: many months carry
+-- the same rounded |delta|, so without a secondary key the two engines could
+-- return the same rows in a different order from identical data.
 ORDER BY delta ASC, date DESC
 LIMIT 6;
 `;
@@ -338,7 +341,11 @@ let clientPromise: Promise<DuckDbClient> | null = null;
  *    a worker (or a half-instantiated wasm module) that would contend with the
  *    next attempt.
  */
-async function bootFromHost(wasmBase: string, mode: BootMode): Promise<DuckDbClient> {
+async function bootFromHost(
+  wasmBase: string,
+  mode: BootMode,
+  datasetText: string | null,
+): Promise<DuckDbClient> {
   const bundle = await duckdb.selectBundle(bundlesFor(wasmBase));
   if (!bundle.mainWorker) {
     throw new HostBootError('error', 'DuckDB bundle has no worker — refusing to block the main thread.');
@@ -383,12 +390,21 @@ async function bootFromHost(wasmBase: string, mode: BootMode): Promise<DuckDbCli
       watchdog.rejected,
     ]);
 
-    await db.registerFileURL(
-      DATA_FILE,
-      new URL(DATA_URL, window.location.origin).toString(),
-      duckdb.DuckDBDataProtocol.HTTP,
-      false,
-    );
+    if (datasetText !== null) {
+      // Preferred path: the loader already fetched the CSV, and registering the
+      // text means DuckDB parses the exact same bytes without a second network
+      // request. One fetch, two engines.
+      await db.registerFileText(DATA_FILE, datasetText);
+    } else {
+      // Fallback for callers that have no text yet (e.g. a direct runScenario from
+      // a test). Costs one extra fetch but keeps the engine usable standalone.
+      await db.registerFileURL(
+        DATA_FILE,
+        new URL(DATA_URL, window.location.origin).toString(),
+        duckdb.DuckDBDataProtocol.HTTP,
+        false,
+      );
+    }
 
     const conn = await db.connect();
 
@@ -437,13 +453,13 @@ async function bootFromHost(wasmBase: string, mode: BootMode): Promise<DuckDbCli
 }
 
 /** All hosts exhausted. */
-async function boot(mode: BootMode = 'auto'): Promise<DuckDbClient> {
+async function boot(mode: BootMode = 'auto', datasetText: string | null = null): Promise<DuckDbClient> {
   const failures: Array<{ host: string; kind: BootFailureKind }> = [];
 
   for (const wasmBase of WASM_BASES) {
     const label = hostLabel(wasmBase);
     try {
-      const client = await bootFromHost(wasmBase, mode);
+      const client = await bootFromHost(wasmBase, mode, datasetText);
       activeWasmHost = label;
       if (failures.length > 0) {
         console.warn(
@@ -478,10 +494,10 @@ async function boot(mode: BootMode = 'auto'): Promise<DuckDbClient> {
  * Held separately from `clientPromise` so a failed attempt can be retried from
  * the `failed` state without the old rejection being replayed.
  */
-function getClient(mode: BootMode = 'auto'): Promise<DuckDbClient> {
+function getClient(mode: BootMode = 'auto', datasetText: string | null = null): Promise<DuckDbClient> {
   if (!clientPromise) {
     const startedAt = performance.now();
-    clientPromise = boot(mode)
+    clientPromise = boot(mode, datasetText)
       .then((client) => {
         // Transition to ready HERE, not inside bootFromHost: this is the one
         // place that knows both the host that actually succeeded and the total
@@ -562,10 +578,16 @@ export async function runScenario(
   state: { sstAnomaly: number; jetStreamShift: number; agricultureWeight: number },
   cache?: AnalyticsCache,
   mode: BootMode = 'auto',
+  /**
+   * CSV text already fetched by loadDataset(). When provided, DuckDB parses THIS
+   * string via registerFileText instead of fetching the file again — the same
+   * bytes feed both engines, and there is exactly one request for the dataset.
+   */
+  datasetText: string | null = null,
 ): Promise<AnalyticsPayload> {
   // Boot first, then start the clock: the first call also instantiates the WASM
   // module (~1.5 s), and counting that as query latency makes the HUD badge lie.
-  const { conn } = await getClient(mode);
+  const { conn } = await getClient(mode, datasetText);
   const started = performance.now();
   const { sstAnomaly: sst, jetStreamShift: jet, agricultureWeight: agri } = state;
 
