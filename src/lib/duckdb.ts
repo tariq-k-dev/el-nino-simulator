@@ -37,6 +37,12 @@ import type {
   TimelinePoint,
 } from '@/types/enso';
 import { computeMetrics } from '@/lib/model';
+import { engineStore } from '@/lib/engine/store';
+import { getDecodedBytes, type BundleKind } from '@/lib/engine/manifest';
+import { BootTimeoutError, createWatchdog } from '@/lib/engine/watchdog';
+
+/** 'auto' applies the projected cap and early abort; 'user' only connect + stall. */
+export type BootMode = 'auto' | 'user';
 
 /**
  * Derived CSV, emitted next to the parquet by scripts/generate_enso_data.py.
@@ -151,9 +157,6 @@ export function bundlesFor(wasmBase: string): duckdb.DuckDBBundles {
   };
 }
 
-/** Per-host boot budget. A blocked CDN usually fails fast; this covers the hang. */
-const BOOT_TIMEOUT_MS = 15_000;
-
 /** Which host actually served the wasm, for engineLabel. */
 let activeWasmHost: string | null = null;
 
@@ -161,24 +164,50 @@ export function getActiveWasmHost(): string | null {
   return activeWasmHost;
 }
 
-/** Reject if `promise` has not settled within `ms`, so a hanging fetch can't stall boot. */
-function withTimeout<T>(promise: Promise<T>, ms: number, label: string): Promise<T> {
-  return new Promise<T>((resolve, reject) => {
-    const timer = setTimeout(() => {
-      reject(new Error(`DuckDB boot timed out after ${ms} ms (${label})`));
-    }, ms);
+/**
+ * Boot budgets now live in src/lib/engine/watchdog.ts (CONNECT_MS, STALL_MS,
+ * AUTO_CAP_MS, EARLY_EVAL_START_MS, EARLY_ABORT_FACTOR). The old single fixed
+ * 15 s timeout is gone: it aborted a 1.6 Mbps boot that would have finished in
+ * 34 s, and it could not tell "host is dead" from "connection too slow", so it
+ * always advanced to the next CDN even when the network was the bottleneck.
+ */
 
-    promise.then(
-      (value) => {
-        clearTimeout(timer);
-        resolve(value);
-      },
-      (error) => {
-        clearTimeout(timer);
-        reject(error);
-      },
-    );
-  });
+/** How a single-host attempt failed, which determines whether to try the next host. */
+export type BootFailureKind =
+  /** Watchdog tripped: projected completion exceeds the auto cap. Do NOT try next host. */
+  | 'cap'
+  /** Watchdog tripped: no first event (host unreachable/blocked). Try next host. */
+  | 'connect'
+  /** Watchdog tripped: transfer died mid-flight. Try next host. */
+  | 'stall'
+  /** Any other error from instantiate/registration. Try next host. */
+  | 'error';
+
+export class HostBootError extends Error {
+  constructor(
+    public readonly kind: BootFailureKind,
+    message: string,
+    options?: { cause?: unknown },
+  ) {
+    super(message, options);
+    this.name = 'HostBootError';
+  }
+}
+
+/** Thrown by boot() when every host failed. */
+export class EngineUnreachableError extends Error {
+  constructor(public readonly failures: Array<{ host: string; kind: BootFailureKind }>) {
+    super(`DuckDB could not boot from any host: ${failures.map((f) => `${f.host}(${f.kind})`).join(', ')}`);
+    this.name = 'EngineUnreachableError';
+  }
+}
+
+/** Thrown by boot() when the network is too slow (cap trip). Not a host problem. */
+export class EngineTooSlowError extends Error {
+  constructor(public readonly host: string) {
+    super(`DuckDB boot aborted: connection too slow to finish within budget (${host})`);
+    this.name = 'EngineTooSlowError';
+  }
 }
 
 const SCENARIO_SQL = `
@@ -295,26 +324,52 @@ interface DuckDbClient {
 let clientPromise: Promise<DuckDbClient> | null = null;
 
 /**
- * Try one wasm host end to end. Always terminates the worker on failure, so a
- * dead host cannot leak a worker (or a partially instantiated wasm module) that
- * would then contend with the next attempt.
+ * Try one wasm host end to end.
+ *
+ * Two things matter for correctness here:
+ *
+ * 1. The watchdog REJECTS a racing promise. `worker.terminate()` alone leaves the
+ *    in-flight `instantiate()` promise pending forever, which is an unobservable
+ *    hang. Both happen on failure, but the rejection is what the caller sees.
+ * 2. The worker is terminated on every failure path, so a dead host cannot leak
+ *    a worker (or a half-instantiated wasm module) that would contend with the
+ *    next attempt.
  */
-async function bootFromHost(wasmBase: string): Promise<DuckDbClient> {
+async function bootFromHost(wasmBase: string, mode: BootMode): Promise<DuckDbClient> {
   const bundle = await duckdb.selectBundle(bundlesFor(wasmBase));
   if (!bundle.mainWorker) {
-    throw new Error('DuckDB bundle has no worker — refusing to block the main thread.');
+    throw new HostBootError('error', 'DuckDB bundle has no worker — refusing to block the main thread.');
   }
 
+  const label = hostLabel(wasmBase);
+  const bundleKind: BundleKind = bundle.mainModule.includes('duckdb-mvp') ? 'mvp' : 'eh';
+  const decoded = getDecodedBytes(bundleKind).decodedBytes;
+
   const worker = new Worker(bundle.mainWorker);
+
+  // Surface the chosen host and decoded size to the UI before any bytes land, so
+  // the badge can render a determinate bar from the first frame.
+  engineStore.startBooting({ host: label, decoded, mode });
+
+  const watchdog = createWatchdog({
+    mode,
+    decoded,
+    onProgress: (loaded) => engineStore.reportProgress(loaded),
+  });
+
   try {
     const logger = new duckdb.ConsoleLogger(duckdb.LogLevel.WARNING);
     const db = new duckdb.AsyncDuckDB(logger, worker);
 
-    await withTimeout(
-      db.instantiate(bundle.mainModule, bundle.pthreadWorker),
-      BOOT_TIMEOUT_MS,
-      hostLabel(wasmBase),
-    );
+    // Race the instantiate against the watchdog. The watchdog rejects; we
+    // translate that into a typed failure so boot() can decide whether the next
+    // host is worth trying.
+    await Promise.race([
+      db.instantiate(bundle.mainModule, bundle.pthreadWorker, (p) => {
+        watchdog.progress(Number(p.bytesLoaded));
+      }),
+      watchdog.rejected,
+    ]);
 
     await db.registerFileURL(
       DATA_FILE,
@@ -341,46 +396,86 @@ async function bootFromHost(wasmBase: string): Promise<DuckDbClient> {
       SELECT * FROM read_csv('${DATA_FILE}', header=true, columns=${CSV_COLUMNS});
     `);
 
+    watchdog.dispose();
     return { conn, db, version: duckdb.PACKAGE_VERSION };
   } catch (error) {
-    // Tear the failed attempt down before the next host is tried.
+    watchdog.dispose();
+
+    // Tear the failed attempt down before the next host is tried. This is not
+    // sufficient on its own (the pending instantiate promise would stay pending
+    // forever) which is why the watchdog also rejects — see the race above.
     try {
       worker.terminate();
     } catch {
       /* already dead */
     }
-    throw error;
+
+    // Normalise the watchdog's own error type into a typed host failure.
+    if (error instanceof BootTimeoutError) {
+      throw new HostBootError(error.reason, error.message, { cause: error });
+    }
+    if (error instanceof HostBootError) throw error;
+    throw new HostBootError('error', error instanceof Error ? error.message : String(error), {
+      cause: error,
+    });
   }
 }
 
-async function boot(): Promise<DuckDbClient> {
-  const failures: string[] = [];
-  let lastError: unknown = null;
+/** All hosts exhausted. */
+async function boot(mode: BootMode = 'auto'): Promise<DuckDbClient> {
+  const failures: Array<{ host: string; kind: BootFailureKind }> = [];
 
   for (const wasmBase of WASM_BASES) {
     const label = hostLabel(wasmBase);
     try {
-      const client = await bootFromHost(wasmBase);
+      const client = await bootFromHost(wasmBase, mode);
       activeWasmHost = label;
       if (failures.length > 0) {
-        console.warn(`[duckdb] served wasm from ${label} after ${failures.join(', ')} failed`);
+        console.warn(
+          `[duckdb] served wasm from ${label} after ${failures.map((f) => `${f.host}(${f.kind})`).join(', ')} failed`,
+        );
       }
       return client;
     } catch (error) {
-      lastError = error;
-      failures.push(label);
-      console.warn(`[duckdb] wasm host "${label}" failed, trying next:`, error);
+      const kind: BootFailureKind = error instanceof HostBootError ? error.kind : 'error';
+      failures.push({ host: label, kind });
+
+      // A cap trip means the NETWORK is the bottleneck, not this particular
+      // host. Retrying the next CDN would spend the same time to reach the same
+      // conclusion, so stop immediately and report "too slow".
+      if (kind === 'cap') {
+        activeWasmHost = null;
+        console.warn(`[duckdb] aborting boot: projection exceeds budget on ${label} (network-bound)`);
+        throw new EngineTooSlowError(label);
+      }
+
+      console.warn(`[duckdb] wasm host "${label}" failed (${kind}), trying next:`, error);
     }
   }
 
   activeWasmHost = null;
-  throw lastError ?? new Error('DuckDB could not boot: no wasm host available');
+  throw new EngineUnreachableError(failures);
 }
 
-function getClient(): Promise<DuckDbClient> {
+/**
+ * The singleton boot promise.
+ *
+ * Held separately from `clientPromise` so a failed attempt can be retried from
+ * the `failed` state without the old rejection being replayed.
+ */
+function getClient(mode: BootMode = 'auto'): Promise<DuckDbClient> {
   if (!clientPromise) {
-    clientPromise = boot().catch((error) => {
-      // Reset so a later retry (e.g. a flaky wasm fetch) can succeed.
+    clientPromise = boot(mode).catch((error) => {
+      // Mark the store *before* clearing the promise, so a subscriber reading
+      // status in the same tick never sees a transient "booting".
+      if (error instanceof EngineTooSlowError) {
+        engineStore.markFailed('too-slow');
+      } else if (error instanceof EngineUnreachableError) {
+        engineStore.markFailed('unreachable');
+      } else {
+        engineStore.markFailed('error');
+      }
+      // Reset so a later retry (e.g. the user clicking "Load anyway") can run.
       clientPromise = null;
       throw error;
     });
@@ -441,10 +536,11 @@ const rowsToMetrics = (row: Row, state: { sstAnomaly: number; jetStreamShift: nu
 export async function runScenario(
   state: { sstAnomaly: number; jetStreamShift: number; agricultureWeight: number },
   cache?: AnalyticsCache,
+  mode: BootMode = 'auto',
 ): Promise<AnalyticsPayload> {
   // Boot first, then start the clock: the first call also instantiates the WASM
   // module (~1.5 s), and counting that as query latency makes the HUD badge lie.
-  const { conn } = await getClient();
+  const { conn } = await getClient(mode);
   const started = performance.now();
   const { sstAnomaly: sst, jetStreamShift: jet, agricultureWeight: agri } = state;
 
