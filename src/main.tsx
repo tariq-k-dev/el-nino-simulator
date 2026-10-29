@@ -2,6 +2,7 @@ import { StrictMode } from 'react';
 import { createRoot } from 'react-dom/client';
 import App from '@/App';
 import '@/index.css';
+import { initEngine } from '@/lib/engine/init';
 
 // With ?debug, install an early error collector BEFORE React mounts.
 //
@@ -31,6 +32,12 @@ if (new URLSearchParams(window.location.search).has('debug')) {
 
 const container = document.getElementById('root');
 if (!container) throw new Error('Root element #root not found');
+
+// Bootstrap the DuckDB engine once, according to device policy (eager / idle /
+// on-demand). Deliberately outside React so it runs exactly once regardless of
+// StrictMode's double-invoked effects, and so an `idle` policy can wait for
+// `load` + visibility without a component having to stay mounted.
+initEngine();
 
 createRoot(container).render(
   <StrictMode>
