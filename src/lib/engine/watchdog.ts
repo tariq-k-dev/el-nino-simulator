@@ -38,11 +38,36 @@ export const AUTO_CAP_MS = 90_000;
 /** Earliest point (since first progress event) at which early abort may trip. */
 export const EARLY_EVAL_START_MS = 8_000;
 
-/** Trip when the projection exceeds AUTO_CAP_MS * this factor. */
-export const EARLY_ABORT_FACTOR = 1.25;
+/**
+ * Trip when the projection exceeds AUTO_CAP_MS * this factor.
+ *
+ * 1.25 was too lenient: §9 showed a stubbed 400 kbps run whose projection hovered
+ * just under `AUTO_CAP_MS * 1.25` for ~25 s, oscillating across the line and
+ * resetting the consecutive counter each time it dipped. The abort fired at 62.8 s
+ * instead of ~10 s. At 1.0 the rule aborts as soon as the evidence says the
+ * transfer cannot finish inside the cap, which is the whole point of an early
+ * abort. The 3-consecutive requirement is what keeps it from firing on a single
+ * noisy sample.
+ */
+export const EARLY_ABORT_FACTOR = 1.0;
 
 /** Consecutive projections over the threshold before tripping. */
 const EARLY_ABORT_CONSECUTIVE = 3;
+
+/**
+ * Width of the window used to compute the transfer rate.
+ *
+ * The rate used to be `loaded / elapsedSinceFirst` — a CUMULATIVE average that
+ * never forgets the slow start. §9's trace shows why that fails: Chrome's
+ * throttled transport delivers in small early chunks, so the first second projects
+ * a multi-hour finish (300 s at the first sample) and the cumulative average keeps
+ * dragging the projection upward for tens of seconds afterwards.
+ *
+ * A 6 s sliding window measures the CURRENT rate, which is what "will this finish
+ * in time?" actually depends on. It is long enough to span several progress events
+ * (the worst observed gap is 0.42 s) and short enough to forget the ramp-up.
+ */
+export const EARLY_RATE_WINDOW_MS = 6_000;
 
 /** How often the early-abort projection is evaluated once it is armed. */
 const EARLY_EVAL_INTERVAL_MS = 1_000;
@@ -87,6 +112,16 @@ export interface WatchdogStats {
   evalCount: number;
   consecutiveOver: number;
   projectedTotalMs: number | null;
+  /** Rate used by the last evaluation, bytes per ms, from the sliding window. */
+  lastRateBpsPerMs: number | null;
+  /** Elapsed ms covered by the sliding window at the last evaluation. */
+  lastWindowMs: number | null;
+}
+
+/** One (timestamp, cumulative-loaded) sample, kept for the sliding window. */
+interface ProgressSample {
+  at: number;
+  loaded: number;
 }
 
 class BootTimeoutError extends Error {
@@ -120,7 +155,15 @@ export function createWatchdog(opts: WatchdogOptions): Watchdog {
     evalCount: 0,
     consecutiveOver: 0,
     projectedTotalMs: null,
+    lastRateBpsPerMs: null,
+    lastWindowMs: null,
   };
+
+  /**
+   * Rolling history of progress samples. Pruned to slightly more than the window
+   * so the boundary sample needed for interpolation is always present.
+   */
+  const samples: ProgressSample[] = [];
 
   let rejectFn: (err: Error) => void = () => {};
   const rejected = new Promise<never>((_, reject) => {
@@ -160,6 +203,35 @@ export function createWatchdog(opts: WatchdogOptions): Watchdog {
   }, CONNECT_MS);
 
   // --- early-abort projection (auto mode only) ------------------------------
+  /**
+   * Record a sample and return the rate over the sliding window.
+   *
+   * Returns null when the window does not yet span enough time to be meaningful
+   * (fewer than two samples, or less than one event interval of coverage).
+   */
+  const slidingRate = (nowMs: number): { rate: number; windowMs: number } | null => {
+    samples.push({ at: nowMs, loaded: stats.lastLoaded });
+
+    // Keep everything newer than the window, plus one sample before it so the
+    // window edge can be interpolated rather than snapping to a stale point.
+    const cutoff = nowMs - EARLY_RATE_WINDOW_MS;
+    let firstIdx = samples.findIndex((s) => s.at >= cutoff);
+    if (firstIdx > 0) firstIdx -= 1;
+    if (firstIdx > 0) samples.splice(0, firstIdx);
+
+    if (samples.length < 2) return null;
+
+    const newest = samples[samples.length - 1];
+    const oldest = samples[0];
+    const windowMs = newest.at - oldest.at;
+    if (windowMs <= 0) return null;
+
+    const deltaBytes = newest.loaded - oldest.loaded;
+    if (deltaBytes <= 0) return null;
+
+    return { rate: deltaBytes / windowMs, windowMs };
+  };
+
   const evaluateProjection = () => {
     if (settled) return;
     const { firstEventAt, lastEventAt, lastLoaded } = stats;
@@ -172,12 +244,24 @@ export function createWatchdog(opts: WatchdogOptions): Watchdog {
     const elapsedSinceFirst = lastEventAt - firstEventAt;
     if (elapsedSinceFirst < EARLY_EVAL_START_MS) return;
 
-    const rate = lastLoaded / elapsedSinceFirst; // bytes per ms
-    if (!Number.isFinite(rate) || rate <= 0) return;
+    // CURRENT rate over the last 6 s, not the cumulative average since the first
+    // event. A cumulative average is permanently biased by the slow start and
+    // produced the 62.8 s abort in §9.
+    const win = slidingRate(now());
+    if (win === null) return;
+
+    stats.lastRateBpsPerMs = win.rate;
+    stats.lastWindowMs = win.windowMs;
 
     const remaining = opts.decoded - lastLoaded;
-    // Already downloaded everything: projection is just the elapsed time.
-    const projected = elapsedSinceFirst + Math.max(0, remaining) / rate;
+    if (remaining <= 0) {
+      // Everything has arrived; nothing to project and nothing to abort.
+      stats.consecutiveOver = 0;
+      stats.projectedTotalMs = elapsedSinceFirst;
+      return;
+    }
+
+    const projected = elapsedSinceFirst + remaining / win.rate;
     stats.projectedTotalMs = projected;
     stats.evalCount += 1;
 
@@ -187,11 +271,15 @@ export function createWatchdog(opts: WatchdogOptions): Watchdog {
       if (stats.consecutiveOver >= EARLY_ABORT_CONSECUTIVE) {
         trip(
           'cap',
-          `Projected boot ${Math.round(projected)} ms exceeds ${Math.round(threshold)} ms — connection too slow.`,
+          `Projected boot ${Math.round(projected)} ms exceeds ${Math.round(threshold)} ms ` +
+            `(rate ${Math.round(win.rate * 1000)} B/s over ${Math.round(win.windowMs)} ms) — connection too slow.`,
         );
       }
-    } else {
-      stats.consecutiveOver = 0;
+    } else if (stats.consecutiveOver > 0) {
+      // Hysteresis: a single sub-threshold sample decrements rather than zeroing,
+      // so noise cannot restart the count from scratch. Two consecutive good
+      // samples are needed to clear it.
+      stats.consecutiveOver = Math.max(0, stats.consecutiveOver - 1);
     }
   };
 
