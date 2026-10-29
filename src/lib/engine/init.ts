@@ -78,21 +78,19 @@ async function start(mode: BootMode): Promise<void> {
   started = true;
 
   try {
-    // Hand DuckDB the CSV text the loader already fetched (or is fetching), so
-    // the engine uses registerFileText and does NOT issue a second request for
-    // it. Awaiting loadDataset() here is cheap: it is memoised, and the UI has
-    // already kicked it off on mount, so this normally resolves immediately.
+    // Hand DuckDB a PROMISE of the CSV text, not the text itself.
     //
-    // Without this the warmup called runScenario() with no text, fell back to
-    // registerFileURL, and the browser fetched enso.csv twice — which the
-    // "exactly ONE request" acceptance criterion forbids.
-    let datasetText: string | null = null;
-    try {
-      datasetText = (await loadDataset()).text;
-    } catch {
-      // History is unavailable; DuckDB can still try its own URL fallback.
-      datasetText = null;
-    }
+    // Awaiting here would serialise the two large transfers: the worker script
+    // and wasm could not start downloading until enso.csv had finished, adding
+    // the CSV's latency to the boot on every link. Passing the promise lets the
+    // wasm download overlap the CSV fetch, and duckdb.ts awaits it only at
+    // table-registration time (after instantiate() resolves).
+    //
+    // The promise also guarantees a single request: DuckDB parses these exact
+    // bytes via registerFileText instead of fetching the file again.
+    const datasetText = loadDataset()
+      .then((d) => d.text)
+      .catch(() => null);
 
     // A cheap query is enough to force instantiation, register the CSV and
     // materialise the table. Its result is discarded: `useScenario` will run the

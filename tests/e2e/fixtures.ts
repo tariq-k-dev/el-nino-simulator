@@ -124,53 +124,34 @@ export function ledger(page: Page): ByteLedger {
  * nearest container is themselves).
  */
 export async function badgeLabel(page: Page): Promise<string | null> {
+  // The ACCESSIBLE text, not the visual spans.
+  //
+  // The badge's visual spans are siblings with CSS `gap`, so their textContent
+  // runs together with no separators ("DuckDB-WASMjsdelivr2820 ms"). Each phase
+  // now also emits one sr-only sentence carrying the full meaning, and the visual
+  // spans are aria-hidden. Reading the sr-only sentence gives a real sentence and
+  // is what a screen reader announces.
+  //
+  // The sr-only sentence is normalised back to the compact badge shape so the
+  // existing regexes in the specs keep working:
+  //   "DuckDB engine ready, served from jsdelivr, 2820 milliseconds."
+  //     -> "DuckDB-WASM · jsdelivr · 2820 ms"
   return page.evaluate(() => {
-    // The ready badge is three sibling <span>s with CSS `gap` between them, so
-    // `textContent` runs them together: "DuckDB-WASMjsdelivr2820 ms". There are
-    // no literal "·" separators in the DOM — those separators are visual only.
-    //
-    // So: read the deepest element whose text matches a badge shape, then
-    // re-insert the separators for readability and for the specs' regexes.
-    const SHAPES: Array<{ re: RegExp; fmt: (m: RegExpMatchArray) => string }> = [
-      {
-        re: /^DuckDB-WASM(\S+?)(\d+) ms$/,
-        fmt: (m) => `DuckDB-WASM · ${m[1]} · ${m[2]} ms`,
-      },
-      { re: /^Client-side model · Load DuckDB \(~\d+ MB\)$/, fmt: (m) => m[0] },
-      {
-        re: /^Client-side model · Needs a faster connection · Load anyway \(~\d+ MB\)$/,
-        fmt: (m) => m[0],
-      },
-      { re: /^Client-side model · DuckDB (?:unavailable|error) · Retry$/, fmt: (m) => m[0] },
-      { re: /^Loading DuckDB(?: \d+%)?(?: · ~\d+ s left)?$/, fmt: (m) => m[0] },
-      { re: /^Starting DuckDB…$/, fmt: (m) => m[0] },
-    ];
-
-    const els = [...document.querySelectorAll('span,button,div')]
-      .map((el) => ({ el, text: (el.textContent ?? '').trim().replace(/\s+/g, ' ') }))
-      .filter((c) => c.text.length > 0 && c.text.length < 120);
-
-    for (const { re, fmt } of SHAPES) {
-      // Deepest match wins, so a leaf beats the wrapper that also contains it.
-      const hits = els.filter((c) => re.test(c.text));
-      if (hits.length > 0) {
-        const deepest = hits.reduce((best, cur) => {
-          const depth = (e: Element) => {
-            let d = 0;
-            for (let n: Element | null = e; n; n = n.parentElement) d += 1;
-            return d;
-          };
-          return depth(cur.el) > depth(best.el) ? cur : best;
-        });
-        return fmt(deepest.text.match(re) as RegExpMatchArray);
-      }
+    const live = document.querySelector('[aria-live="polite"].sr-only');
+    const sentence = live ? (live.textContent ?? '').replace(/\s+/g, ' ').trim() : null;
+    if (sentence) {
+      const ready = sentence.match(/^DuckDB engine ready, served from (.+?), (\d+) milliseconds\.$/);
+      if (ready) return `DuckDB-WASM · ${ready[1]} · ${ready[2]} ms`;
+      return sentence;
     }
 
-    return null;
+    // No sr-only sentence: fall back to the visual text. Should not happen for a
+    // rendered badge, but keeps the helper honest if a future phase omits one.
+    const badge = document.querySelector('[aria-busy], [aria-live]');
+    return badge ? (badge.textContent ?? '').replace(/\s+/g, ' ').trim() || null : null;
   });
 }
 
-/** Wait until the badge reports a ready engine. Returns elapsed ms, or null. */
 export async function waitForReady(page: Page, timeoutMs = 200_000): Promise<number | null> {
   const t0 = Date.now();
   while (Date.now() - t0 < timeoutMs) {
@@ -232,3 +213,36 @@ export function errorCollector(page: Page): string[] {
 
 export const test = base;
 export { expect };
+
+/**
+ * The badge's screen-reader sentence: a full, punctuated description of the
+ * current phase. This is the accessible text and what assertions should read —
+ * the visual spans are `aria-hidden` and their `textContent` concatenates with no
+ * separators ("DuckDB-WASMjsdelivr2820 ms").
+ */
+export async function srSentence(page: Page): Promise<string | null> {
+  return page.evaluate(() => {
+    const el = document.querySelector('[aria-live="polite"].sr-only');
+    return el ? (el.textContent ?? '').trim().replace(/\s+/g, ' ') : null;
+  });
+}
+
+/**
+ * Text a sighted user sees: every text node NOT inside an `.sr-only` element.
+ *
+ * Use this for assertions like "no -0.0 on screen" — the sr-only sentences
+ * deliberately contain words a screen reader needs, so `innerText` on the whole
+ * body would mix the two channels.
+ */
+export async function visibleText(page: Page): Promise<string> {
+  return page.evaluate(() => {
+    const walker = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT);
+    let out = '';
+    for (let n = walker.nextNode(); n; n = walker.nextNode()) {
+      const parent = (n as Text).parentElement;
+      if (parent && parent.closest('.sr-only')) continue;
+      out += n.textContent ?? '';
+    }
+    return out.replace(/\s+/g, ' ').trim();
+  });
+}

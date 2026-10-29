@@ -20,7 +20,7 @@ import type {
   TimelinePoint,
 } from '@/types/enso';
 import type { DataEngine } from '@/lib/engine/dataEngine';
-import { runScenario, type AnalyticsCache, type BootMode } from '@/lib/duckdb';
+import { runScenario, type AnalyticsCache, type BootMode, type DatasetTextInput } from '@/lib/duckdb';
 
 export interface DuckEngineOptions {
   /**
@@ -28,7 +28,7 @@ export interface DuckEngineOptions {
    * Null when the dataset was unavailable — the scenario queries still work, and
    * the history queries will reject because `hasHistory` is false.
    */
-  datasetText: string | null;
+  datasetText: DatasetTextInput;
   mode?: BootMode;
   cache?: AnalyticsCache;
 }

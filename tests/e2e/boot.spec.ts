@@ -1,6 +1,6 @@
 import { test, expect } from './fixtures';
 import {
-  badgeLabel,
+  srSentence,
   clickEnable,
   connectionInit,
   errorCollector,
@@ -34,8 +34,9 @@ test.describe('case a — desktop, unthrottled, eager', () => {
     const ms = await waitForReady(page, 60_000);
 
     expect(ms, 'engine should become ready').not.toBeNull();
-    const label = await badgeLabel(page);
-    expect(label).toMatch(/^DuckDB-WASM · (jsdelivr|unpkg) · \d+ ms$/);
+    // Read the accessible sentence, not the concatenated visual spans.
+    const sentence = await srSentence(page);
+    expect(sentence).toMatch(/^DuckDB engine ready, served from (jsdelivr|unpkg), \d+ milliseconds\.$/);
     expect(bytes.extensionRequests).toHaveLength(0);
     expect(errors).toHaveLength(0);
   });
@@ -104,8 +105,7 @@ test.describe('case c — 1.6 Mbps', () => {
     // should never advance.
     expect(bytes.hostsTouched).toEqual(['cdn.jsdelivr.net']);
     expect(bytes.extensionRequests).toHaveLength(0);
-    const label = await badgeLabel(page);
-    expect(label).toContain('jsdelivr');
+    expect(await srSentence(page)).toContain('jsdelivr');
   });
 });
 
@@ -157,8 +157,7 @@ test.describe('case e — saveData / 3g gate the boot', () => {
       expect(bytes.hostsTouched).toHaveLength(0);
       expect(bytes.extensionRequests).toHaveLength(0);
 
-      const label = await badgeLabel(page);
-      expect(label).toMatch(/Load DuckDB/);
+      expect(await srSentence(page)).toMatch(/built-in model/i);
 
       // History is available even though the engine is deferred.
       expect(await waitForHistory(page, 30_000)).not.toBeNull();
@@ -185,7 +184,7 @@ test.describe('case f — jsDelivr black-holed', () => {
     expect(ms, 'should recover via unpkg').not.toBeNull();
     expect(bytes.hostsTouched).toEqual(['cdn.jsdelivr.net', 'unpkg.com']);
     expect(bytes.extensionRequests).toHaveLength(0);
-    expect(await badgeLabel(page)).toContain('unpkg');
+    expect(await srSentence(page)).toContain('unpkg');
   });
 });
 

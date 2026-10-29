@@ -46,6 +46,26 @@ import { acquireWorker, WorkerLoadError } from '@/lib/engine/workerBoot';
 export type BootMode = 'auto' | 'user';
 
 /**
+ * The dataset text, or a PROMISE of it.
+ *
+ * Passing the promise (rather than awaiting before boot) is what lets the worker
+ * and wasm downloads overlap the CSV fetch instead of queueing behind it. The
+ * promise is awaited only at table-registration time, after `instantiate()` has
+ * resolved — by then the CSV has almost always already landed, so the await costs
+ * nothing, and on a slow link the two transfers run concurrently.
+ */
+export type DatasetTextInput = string | null | Promise<string | null>;
+
+/** Resolve a DatasetTextInput. Never throws: a failed dataset yields null. */
+async function resolveDatasetText(input: DatasetTextInput): Promise<string | null> {
+  try {
+    return await input;
+  } catch {
+    return null;
+  }
+}
+
+/**
  * Derived CSV, emitted by scripts/generate_enso_data.py.
  * Loaded with read_csv() so no DuckDB extension is required at runtime.
  */
@@ -396,7 +416,7 @@ export async function ensureHistoryTable(): Promise<boolean> {
 async function bootFromHost(
   wasmBase: string,
   mode: BootMode,
-  datasetText: string | null,
+  datasetInput: DatasetTextInput,
 ): Promise<DuckDbClient> {
   const bundle = await duckdb.selectBundle(bundlesFor(wasmBase));
   if (!bundle.mainWorker) {
@@ -441,6 +461,11 @@ async function bootFromHost(
       }),
       watchdog.rejected,
     ]);
+
+    // Await the dataset ONLY here — after instantiate() has resolved. The wasm
+    // and worker downloads have already been running concurrently with the CSV
+    // fetch, so this await is normally already settled.
+    const datasetText = await resolveDatasetText(datasetInput);
 
     if (datasetText !== null) {
       // Preferred path: the loader already fetched the CSV, and registering the
@@ -507,13 +532,13 @@ async function bootFromHost(
 }
 
 /** All hosts exhausted. */
-async function boot(mode: BootMode = 'auto', datasetText: string | null = null): Promise<DuckDbClient> {
+async function boot(mode: BootMode = 'auto', datasetInput: DatasetTextInput = null): Promise<DuckDbClient> {
   const failures: Array<{ host: string; kind: BootFailureKind }> = [];
 
   for (const wasmBase of WASM_BASES) {
     const label = hostLabel(wasmBase);
     try {
-      const client = await bootFromHost(wasmBase, mode, datasetText);
+      const client = await bootFromHost(wasmBase, mode, datasetInput);
       activeWasmHost = label;
       if (failures.length > 0) {
         console.warn(
@@ -548,10 +573,10 @@ async function boot(mode: BootMode = 'auto', datasetText: string | null = null):
  * Held separately from `clientPromise` so a failed attempt can be retried from
  * the `failed` state without the old rejection being replayed.
  */
-function getClient(mode: BootMode = 'auto', datasetText: string | null = null): Promise<DuckDbClient> {
+function getClient(mode: BootMode = 'auto', datasetInput: DatasetTextInput = null): Promise<DuckDbClient> {
   if (!clientPromise) {
     const startedAt = performance.now();
-    clientPromise = boot(mode, datasetText)
+    clientPromise = boot(mode, datasetInput)
       .then((client) => {
         // Transition to ready HERE, not inside bootFromHost: this is the one
         // place that knows both the host that actually succeeded and the total
@@ -633,15 +658,19 @@ export async function runScenario(
   cache?: AnalyticsCache,
   mode: BootMode = 'auto',
   /**
-   * CSV text already fetched by loadDataset(). When provided, DuckDB parses THIS
-   * string via registerFileText instead of fetching the file again — the same
-   * bytes feed both engines, and there is exactly one request for the dataset.
+   * CSV text, or a promise of it, from loadDataset(). When provided, DuckDB
+   * parses THIS string via registerFileText instead of fetching the file again —
+   * the same bytes feed both engines, and there is exactly one request.
+   *
+   * A promise is accepted so the caller does not have to await it before
+   * booting: the wasm download then overlaps the CSV fetch. It is awaited only
+   * at table-registration time.
    */
-  datasetText: string | null = null,
+  datasetInput: DatasetTextInput = null,
 ): Promise<AnalyticsPayload> {
   // Boot first, then start the clock: the first call also instantiates the WASM
   // module (~1.5 s), and counting that as query latency makes the HUD badge lie.
-  const { conn } = await getClient(mode, datasetText);
+  const { conn } = await getClient(mode, datasetInput);
   const started = performance.now();
   const { sstAnomaly: sst, jetStreamShift: jet, agricultureWeight: agri } = state;
 
