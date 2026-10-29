@@ -82,6 +82,7 @@ describe('badge vocabulary is derivable from the store', () => {
       decoded: 1000,
       mode: 'auto',
       startedAt: 0,
+      firstEventAt: 0,
     });
     const ready = labelFor({ phase: 'ready', host: 'jsdelivr', bootMs: 900 });
     const tooSlow = labelFor({ phase: 'failed', reason: 'too-slow' });

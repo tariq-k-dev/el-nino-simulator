@@ -15,25 +15,43 @@ export const WASM_WIRE_SIZE_LABEL = '~7 MB';
 /** Seconds of data-time after which an ETA estimate is worth showing. */
 const ETA_AFTER_MS = 5_000;
 
-/** Estimated seconds remaining, or null when it cannot be estimated. */
+/**
+ * Estimated seconds remaining, or null when it cannot be estimated.
+ *
+ * Measured from the FIRST progress event, never from boot start. Boot start
+ * includes acquiring the 755 KB worker script, during which zero bytes of wasm
+ * move — dividing a small byte count by that larger elapsed time yielded
+ * "~46346 s left" on a 400 kbps link. `firstEventAt` is the only honest origin
+ * for a transfer rate.
+ *
+ * Also suppressed until ETA_AFTER_MS of *data* time has passed, because a single
+ * early sample is a poor predictor.
+ */
 function estimateRemainingSeconds(
   loaded: number,
   decoded: number | null,
-  startedAt: number,
+  firstEventAt: number | null,
   now: number,
 ): number | null {
   if (decoded === null || decoded <= 0) return null;
-  const elapsed = now - startedAt;
-  if (elapsed < ETA_AFTER_MS) return null;
+  if (firstEventAt === null) return null;
   // Before the first byte there is no rate to project from.
   if (loaded <= 0) return null;
+
+  const elapsed = now - firstEventAt;
+  if (elapsed < ETA_AFTER_MS) return null;
 
   const bytesPerMs = loaded / elapsed;
   if (!Number.isFinite(bytesPerMs) || bytesPerMs <= 0) return null;
 
   const remainingMs = (decoded - loaded) / bytesPerMs;
-  if (remainingMs <= 0) return null;
-  return Math.max(1, Math.round(remainingMs / 1000));
+  if (!Number.isFinite(remainingMs) || remainingMs <= 0) return null;
+
+  const seconds = Math.round(remainingMs / 1000);
+  // Past an hour the estimate is not useful to a user and usually means the
+  // connection cannot finish anyway; the watchdog owns that decision.
+  if (seconds > 3600) return null;
+  return Math.max(1, seconds);
 }
 
 /** Shared button styling: 44px minimum touch target. */
@@ -62,7 +80,12 @@ export function EngineBadge({ now = Date.now() }: { now?: number }) {
 
   if (status.phase === 'booting') {
     const pct = progressPercent(status);
-    const remaining = estimateRemainingSeconds(status.loaded, status.decoded, status.startedAt, now);
+    const remaining = estimateRemainingSeconds(
+      status.loaded,
+      status.decoded,
+      status.firstEventAt,
+      now,
+    );
     const indeterminate = pct === null;
 
     return (

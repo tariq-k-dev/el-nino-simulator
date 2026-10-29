@@ -143,6 +143,7 @@ describe('progressPercent', () => {
     decoded,
     mode: 'auto',
     startedAt: 0,
+    firstEventAt: 0,
   });
 
   it('is null when not booting', () => {

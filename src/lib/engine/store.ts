@@ -40,6 +40,16 @@ export type EngineStatus =
       decoded: number | null;
       mode: 'auto' | 'user';
       startedAt: number;
+      /**
+       * Timestamp of the FIRST progress event, or null before any bytes land.
+       *
+       * ETA and rate must be measured from here, not from `startedAt`: the boot
+       * also includes acquiring the 755 KB worker script, during which no
+       * progress can occur. Using `startedAt` divides a tiny byte count by a
+       * large elapsed time and produces an absurd estimate (measured:
+       * "~46346 s left" on a 400 kbps link).
+       */
+      firstEventAt: number | null;
     }
   | { phase: 'ready'; host: string; bootMs: number }
   | { phase: 'failed'; reason: FailedReason };
@@ -119,6 +129,7 @@ function createStore() {
         decoded: opts.decoded,
         mode: opts.mode,
         startedAt: Date.now(),
+        firstEventAt: null,
       });
     },
 
@@ -129,7 +140,13 @@ function createStore() {
     reportProgress(loaded: number): void {
       if (snapshot.phase !== 'booting') return;
 
-      const next: Extract<EngineStatus, { phase: 'booting' }> = { ...snapshot, loaded };
+      const next: Extract<EngineStatus, { phase: 'booting' }> = {
+        ...snapshot,
+        loaded,
+        // Stamp the first event so the badge can measure rate from real data
+        // rather than from process start (which includes worker acquisition).
+        firstEventAt: snapshot.firstEventAt ?? Date.now(),
+      };
       const now = Date.now();
       const sinceLast = now - lastProgressAt;
 
