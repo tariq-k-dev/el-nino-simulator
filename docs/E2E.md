@@ -9,9 +9,24 @@ from a CDN.
 
 ```bash
 pnpm build      # the suite serves dist/, so build first
-pnpm e2e        # run all cases (~6-10 min: cases c and d are slow by design)
+pnpm e2e        # all cases — measured 5.0 min wall clock on this machine
 pnpm e2e:report # open the HTML report from the last run
 ```
+
+Measured per case (serial, one worker, this machine):
+
+| Case | Wall time |
+|---|---|
+| a desktop eager | ~9 s |
+| b coarse / Fast 4G / 4× CPU | 22.0 s |
+| c 1.6 Mbps | 49.4 s |
+| d 400 kbps | 3.3 min |
+| e saveData + 3g | ~11 s each |
+| f jsDelivr black-holed | 24.7 s |
+| g stall | 24.5 s |
+| h write rate | 49.2 s |
+| i invariants | ~9 s |
+
 
 First run only — install the browser:
 
@@ -74,7 +89,8 @@ parallel workers would contend for the same CPU and network emulation and make
 every figure meaningless.
 
 **Long tasks are reported, not asserted.** Case b attaches the count and total to
-the test result. A 6.45 MB wasm boot on a 4×-throttled mobile device *will*
+the test result. Measured on this machine: **149 long tasks, 14,104 ms total,
+658 ms max** during a coarse-pointer / Fast 4G / 4× CPU idle boot. A 6.45 MB wasm boot on a 4×-throttled mobile device *will*
 produce long tasks; whether that is acceptable is a product decision, not a
 correctness gate. Asserting a number there would encode a guess.
 
