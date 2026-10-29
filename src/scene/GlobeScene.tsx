@@ -1,4 +1,11 @@
-import { Component, Suspense, useEffect, useRef, type ReactNode } from 'react';
+import {
+  Component,
+  Suspense,
+  useEffect,
+  useRef,
+  useSyncExternalStore,
+  type ReactNode,
+} from 'react';
 import { Canvas, useFrame } from '@react-three/fiber';
 import { AdaptiveDpr, OrbitControls, Preload, useProgress } from '@react-three/drei';
 import { Bloom, EffectComposer, Vignette } from '@react-three/postprocessing';
@@ -14,21 +21,84 @@ import { REGIONS } from '@/lib/regions';
 import { regionHeadline } from '@/lib/model';
 import { registerRenderer } from '@/lib/canvasCapture';
 import { markSceneFailed, signalSceneCondition } from '@/lib/engine/sceneGate';
+import {
+  allTexturesSettled,
+  setTextureProgressState,
+  subscribeTextures,
+  textureStatus,
+  textureVersion,
+} from '@/lib/engine/textureTimeline';
 
 /**
- * Bridges drei's texture-progress store into the scene gate.
+ * Re-render on any item transition in the texture timeline.
  *
- * `useProgress` is a zustand store, so it can be read outside React too — but a
- * component is the simplest way to subscribe. `active === false && progress === 100`
- * means every texture drei tracked has finished decoding.
+ * `useSyncExternalStore` with the version as the snapshot: the version is a
+ * number, so the reference is stable between transitions and React can skip
+ * rendering when nothing changed.
+ */
+function useTextureVersion(): number {
+  return useSyncExternalStore(subscribeTextures, textureVersion, textureVersion);
+}
+
+/**
+ * Feeds the gate its texture condition, from the authoritative source.
+ *
+ * Two conditions are watched and they are NOT equivalent:
+ *
+ * 1. **The per-item timeline** (`textureTimeline`) — every asset three's
+ *    `DefaultLoadingManager` registered has resolved or errored. This is the
+ *    condition the gate uses, because it is per-item: one texture still in
+ *    flight keeps the gate shut regardless of what any aggregate says.
+ *
+ * 2. **drei's `useProgress` aggregate** — `active === false && progress === 100`.
+ *    Kept as a fallback only. Its percentage is
+ *    `(loaded - saveLastTotalLoaded) / (total - saveLastTotalLoaded) * 100 || 100`
+ *    with `saveLastTotalLoaded` pinned to `total` after the first load, so a
+ *    second wave of textures divides by zero → `NaN || 100` → 100% while items
+ *    are still arriving. Reading only this is how a gate opens early.
+ *
+ * The aggregate is still mirrored into the timeline snapshot (`progressCoversAll`)
+ * so a report can show whether the counter accounted for every item, which
+ * distinguishes "the gate never saw the texture" from "the counter miscounted
+ * it" — different bugs with the same symptom.
  */
 function TextureProgressSignal() {
-  const { active, progress } = useProgress();
+  const { active, progress, loaded, total } = useProgress();
 
   useEffect(() => {
-    if (!active && progress === 100) signalSceneCondition('textures');
-  }, [active, progress]);
+    setTextureProgressState({ active, progress, loaded, total });
+    if (active || progress !== 100) return;
 
+    // Every item the manager registered must also be settled. If the timeline
+    // has seen nothing (unit tests, a scene with no assets) the aggregate is the
+    // only evidence available, so it decides.
+    const settled = allTexturesSettled();
+    const seen = textureStatus().started;
+    if (settled || seen === 0) {
+      // An item that ERRORED will never fire onLoad, so the aggregate can sit
+      // below 100 forever. `pending === 0` is satisfied by an error, which is
+      // what keeps a broken texture from parking the gate until its timeout.
+      signalSceneCondition('textures', settled ? 'timeline' : 'progress');
+    }
+  }, [active, progress, loaded, total]);
+
+  return null;
+}
+
+/**
+ * Re-evaluates the texture half whenever an individual item settles.
+ *
+ * Needed because the aggregate can be stuck at 100% (see above): after the first
+ * wave, `progress` may not change again, so nothing would re-run the effect in
+ * `TextureProgressSignal` when the *last* texture of a later wave finishes. This
+ * component subscribes to the timeline directly, so every itemEnd/onError is a
+ * re-render and therefore a re-check.
+ */
+function TextureSettledSignal() {
+  useTextureVersion();
+  useEffect(() => {
+    if (allTexturesSettled()) signalSceneCondition('textures', 'timeline');
+  });
   return null;
 }
 
@@ -164,6 +234,7 @@ export function GlobeScene({
 
       <Suspense fallback={null}>
         <TextureProgressSignal />
+        <TextureSettledSignal />
         <FirstFrameSignal />
         <Starfield count={14000} />
         <EarthSystem

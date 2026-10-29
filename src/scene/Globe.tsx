@@ -10,6 +10,20 @@ import {
   surfaceOverlayVertex,
 } from '@/scene/shaders';
 import { SHELLS } from '@/scene/constants';
+import { installTextureTracking } from '@/lib/engine/textureTimeline';
+
+// Instrument three's DefaultLoadingManager BEFORE any texture is requested.
+//
+// Module scope, not an effect: `useTexture` suspends on its first render, and the
+// loader calls `itemStart` inside that render — an effect would run after the
+// first item had already been registered and it would never be tracked.
+//
+// This is what the scene gate's texture condition reads (see
+// lib/engine/textureTimeline.ts). It also gives the E2E trace a per-texture
+// {requestStart, responseEnd, onLoad} record on the page's performance.now()
+// clock, so the gate's open time can be reconciled against it by subtraction
+// rather than by comparing two different time origins.
+installTextureTracking();
 
 interface GlobeProps {
   /** 0..3 degC - drives the emissive heat and the atmosphere colour. */

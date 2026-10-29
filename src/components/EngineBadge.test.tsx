@@ -1,8 +1,17 @@
 // @vitest-environment jsdom
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import { cleanup, render, screen } from '@testing-library/react';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { cleanup, fireEvent, render, screen } from '@testing-library/react';
 import { EngineBadge } from '@/components/EngineBadge';
 import { engineStore, type EngineStatus } from '@/lib/engine/store';
+import { enableEngine } from '@/lib/engine/init';
+
+/**
+ * The badge's only action is `enableEngine()`. Mocked, not merely spied on: the
+ * real one starts a DuckDB boot, which in jsdom means two failed worker
+ * acquisitions and a wall of console noise per click. What this file tests is the
+ * badge's rendering and wiring, not the boot.
+ */
+vi.mock('@/lib/engine/init', () => ({ enableEngine: vi.fn() }));
 
 /**
  * The badge must distinguish "no progress information yet" from "progress we
@@ -182,6 +191,98 @@ describe('EngineBadge — determinate progress after the first event', () => {
     expect(text).toContain('Loading DuckDB');
     expect(text).not.toMatch(/\d+\s*%/);
     expect(text).not.toMatch(/s left/);
+  });
+});
+
+describe('EngineBadge — waiting for the scene gate', () => {
+  beforeEach(() => {
+    engineStore.__reset();
+    vi.mocked(enableEngine).mockClear();
+  });
+  afterEach(() => {
+    cleanup();
+    engineStore.__reset();
+  });
+
+  /**
+   * When an automatic (eager or idle) boot is queued behind the scene gate, the
+   * engine is deliberately NOT loading yet. The badge has to say that without
+   * making two false claims:
+   *
+   *   - "unavailable" / "failed" — nothing has failed, and the engine is about to
+   *     load on its own;
+   *   - a progress bar or a percentage — no bytes are moving yet, so any number
+   *     would be invented.
+   *
+   * It also has to keep an obvious way to skip the wait.
+   */
+
+  it('says the engine loads after the globe instead of reading unavailable', () => {
+    renderWith({ phase: 'deferred', reason: 'scene' });
+
+    const text = visibleText();
+    expect(text).toContain('Client-side model');
+    expect(text).toContain('DuckDB loads after the globe');
+
+    // Neither false claim.
+    expect(text).not.toMatch(/unavailable/i);
+    expect(text).not.toMatch(/could not be reached/i);
+    expect(text).not.toMatch(/too slow/i);
+  });
+
+  it('shows NO progress bar and NO percentage while waiting', () => {
+    renderWith({ phase: 'deferred', reason: 'scene' });
+
+    expect(visibleText()).not.toMatch(/\d+\s*%/);
+    expect(visibleText()).not.toMatch(/s left/);
+
+    // No aria-busy: the region is not busy, it is waiting on something else.
+    expect(document.querySelector('[aria-busy="true"]')).toBeNull();
+
+    // No progress track at all. The determinate/indeterminate bars in the booting
+    // phase are the only elements carrying these classes.
+    expect(document.querySelector('.animate-pulse')).toBeNull();
+    expect(document.querySelector('.bg-sky-400.transition-\\[width\\]')).toBeNull();
+  });
+
+  it('offers a clickable Load button that bypasses the gate', () => {
+    renderWith({ phase: 'deferred', reason: 'scene' });
+
+    const button = screen.getByRole('button');
+    expect(button.textContent).toContain('Load now');
+    // 44px minimum touch target, same as every other action in the deck.
+    expect(button.className).toContain('min-h-[44px]');
+
+    // A user who wants the engine immediately must be able to say so, and the
+    // click must reach the gate-bypassing entry point.
+    fireEvent.click(button);
+    expect(enableEngine).toHaveBeenCalledTimes(1);
+  });
+
+  it('announces the queued boot as one sentence, not as a failure', () => {
+    renderWith({ phase: 'deferred', reason: 'scene' });
+
+    const live = document.querySelector('[aria-live="polite"].sr-only');
+    expect(live).not.toBeNull();
+    const sentence = (live?.textContent ?? '').replace(/\s+/g, ' ').trim();
+
+    expect(sentence).toMatch(/Using the built-in model/);
+    expect(sentence).toMatch(/will load automatically once the globe has finished loading/);
+    expect(sentence).toMatch(/about 7 megabytes/);
+    // Still no invented number, even for a screen reader.
+    expect(sentence).not.toMatch(/\d+\s*percent/);
+  });
+
+  it('the policy reason keeps its unmistakable "Load DuckDB" call to action', () => {
+    renderWith({ phase: 'deferred', reason: 'policy' });
+
+    // Same button shape, different claim: with on-demand nothing is queued, so
+    // the label must not promise an automatic load.
+    expect(visibleText()).toContain('Load DuckDB');
+    expect(visibleText()).not.toContain('loads after the globe');
+    expect(document.querySelector('[aria-live="polite"].sr-only')?.textContent).toMatch(
+      /is not loaded/,
+    );
   });
 });
 

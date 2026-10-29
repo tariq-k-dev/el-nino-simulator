@@ -26,8 +26,22 @@ import { useSyncExternalStore } from 'react';
 
 export type FailedReason = 'too-slow' | 'unreachable' | 'error';
 
-/** Why the engine is not booting yet. Surfaced so the UI can explain itself. */
-export type DeferredReason = 'policy' | 'user';
+/**
+ * Why the engine is not booting yet. Surfaced so the UI can explain itself.
+ *
+ *  - `'policy'` — device policy chose on-demand (saveData, 2G/3G, low RAM). Boot
+ *    only happens if the user asks. This is a durable state, not a wait.
+ *
+ *  - `'scene'`  — an AUTOMATIC boot (eager or idle) is queued and is deliberately
+ *    waiting for the globe to finish loading its textures first. It will start on
+ *    its own; the user does not have to do anything. Distinct from `'policy'`
+ *    because telling someone on a fast connection to press "Load DuckDB" when the
+ *    engine is about to start itself is a lie, and a stalled progress bar is a
+ *    worse one. A click here skips the wait — see `enableEngine()`.
+ *
+ *  - `'user'`   — reserved for a caller that explicitly parked the engine.
+ */
+export type DeferredReason = 'policy' | 'scene' | 'user';
 
 export type EngineStatus =
   | { phase: 'deferred'; reason: DeferredReason }

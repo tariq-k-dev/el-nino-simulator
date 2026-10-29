@@ -1,4 +1,4 @@
-import { Loader2, Radar } from 'lucide-react';
+import { Globe2, Loader2, Radar } from 'lucide-react';
 import { enableEngine } from '@/lib/engine/init';
 import { progressPercent, useEngineStatus } from '@/lib/engine/store';
 
@@ -89,6 +89,42 @@ export function EngineBadge({ now = Date.now() }: { now?: number }) {
   const status = useEngineStatus();
 
   if (status.phase === 'deferred') {
+    /**
+     * Waiting for the globe, with an automatic boot already queued.
+     *
+     * `reason === 'scene'` means an eager or idle boot is scheduled and is being
+     * held back deliberately so the wasm does not compete with 2.08 MB of globe
+     * texture for the same link (measured as ~10 s of extra boot time at 1.6
+     * Mbps). It says so in the same shape as the deferred badge, because from the
+     * user's point of view it IS deferred — the numbers on screen are already
+     * correct from the client-side model.
+     *
+     * Two failure modes this avoids:
+     *  - reading "unavailable" — the engine is about to load on its own, so
+     *    claiming it is unavailable is simply false;
+     *  - a stalled progress bar — no bytes are moving yet, so a percentage would
+     *    be invented. There is no `aria-busy` and no bar here at all.
+     *
+     * The Load button is present and does something useful: a click bypasses the
+     * gate entirely (`enableEngine()` never waits on the scene), so a user who
+     * wants the engine NOW does not have to wait for the globe.
+     */
+    if (status.reason === 'scene') {
+      return (
+        <button type="button" onClick={enableEngine} className={ACTION_BUTTON}>
+          <Globe2 size={11} className="text-slate-400" aria-hidden />
+          <span aria-hidden>
+            Client-side model · DuckDB loads after the globe · Load now ({WASM_WIRE_SIZE_LABEL})
+          </span>
+          <ScreenReaderOnly>
+            Using the built-in model. The DuckDB analytics engine is queued and will load
+            automatically once the globe has finished loading. Activate to load it now instead,
+            about 7 megabytes.
+          </ScreenReaderOnly>
+        </button>
+      );
+    }
+
     return (
       <button type="button" onClick={enableEngine} className={ACTION_BUTTON}>
         <Radar size={11} className="text-slate-400" aria-hidden />

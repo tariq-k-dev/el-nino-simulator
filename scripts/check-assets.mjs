@@ -43,6 +43,9 @@ const REQUIRED = [
 const FORBIDDEN_HOOKS = [
   '__SCENE_GATE_TIMEOUT_OVERRIDE__',
   '__sceneGate',
+  // Per-texture timeline: {requestStart, responseEnd, onLoad} per asset, plus the
+  // gate-open reconciliation. Diagnostic only — a visitor has no use for it.
+  '__textures',
   '__engineStore',
   '__bootErrors',
   '__camera',

@@ -121,8 +121,12 @@ test.describe('case d — 400 kbps, no Network Information API', () => {
     await page.goto('/');
 
     const failure = await waitForFailure(page, 240_000);
+    // `waitForFailure()` returns the ACCESSIBLE sentence, which words this state as
+    // "the connection is too slow"; the visual label says "Needs a faster
+    // connection". Assert the meaning, not one surface's phrasing — matching only
+    // the visual wording here fails a correct badge.
     expect(failure, 'auto mode should give up on a 400 kbps link').toMatch(
-      /Needs a faster connection/,
+      /too slow|Needs a faster connection/i,
     );
 
     // Exactly one host attempted: a cap trip means the NETWORK is the

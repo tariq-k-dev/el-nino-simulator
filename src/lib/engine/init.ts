@@ -32,6 +32,21 @@ const SET_TIMEOUT_FALLBACK_MS = 1_500;
 /** True once a boot has been kicked off (or is being waited on). */
 let started = false;
 
+/**
+ * The boot currently in flight, if any.
+ *
+ * Two paths can now race to call `start()`: the queued automatic boot resolving
+ * off `whenSceneSettled()`, and a user click on the badge while the gate is still
+ * holding the automatic boot (`enableEngine()` deliberately bypasses the gate).
+ * Without this guard the loser restarts the store at 0 bytes and re-issues the
+ * worker request — visible as a progress bar that jumps back to the start.
+ *
+ * `runScenario()` is already idempotent through `getClient()`'s singleton promise
+ * so the network cost is paid once either way; this keeps the STORE honest, which
+ * is what the badge renders.
+ */
+let bootInFlight: Promise<void> | null = null;
+
 /** Held so the idle path can be cancelled if a user-initiated boot pre-empts it. */
 let idleHandle: number | null = null;
 let idleTimer: ReturnType<typeof setTimeout> | null = null;
@@ -78,29 +93,49 @@ const WARMUP_STATE = {
 async function start(mode: BootMode): Promise<void> {
   started = true;
 
-  try {
-    // Hand DuckDB a PROMISE of the CSV text, not the text itself.
-    //
-    // Awaiting here would serialise the two large transfers: the worker script
-    // and wasm could not start downloading until enso.csv had finished, adding
-    // the CSV's latency to the boot on every link. Passing the promise lets the
-    // wasm download overlap the CSV fetch, and duckdb.ts awaits it only at
-    // table-registration time (after instantiate() resolves).
-    //
-    // The promise also guarantees a single request: DuckDB parses these exact
-    // bytes via registerFileText instead of fetching the file again.
-    const datasetText = loadDataset()
-      .then((d) => d.text)
-      .catch(() => null);
+  // A user click can pre-empt an automatic boot that is still waiting on the gate.
+  // Once the automatic path resolves it must not restart the store underneath the
+  // boot the user already started. See `bootInFlight`.
+  if (bootInFlight) return bootInFlight;
 
-    // A cheap query is enough to force instantiation, register the CSV and
-    // materialise the table. Its result is discarded: `useScenario` will run the
-    // real scenario and bump the epoch when the store flips to `ready`.
-    await runScenario(WARMUP_STATE, undefined, mode, datasetText);
-  } catch (error) {
-    // `getClient` already marked the store failed; this is only for visibility.
-    console.warn(`[engine] boot did not complete (${mode}):`, error);
-  }
+  // Nor may it re-enter after that boot FINISHED: `start()` reaches
+  // `bootFromHost()`, which calls `engineStore.startBooting()` and resets the
+  // progress bar to 0. A gate that resolves a beat after a user-initiated boot
+  // completed would therefore flash "Loading DuckDB 0%" over a ready engine.
+  const phase = engineStore.getSnapshot().phase;
+  if (phase === 'ready' || phase === 'booting') return;
+
+  bootInFlight = (async () => {
+    try {
+      // Hand DuckDB a PROMISE of the CSV text, not the text itself.
+      //
+      // Awaiting here would serialise the two large transfers: the worker script
+      // and wasm could not start downloading until enso.csv had finished, adding
+      // the CSV's latency to the boot on every link. Passing the promise lets the
+      // wasm download overlap the CSV fetch, and duckdb.ts awaits it only at
+      // table-registration time (after instantiate() resolves).
+      //
+      // The promise also guarantees a single request: DuckDB parses these exact
+      // bytes via registerFileText instead of fetching the file again.
+      const datasetText = loadDataset()
+        .then((d) => d.text)
+        .catch(() => null);
+
+      // A cheap query is enough to force instantiation, register the CSV and
+      // materialise the table. Its result is discarded: `useScenario` will run the
+      // real scenario and bump the epoch when the store flips to `ready`.
+      await runScenario(WARMUP_STATE, undefined, mode, datasetText);
+    } catch (error) {
+      // `getClient` already marked the store failed; this is only for visibility.
+      console.warn(`[engine] boot did not complete (${mode}):`, error);
+    } finally {
+      // Cleared so the "Load anyway" / "Retry" affordance works after a failure:
+      // a stuck promise here would swallow every later attempt.
+      bootInFlight = null;
+    }
+  })();
+
+  return bootInFlight;
 }
 
 /** Cancel a pending idle start, if any. */
@@ -187,6 +222,10 @@ export function initEngine(): void {
 
   if (policy === 'idle') {
     started = true;
+    // The engine is queued but will not touch the network for a while, so the UI
+    // must not claim it failed or show a progress bar for a transfer that has not
+    // begun. `'scene'` says "waiting for the globe", which is true.
+    engineStore.markDeferred('scene');
     // Gate order for idle: scene settled, THEN idle, THEN visible. The scene gate
     // first because it is the long pole; idling before it would just re-serialise.
     whenIdleAndVisible(() => {
@@ -204,8 +243,16 @@ export function initEngine(): void {
   // finish first gives the engine the pipe to itself.
   //
   // `whenSceneSettled()` always resolves (ready / failed / timeout) and never
-  // rejects, so a broken or slow scene can delay this by at most the gate's 30 s
+  // rejects, so a broken or slow scene can delay this by at most the gate's 120 s
   // safety timeout, and a failed scene boots immediately.
+  //
+  // The store is put in `deferred` with reason `'scene'` first, so the badge can
+  // say what is actually happening: the engine is queued and waiting for the
+  // globe. Without this the badge would show the pre-boot default (`'policy'`),
+  // which tells the user to click "Load DuckDB" for a boot that is already on its
+  // way, and a moment later flips to a progress bar for a transfer that had not
+  // started. `start()` overwrites this with `booting` the instant it runs.
+  engineStore.markDeferred('scene');
   void whenSceneSettled().then(() => {
     void start('auto');
   });
@@ -233,4 +280,5 @@ export function enableEngine(): void {
 export function __resetInitEngine(): void {
   cancelPendingIdle();
   started = false;
+  bootInFlight = null;
 }

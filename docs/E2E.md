@@ -53,17 +53,22 @@ node tests/e2e/wire-bytes.mjs --mbps 0.4 --runs 3 --stub
 dead-code-eliminated. `scripts/check-assets.mjs` fails the build if any hook name
 reappears in `assets/*.js`.
 
-`pnpm build:e2e` sets `VITE_E2E=1`, which keeps the hooks. The tracing scripts
+`pnpm build:e2e` sets `VITE_E2E=1` through `scripts/build-e2e.mjs`, which keeps the
+hooks. It is a Node wrapper rather than inline `VITE_E2E=1 vite build` because pnpm runs
+scripts through `cmd.exe` on Windows, where that POSIX assignment is parsed as a command
+name and fails — the E2E bundle then silently is not built, and the specs run against a
+production `dist/` with every hook stripped. The tracing scripts
 (`gate-effect`, `wire-bytes`, `abort-trace`, `boot-timeline`) and the
 `?debug` URL param only work against that build:
 
 | Hook | What it exposes |
 |---|---|
 | `window.__engineStore` | live engine store state |
-| `window.__sceneGate` | gate outcome + settle time |
+| `window.__sceneGate` | gate outcome, `openedAt` (performance.now clock), settle time |
+| `window.__textures` | per-texture `{requestStart, responseEnd, onLoad}` timeline, reconciled against gate-open |
 | `window.__scene` / `__camera` / `__gl` | three.js objects |
 | `window.__bootErrors` | errors captured before mount |
-| `window.__SCENE_GATE_TIMEOUT_OVERRIDE__` | shorten the 30 s gate timeout |
+| `window.__SCENE_GATE_TIMEOUT_OVERRIDE__` | shorten the 120 s gate timeout |
 
 ### Measuring wire bytes for real
 
@@ -135,6 +140,7 @@ per-host cache behaviour in case f observable.
 ```
 tests/e2e/
 ├── boot.spec.ts               cases a-i
+├── gate-clock.spec.ts         gate vs textures on ONE clock at 1.6 Mbps
 ├── harden.spec.ts             negative zero, dataset failure, fetch overlap, badge a11y
 ├── scene-gate.spec.ts         hanging textures + WebGL-disabled edge cases
 ├── acceptance-matrix.mjs      N-run min/median/max per network profile
@@ -155,7 +161,7 @@ Append `?debug` to any URL to get:
 | `window.__engineStore` | the live engine store — `getSnapshot()` gives exact `loaded`, `firstEventAt`, `decoded`, `phase`, `reason` |
 | `window.__scene`, `__camera`, `__gl` | the live three.js objects, for visual QA |
 | `window.__bootErrors` | errors captured before React mounts |
-| `window.__SCENE_GATE_TIMEOUT_OVERRIDE__` | set before load to shorten the 30 s scene-gate timeout in a test |
+| `window.__SCENE_GATE_TIMEOUT_OVERRIDE__` | set before load to shorten the 120 s scene-gate timeout in a test |
 
 Reading the store beats parsing the rendered percentage: the badge is throttled to
 10 writes/s and rounds to whole percent, so a 250 ms poll of the DOM cannot

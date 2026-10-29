@@ -16,12 +16,16 @@ import {
 /**
  * The gate decides when the eager boot is allowed to start, so its four outcomes
  * (ready / failed / timeout / bypass) each change observable product behaviour.
- * Fake timers keep the 30 s safety timeout instant in tests.
+ * Fake timers keep the 120 s safety timeout instant in tests.
  */
 
 describe('sceneGate — ready', () => {
   beforeEach(() => {
-    vi.useFakeTimers();
+    // `performance` is faked alongside the timers because the gate now stamps
+    // `openedAt` / `settledInMs` on performance.now(). Without it, advancing the
+    // fake clock moves setTimeout but not the clock being measured, and every
+    // elapsed-time assertion reads ~0.
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout', 'performance'] });
     __resetSceneGate();
   });
   afterEach(() => {
@@ -62,11 +66,64 @@ describe('sceneGate — ready', () => {
     await settled;
     expect(getSceneGateState().settledInMs).toBeGreaterThanOrEqual(1_000);
   });
+
+  /**
+   * The gate used to report only `settledInMs`, a Date.now() delta from gate
+   * creation, and it was compared directly against texture `responseEnd` values,
+   * which are milliseconds from navigation start. Two different zero points, so
+   * the comparison printed a ~1 s gap that did not exist ("gate opened at 11,721
+   * ms, last texture responseEnd 12,783 ms"). Everything the gate publishes is
+   * now on performance.now(), the same clock resource timing uses.
+   */
+  it('stamps openedAt/createdAt on the performance.now() clock, not Date.now()', async () => {
+    const settled = whenSceneSettled();
+    vi.advanceTimersByTime(1_200);
+    markSceneReady();
+    await settled;
+
+    const s = getSceneGateState();
+    expect(s.openedAt).not.toBeNull();
+    expect(s.createdAt).not.toBeNull();
+
+    // Decisive discriminator: an epoch millisecond value is ~1.7e12, while
+    // performance.now() is a small duration since page load.
+    expect(s.openedAt as number).toBeLessThan(1e9);
+    expect(s.createdAt as number).toBeLessThan(1e9);
+    expect(Date.now()).toBeGreaterThan(1e12);
+
+    // And it agrees with the clock resource timing is measured on.
+    expect(Math.abs((s.openedAt as number) - performance.now())).toBeLessThan(60_000);
+    expect(s.openedAt as number).toBeGreaterThanOrEqual(s.createdAt as number);
+  });
+
+  it('openedAt - responseEnd is a plain subtraction on one clock', async () => {
+    const settled = whenSceneSettled();
+    vi.advanceTimersByTime(500);
+    markSceneReady();
+    await settled;
+
+    const { openedAt } = getSceneGateState();
+    // A texture whose last byte landed 200 ms before the gate opened.
+    const textureResponseEnd = (openedAt as number) - 200;
+    expect(Math.round((openedAt as number) - textureResponseEnd)).toBe(200);
+  });
+
+  it('records which source satisfied the texture half', async () => {
+    const settled = whenSceneSettled();
+    markTexturesDone('timeline');
+    markFirstFrame();
+    await settled;
+    expect(getSceneGateState().texturesSource).toBe('timeline');
+  });
 });
 
 describe('sceneGate — failed', () => {
   beforeEach(() => {
-    vi.useFakeTimers();
+    // `performance` is faked alongside the timers because the gate now stamps
+    // `openedAt` / `settledInMs` on performance.now(). Without it, advancing the
+    // fake clock moves setTimeout but not the clock being measured, and every
+    // elapsed-time assertion reads ~0.
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout', 'performance'] });
     __resetSceneGate();
   });
   afterEach(() => {
@@ -98,7 +155,11 @@ describe('sceneGate — failed', () => {
 
 describe('sceneGate — timeout', () => {
   beforeEach(() => {
-    vi.useFakeTimers();
+    // `performance` is faked alongside the timers because the gate now stamps
+    // `openedAt` / `settledInMs` on performance.now(). Without it, advancing the
+    // fake clock moves setTimeout but not the clock being measured, and every
+    // elapsed-time assertion reads ~0.
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout', 'performance'] });
     __resetSceneGate();
   });
   afterEach(() => {
@@ -106,7 +167,7 @@ describe('sceneGate — timeout', () => {
     vi.useRealTimers();
   });
 
-  it('settles timeout after the default 30 s', async () => {
+  it('settles timeout after the default (120 s)', async () => {
     const settled = whenSceneSettled();
     vi.advanceTimersByTime(SCENE_GATE_TIMEOUT_MS - 1);
     expect(getSceneGateState().outcome).toBeNull();
@@ -114,6 +175,19 @@ describe('sceneGate — timeout', () => {
     vi.advanceTimersByTime(1);
     await expect(settled).resolves.toBe('timeout');
     expect(getSceneGateState().reason).toMatch(/did not settle/);
+  });
+
+  it('is long enough to outlast a slow-link texture set', () => {
+    // At 400 kbps the texture set finishes at 58.1 s (2B-VERIFY §10.1). A timeout
+    // shorter than that releases the boot into contention with the textures, which
+    // is the exact failure the gate exists to prevent.
+    expect(SCENE_GATE_TIMEOUT_MS).toBeGreaterThan(58_100);
+  });
+
+  it('is not so long that a hung texture parks the engine indefinitely', () => {
+    // A real user will not wait more than a couple of minutes for an enhancement
+    // that the app already works without.
+    expect(SCENE_GATE_TIMEOUT_MS).toBeLessThanOrEqual(180_000);
   });
 
   it('honours a test override so a hanging-texture case is fast', async () => {
@@ -137,7 +211,11 @@ describe('sceneGate — timeout', () => {
 
 describe('sceneGate — memoisation and subscription', () => {
   beforeEach(() => {
-    vi.useFakeTimers();
+    // `performance` is faked alongside the timers because the gate now stamps
+    // `openedAt` / `settledInMs` on performance.now(). Without it, advancing the
+    // fake clock moves setTimeout but not the clock being measured, and every
+    // elapsed-time assertion reads ~0.
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout', 'performance'] });
     __resetSceneGate();
   });
   afterEach(() => {
@@ -199,7 +277,11 @@ describe('initEngine — scene gate interaction', () => {
    *   user       never waits (explicit click)
    */
   beforeEach(() => {
-    vi.useFakeTimers();
+    // `performance` is faked alongside the timers because the gate now stamps
+    // `openedAt` / `settledInMs` on performance.now(). Without it, advancing the
+    // fake clock moves setTimeout but not the clock being measured, and every
+    // elapsed-time assertion reads ~0.
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout', 'performance'] });
     __resetSceneGate();
     vi.resetModules();
   });
@@ -222,13 +304,21 @@ describe('initEngine — scene gate interaction', () => {
     // statically-imported helpers would signal a different instance and the boot
     // would never proceed.
     const gate = await import('@/lib/engine/sceneGate');
+    const store = await import('@/lib/engine/store');
     __resetInitEngine();
     gate.__resetSceneGate();
+    store.engineStore.__reset();
 
     initEngine();
     await vi.advanceTimersByTimeAsync(100);
     // Scene has not settled: nothing must have booted.
     expect(runScenario).not.toHaveBeenCalled();
+
+    // And the store must say WHY it is waiting, so the badge can render
+    // "DuckDB loads after the globe" instead of the on-demand call to action.
+    const waiting = store.engineStore.getSnapshot();
+    expect(waiting.phase).toBe('deferred');
+    if (waiting.phase === 'deferred') expect(waiting.reason).toBe('scene');
 
     gate.markSceneReady();
     await vi.advanceTimersByTimeAsync(100);

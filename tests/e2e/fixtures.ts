@@ -162,12 +162,29 @@ export async function waitForReady(page: Page, timeoutMs = 200_000): Promise<num
   return null;
 }
 
-/** Wait until the badge reports a terminal failure. Returns the label. */
+/**
+ * Wait until the badge reports a terminal failure. Returns the label.
+ *
+ * The pattern must match the ACCESSIBLE sentence, not the visual spans.
+ * `badgeLabel()` reads `[aria-live="polite"].sr-only`, and for a too-slow boot
+ * that sentence is
+ *
+ *   "Using the built-in model. The connection is too slow for the DuckDB
+ *    analytics engine, about 7 megabytes. Activate to load it anyway."
+ *
+ * — it says "too slow", NOT the visual label's "Needs a faster connection". The
+ * old pattern only contained the visual wording, so this helper returned null
+ * after its full timeout while the badge on screen read correctly. Case d failed
+ * on exactly that, with a screenshot showing "Needs a faster connection".
+ */
+const FAILURE_PATTERN =
+  /too slow|Needs a faster connection|unavailable|could not be reached|DuckDB error|Retry/i;
+
 export async function waitForFailure(page: Page, timeoutMs = 200_000): Promise<string | null> {
   const t0 = Date.now();
   while (Date.now() - t0 < timeoutMs) {
     const lbl = await badgeLabel(page);
-    if (lbl && /Needs a faster connection|DuckDB unavailable|DuckDB error|Retry/.test(lbl)) return lbl;
+    if (lbl && FAILURE_PATTERN.test(lbl)) return lbl;
     await page.waitForTimeout(200);
   }
   return null;
@@ -189,11 +206,11 @@ export async function sparkPathCount(page: Page): Promise<number> {
   return page.evaluate(() => document.querySelectorAll('svg path').length);
 }
 
-/** Click the badge's opt-in button ("Load DuckDB" / "Load anyway" / "Retry"). */
+/** Click the badge's opt-in button ("Load DuckDB" / "Load now" / "Load anyway" / "Retry"). */
 export async function clickEnable(page: Page): Promise<boolean> {
   return page.evaluate(() => {
     const b = [...document.querySelectorAll('button')].find((x) =>
-      /Load DuckDB|Load anyway|Retry/.test(x.textContent ?? ''),
+      /Load DuckDB|Load now|Load anyway|Retry/.test(x.textContent ?? ''),
     );
     if (!b) return false;
     (b as HTMLButtonElement).click();

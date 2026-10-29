@@ -59,7 +59,9 @@ describe('badge vocabulary is derivable from the store', () => {
   const labelFor = (s: EngineStatus): string => {
     switch (s.phase) {
       case 'deferred':
-        return `Client-side model · Load DuckDB (~7 MB)`;
+        return s.reason === 'scene'
+          ? `Client-side model · DuckDB loads after the globe · Load now (~7 MB)`
+          : `Client-side model · Load DuckDB (~7 MB)`;
       case 'booting': {
         const pct = progressPercent(s);
         return pct === null ? 'Loading DuckDB' : `Loading DuckDB ${pct}%`;
@@ -94,9 +96,15 @@ describe('badge vocabulary is derivable from the store', () => {
     expect(tooSlow).toMatch(/^Client-side model · Needs a faster connection/);
     expect(other).toMatch(/^Client-side model · DuckDB unavailable · Retry$/);
 
-    // All five are distinguishable, so a matcher on one cannot accidentally
-    // match another.
-    expect(new Set([deferred, booting, ready, tooSlow, other]).size).toBe(5);
+    // All six are distinguishable, so a matcher on one cannot accidentally match
+    // another. `scene` matters most: it is the state the badge is in while an
+    // automatic boot waits behind the scene gate, and it must not be confusable
+    // with `policy` ("press a button") or with a failure.
+    const scene = labelFor({ phase: 'deferred', reason: 'scene' });
+    expect(scene).toMatch(/^Client-side model · DuckDB loads after the globe · Load now/);
+    expect(scene).not.toMatch(/unavailable|too slow|Retry/);
+
+    expect(new Set([deferred, scene, booting, ready, tooSlow, other]).size).toBe(6);
   });
 
   it('no label contains the retired "(CDN unreachable)" phrasing', () => {

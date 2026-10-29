@@ -210,7 +210,10 @@ test.describe('5 — worker/wasm download overlaps the dataset fetch', () => {
     });
 
     const t0 = Date.now();
-    await page.goto('/');
+    // `?debug` installs window.__sceneGate (E2E builds only). Without it the gate
+    // open time is unreadable and this spec cannot tell "the worker waited for the
+    // gate" from "the worker was serialised behind the CSV".
+    await page.goto('/?debug');
 
     // Both transfers must have completed before measuring.
     await expect
@@ -234,13 +237,49 @@ test.describe('5 — worker/wasm download overlaps the dataset fetch', () => {
     expect(csvStart, 'enso.csv must be requested').not.toBeNull();
     expect(workerStart, 'the worker script must be requested').not.toBeNull();
 
-    // Overlap: the worker begins before the CSV finishes. A serialised
-    // implementation would start the worker only after csvEnd.
+    /**
+     * The bug this case defends against is `await loadDataset()` BEFORE booting,
+     * which serialises the CSV and the worker/wasm so the worker cannot be
+     * requested until the CSV has fully arrived.
+     *
+     * That is no longer observable as `workerStart < csvEnd` at 1.6 Mbps, because
+     * the scene gate now deliberately holds the boot until the globe's textures
+     * have finished — ~14 s here, long after the 3.4 s CSV. The worker therefore
+     * starts after the CSV ends *by design*, and asserting overlap would fail a
+     * correct build.
+     *
+     * The property worth pinning is the absence of serialisation: the worker must
+     * start no later than whichever prerequisite legitimately gates it — the gate
+     * opening, or the CSV completing. Anything later means it waited on something
+     * it had no reason to wait for.
+     */
+    const gateOpenedAt = (await page.evaluate(
+      () => window.__sceneGate?.getState?.()?.openedAt ?? null,
+    )) as number | null;
+
+    // The gate's clock is navigation-relative (performance.now()), same as the
+    // resource timings above, so these are directly comparable.
+    const legitimateStart = Math.max(gateOpenedAt ?? 0, csvEnd ?? 0);
+    const SLACK_MS = 2_000;
+
     expect(
       workerStart!,
-      `worker started at ${workerStart}ms, csv ended at ${csvEnd}ms — the worker ` +
-        'download is blocked behind the dataset fetch',
-    ).toBeLessThan(csvEnd!);
+      `worker started at ${workerStart}ms, but nothing should have held it past ` +
+        `${Math.round(legitimateStart)}ms (gate opened ` +
+        `${gateOpenedAt === null ? 'n/a' : Math.round(gateOpenedAt)}ms, CSV ended ` +
+        `${csvEnd}ms). The worker download is serialised behind something it does ` +
+        'not depend on.',
+    ).toBeLessThan(legitimateStart + SLACK_MS);
+
+    // And when the gate happens to open before the CSV finishes, overlap must
+    // still actually happen — the original assertion, kept for that case.
+    if (gateOpenedAt !== null && gateOpenedAt < (csvEnd ?? 0)) {
+      expect(
+        workerStart!,
+        `gate opened at ${Math.round(gateOpenedAt)}ms and the CSV ended at ${csvEnd}ms, ` +
+          'so the worker should have overlapped the CSV fetch',
+      ).toBeLessThan(csvEnd!);
+    }
 
     // Exactly one CSV request.
     expect(rel.filter((e) => e.kind === 'csv' && e.type === 'req')).toHaveLength(1);
@@ -258,8 +297,12 @@ function classify(url: string): 'csv' | 'worker' | null {
 }
 
 test.describe('6 — badge accessibility', () => {
-  // Boot at Fast 4G is normally seconds, but a cold CDN can take longer.
-  test.setTimeout(180_000);
+  // Boot at Fast 4G is normally seconds, but a cold CDN can take longer. The
+  // failed-phase case below waits on a 400 kbps auto-abort, which needs minutes:
+  // 4.3 min measured for the equivalent case-d run. With the old 180 s cap this
+  // test could not outlast its own `waitForFailure(240_000)` and timed out on the
+  // test guard rather than on anything the app did.
+  test.setTimeout(400_000);
 
   test('sr-only sentence replaces concatenated spans in every phase', async ({ page }) => {
     await page.addInitScript(

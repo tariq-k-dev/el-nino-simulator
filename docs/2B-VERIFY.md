@@ -494,16 +494,18 @@ opens at 11.72 s (all textures done + a frame drawn), the worker starts at 13.72
 after the textures — and **zero** non-boot bytes overlap the boot window. The 10 s of
 contention measured in §7 is gone.
 
-**Case d does not achieve zero overlap, and the reason is structural.** At 400 kbps
-`earth_clouds.jpg` (966 KB) alone needs ~19 s, so the texture set finishes at
-**58.1 s** — longer than the gate's **30 s** safety timeout. The gate therefore times
-out and the boot proceeds while `earth_day.jpg` (463 KB) and `earth_clouds.jpg`
-(966 KB) are still in flight, giving 1.43 MB of overlap.
+**Case d did not achieve zero overlap with the gate at 30 s, and the reason was
+structural.** At 400 kbps `earth_clouds.jpg` (966 KB) alone needs ~19 s, so the
+texture set finishes at **58.1 s** — nearly double the old **30 s** timeout. The
+gate timed out and the boot proceeded while `earth_day.jpg` (463 KB) and
+`earth_clouds.jpg` (966 KB) were still in flight, giving 1.43 MB of overlap.
 
-This is the safety timeout working as designed, not a defect: the alternative is
-parking the engine behind a 58 s texture download. Fixing the overlap at 400 kbps
-requires either a longer timeout (rejected — it delays the boot) or not loading
-2.08 MB of texture on a 400 kbps link (a product decision, out of scope here).
+> **Superseded — the timeout is now 120 s.** §11 raises `SCENE_GATE_TIMEOUT_MS` to
+> 120 s, which outlasts the 58.1 s texture set, so this overlap no longer occurs.
+> The reasoning that produced the old value ("a longer timeout delays the boot")
+> was wrong: the engine is an *enhancement*, so a long wait costs nothing the user
+> can see, while a short timeout actively forces the wasm into contention with the
+> textures.
 
 **Secondary texture loads:** `texturesRequestedAfterWorkerStart` is **empty** in both
 profiles — no texture is re-requested after the gate opens, so `useProgress`
@@ -622,3 +624,205 @@ stability.
    *abort* later (39,787 → 49,559 ms) because the early-abort projection samples a
    rate after the first progress event, and textures delay that event from 13.4 s
    to 29.7 s. Reported, not fixed: both are behaviour changes outside this pass.
+
+---
+
+## 12. Gate close-fix: one clock, and a texture counter that could lie
+
+Two defects, one measurement artifact.
+
+### 12.1 The ~1 s gap was two clock origins, not a real gap
+
+The previous report read:
+
+| | value |
+|---|---|
+| gate opened | 11,721 ms |
+| last texture `responseEnd` | 12,783 ms |
+
+…and concluded the gate opened ~1 s *before* the last texture finished. It did not.
+The two numbers had different zero points:
+
+| Quantity | Clock | Zero point |
+|---|---|---|
+| `sceneGate.settledInMs` | `Date.now()` delta | **gate creation** (`initEngine()`) |
+| texture `responseEnd` | `PerformanceResourceTiming` | **navigation start** |
+
+`initEngine()` runs well after navigation start, so the gate's figure was missing an
+offset of roughly a second. Subtracting them compared an interval against a timestamp.
+
+**Fix:** everything the gate publishes is now on `performance.now()` — `createdAt`,
+`openedAt`, and therefore `settledInMs`. That shares its time origin with
+`PerformanceResourceTiming`, so the comparison is a subtraction. `openedAt` is the
+field to compare against `responseEnd`; `settledInMs` remains a duration.
+
+`createdAt === 0` also stopped being a usable "not created yet" sentinel:
+`performance.now()` legitimately returns 0 at navigation start, and under fake timers
+always starts there. Replaced with an explicit `hasCreatedAt` flag.
+
+### 12.2 A texture counter that reports 100% while a texture is in flight
+
+The gate's texture condition was drei's `useProgress` aggregate alone
+(`active === false && progress === 100`). Its computation is:
+
+```js
+progress = (loaded - saveLastTotalLoaded) / (total - saveLastTotalLoaded) * 100 || 100
+```
+
+`saveLastTotalLoaded` is pinned to `total` on the first `onLoad`. A **second wave** of
+items started afterwards gives a zero denominator → `NaN` → `|| 100` → **"100%"** while
+those items have loaded nothing, and `active` is momentarily false between waves. So the
+aggregate can report "done" mid-load, and a gate reading only it opens early.
+
+**Fix:** `src/lib/engine/textureTimeline.ts` instruments three's
+`DefaultLoadingManager` (`itemStart` / `itemEnd` / `itemError`, chained rather than
+replaced so drei's counters keep working) and records per asset
+`{requestStart, responseEnd, threeOnLoad, viaLoadingManager}`. The gate now requires
+`started > 0 && pending === 0`. An `itemError` counts as settled — `itemEnd` is never
+called for a failed load, so without that a 404 texture parks the gate until its 120 s
+timeout.
+
+Installation is at **module scope** in `Globe.tsx`, not in an effect: `useTexture`
+calls `itemStart` during render, so an effect would miss the first item.
+
+A second component (`TextureSettledSignal`) re-checks on every individual item
+transition, because the aggregate can be stuck at 100% and never re-fire.
+
+**No texture was ever loading outside drei/Suspense.** All five globe textures go
+through `useTexture` → `DefaultLoadingManager` and were therefore always *tracked*. The
+defect was that the gate consulted a counter that could misreport them, not that an
+asset bypassed the tracker. Asserted directly:
+`report.rows.every(r => r.trackedByProgress)`.
+
+### 12.3 Measured, on one clock — `node tests/e2e/gate-effect.mjs --mbps 1.6`
+
+| texture | reqStart | responseEnd | three onLoad | decode |
+|---|---|---|---|---|
+| earth_normal.jpg | 2,182 | 5,792 | 5,844 | 52 |
+| earth_night.jpg | 2,182 | 8,319 | 8,393 | 74 |
+| earth_specular.jpg | 2,182 | 8,518 | 8,582 | 64 |
+| earth_day.jpg | 2,182 | 10,392 | 10,452 | 60 |
+| **earth_clouds.jpg** | 2,182 | **12,823** | **12,891** | 68 |
+
+| | ms |
+|---|---|
+| gate opened (`performance.now`) | 13,759 |
+| **gate − last `responseEnd`** | **+936** |
+| **gate − last `onLoad`** | **+868** |
+| decode tail (last byte → last onLoad) | 68 |
+| non-boot bytes overlapping boot | **0** |
+| `texturesSource` | `timeline` |
+| `progressCoversAll` | `true` |
+
+The gate opens ~0.9 s **after** the last texture's last byte, and ~0.87 s after the last
+`onLoad`. Both differences are positive, so the ordering claim now holds on a single
+clock. Two runs of the same profile: +948 ms and +936 ms.
+
+`decode` is 52–74 ms per texture — the gap between the last byte and three's `onLoad`.
+It is real work (image decode), not noise: a gate that compared only `responseEnd`
+would open mid-decode, which is why both comparisons are asserted.
+
+### 12.4 What the e2e now pins — `tests/e2e/gate-clock.spec.ts` (1.6 Mbps)
+
+1. every texture tracked by the channel the gate reads;
+2. no texture still `pending` when the gate has opened;
+3. `gate-open >= max(responseEnd)`;
+4. `gate-open >= max(onLoad)`;
+5. zero non-boot bytes overlapping the boot window;
+6. no texture requested after the worker started.
+
+Runs in 51 s and passes.
+
+### 12.5 Four e2e failures that were NOT product bugs
+
+The first full run after the fix was 17/21. All four failures were in the tests:
+
+1. **`waitForFailure()` matched the wrong surface.** It reads the accessible
+   `[aria-live].sr-only` sentence (correct), but the pattern listed only the *visual*
+   wording `"Needs a faster connection"` while the sentence says *"the connection is
+   too slow"*. It returned `null` after its full timeout with a screenshot showing a
+   correct badge. Pattern now accepts either.
+2. **`boot.spec.ts` case d** then asserted only the visual phrase against that same
+   sentence — same fix applied at the call site.
+3. **`harden.spec.ts` case 5 asserted `workerStart < csvEnd`.** That was a valid
+   serialisation test *before* the gate existed: at 1.6 Mbps the gate now holds the
+   boot until the textures finish (~14 s), long after the 3.4 s CSV, so the worker
+   starts after the CSV **by design** and the old assertion fails a correct build.
+   Rewritten to test the actual property — no serialisation — as
+   `workerStart <= max(gateOpen, csvEnd) + slack`, with the original overlap assertion
+   kept for the case where the gate opens before the CSV. The spec now navigates to
+   `/?debug`, since `__sceneGate` is debug-only and the judgement needs the gate time.
+4. **`gate-clock.spec.ts` polled `window.__engineStore`**, which `main.tsx` installs
+   only under `?debug` while the spec navigates to `/`. It polled an absent hook for
+   the full 300 s — a 5.5-minute non-failure. Now polls the badge.
+5. **`harden.spec.ts` badge-a11y failed-phase** had `test.setTimeout(180_000)` around a
+   `waitForFailure(240_000)`: it could not outlast its own wait. Raised to 400 s.
+
+**Final: 21/21 passed, 9.9 min, exit 0.**
+
+### 12.6 `build:e2e` never ran on Windows
+
+```json
+"build:e2e": "... && VITE_E2E=1 vite build && ..."
+```
+
+pnpm runs scripts through `cmd.exe`, where a POSIX assignment is parsed as a command
+name:
+
+```
+'VITE_E2E' is not recognized as an internal or external command
+```
+
+So the E2E bundle was never built on this machine and `pnpm e2e` ran the specs against
+whatever `dist/` held last — after `pnpm build`, a production bundle with every hook
+dead-code-eliminated. The specs then failed on `window.__sceneGate` being undefined,
+which reads as a product bug.
+
+Replaced with `scripts/build-e2e.mjs`, which sets `VITE_E2E` in the spawned process's
+environment. Verified both ways:
+
+| hook | E2E build | production build |
+|---|---|---|
+| `__sceneGate` | 1 | **0** |
+| `__textures` | 1 | **0** |
+| `__engineStore` | 1 | **0** |
+| `__bootErrors` | 1 | **0** |
+| `__SCENE_GATE_TIMEOUT_OVERRIDE__` | 1 | **0** |
+
+### 12.7 Badge while the gate holds the boot
+
+`DeferredReason` gains `'scene'`. `initEngine()` calls
+`markDeferred('scene')` before waiting on the gate, for **both** eager and idle.
+
+Before this the badge showed the pre-boot default (`'policy'`) during the gate wait,
+which told the user to press "Load DuckDB" for a boot already on its way, and then
+flipped to a progress bar for a transfer that had not started.
+
+| reason | visible label |
+|---|---|
+| `policy` | `Client-side model · Load DuckDB (~7 MB)` |
+| **`scene`** | **`Client-side model · DuckDB loads after the globe · Load now (~7 MB)`** |
+
+No percentage, no ETA, **no progress bar**, no `aria-busy`, and never the word
+"unavailable" — nothing has failed and no bytes are moving. The button calls
+`enableEngine()`, which bypasses the gate. `status.test.ts` now pins six
+distinguishable label families.
+
+A `bootInFlight` guard was added: a user click during the gate wait, followed by the
+gate resolving, used to restart the store at 0 bytes (bar jumps backwards) and re-issue
+the worker request. `start()` is now a no-op if a boot is in flight or the store is
+already `ready`/`booting`.
+
+---
+
+## 13. Final gate state
+
+| command | result |
+|---|---|
+| `pnpm tsc -b` | clean |
+| `pnpm lint` | clean (`--max-warnings 0`) |
+| `pnpm test` | **491 passed** (19 files) |
+| `pnpm build` | 17 assets, 5.06 MB, **0 hooks** |
+| `pnpm build:e2e` | 17 assets, hooks present |
+| `pnpm e2e` | **21/21 passed**, 9.9 min |
+| `gate-effect --mbps 1.6` | **PASS**, gate − last responseEnd = **+936 ms** |
