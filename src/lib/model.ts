@@ -41,9 +41,26 @@ const JET_TEMP_COUPLING = 0.6;
 export const clamp = (value: number, min: number, max: number): number =>
   Math.min(max, Math.max(min, value));
 
+/**
+ * Round half away from zero, matching DuckDB's `round(double, n)`.
+ *
+ * JS `Math.round` rounds halves toward +Infinity, so on an exact tie the two
+ * disagree for negative values: round(-46.15, 1) is -46.2 in DuckDB but -46.1
+ * with Math.round. That is not hypothetical — `asia_precip` at sst=1.5, jet=0.35
+ * evaluates to exactly -46.15, and the golden fixture (generated from DuckDB)
+ * caught the mismatch.
+ *
+ * Halves away from zero is the standard `round()` behaviour in SQL engines and
+ * matches the fixture, so the two engines now agree on ties as well as on
+ * everything else.
+ */
 export const round = (value: number, digits = 2): number => {
   const factor = 10 ** digits;
-  return Math.round(value * factor) / factor;
+  const scaled = value * factor;
+  // `Math.round(-0.5)` is -0, so use abs + sign to force halves away from zero.
+  const rounded = Math.sign(scaled) * Math.round(Math.abs(scaled));
+  // `|| 0` normalises -0 to 0 so deep equality and JSON stay clean.
+  return (rounded / factor) || 0;
 };
 
 /** Thermal colour ramp: cool cyan (0°C) → amber → searing red (3°C). */

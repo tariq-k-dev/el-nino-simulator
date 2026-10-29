@@ -33,14 +33,13 @@ import {
 import { round } from '@/lib/model';
 
 /**
- * Rounding helpers matching DuckDB's `round(x, n)`.
+ * Rounding for summary statistics.
  *
- * DuckDB rounds halves away from zero for doubles; JS `Math.round` rounds halves
- * up (toward +Infinity). For negative halfway values these differ: round(-0.25, 1)
- * is -0.3 in DuckDB and -0.2 with Math.round. model.ts's `round` uses Math.round,
- * and model.test.ts pins the metrics to DuckDB parity, so reusing it keeps the
- * scenario numbers consistent with the existing contract. Summary statistics use
- * the same helper for the same reason.
+ * Uses model.ts's `round`, which now implements halves-away-from-zero to match
+ * DuckDB's `round(double, n)`. That matters concretely: JS `Math.round` ties
+ * toward +Infinity, so -46.15 rounds to -46.1 instead of DuckDB's -46.2 — a
+ * discrepancy the golden fixture caught in `asia_precip` before this was fixed.
+ * Sharing one helper means the scenario and summary paths cannot drift apart.
  */
 const r3 = (v: number): number => round(v, 3);
 
