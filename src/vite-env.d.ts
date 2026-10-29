@@ -15,3 +15,18 @@ declare const __DUCKDB_DECODED_BYTES__: {
 
 /** Version of @duckdb/duckdb-wasm that produced the sizes above. */
 declare const __DUCKDB_VERSION__: string;
+
+/**
+ * E2E-only build flag.
+ *
+ * `true` only when the bundle is built with VITE_E2E=1 (see package.json
+ * `build:e2e`). Every diagnostic/test hook in the app is wrapped in this check so
+ * Rollup's dead-code elimination removes it from a production build.
+ */
+interface ImportMetaEnv {
+  readonly VITE_E2E?: string;
+}
+
+interface ImportMeta {
+  readonly env: ImportMetaEnv;
+}

@@ -19,7 +19,8 @@
     "typecheck": "tsc -b --noEmit false --pretty false",
     "e2e": "playwright test",
     "e2e:report": "playwright show-report .cache/e2e-report",
-    "parity:full": "node scripts/parity-driver.mjs"
+    "parity:full": "node scripts/parity-driver.mjs",
+    "build:e2e": "node scripts/copy-duckdb.mjs && tsc -b && VITE_E2E=1 vite build && node scripts/check-assets.mjs --allow-e2e"
   },
   "dependencies": {
     "@duckdb/duckdb-wasm": "^1.29.0",

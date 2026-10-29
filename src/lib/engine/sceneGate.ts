@@ -165,8 +165,12 @@ export function whenSceneSettled(): Promise<SceneOutcome> {
   // E2E override: a hanging-texture test must not wait the full 30 s. Read from
   // the page rather than plumbing a prop through React — the gate lives outside
   // the component tree.
+  //
+  // E2E-only by construction: VITE_E2E is a compile-time literal, so in a
+  // production build this branch folds to `undefined` and the property name is
+  // removed. scripts/check-assets.mjs asserts that.
   const pageOverride =
-    typeof window !== 'undefined'
+    import.meta.env.VITE_E2E === '1' && typeof window !== 'undefined'
       ? (window as { __SCENE_GATE_TIMEOUT_OVERRIDE__?: number }).__SCENE_GATE_TIMEOUT_OVERRIDE__
       : undefined;
   const ms = timeoutOverride ?? pageOverride ?? SCENE_GATE_TIMEOUT_MS;

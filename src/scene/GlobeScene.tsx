@@ -132,11 +132,10 @@ export function GlobeScene({
         // Hand the export path a way to render on demand — see lib/canvasCapture.
         registerRenderer({ render: () => gl.render(scene, camera), domElement: gl.domElement });
 
-        // Opt-in scene handle for visual QA: append ?debug to the URL to inspect
-        // or toggle individual layers (atmosphere, clouds, glint) from devtools.
-        // Costs nothing when the param is absent, and makes colour/opacity
-        // regressions measurable instead of a matter of taste.
-        if (new URLSearchParams(window.location.search).has('debug')) {
+        // Opt-in scene handle for visual QA. E2E/dev builds only: the flag is a
+        // compile-time literal, so this whole assignment is dead-code-eliminated
+        // from a production bundle.
+        if (import.meta.env.VITE_E2E === '1' && new URLSearchParams(window.location.search).has('debug')) {
           Object.assign(window, { __scene: scene, __camera: camera, __gl: gl });
         }
         // A lost context means the globe can never settle. Report it and let the

@@ -3,14 +3,23 @@ import { createRoot } from 'react-dom/client';
 import App from '@/App';
 import '@/index.css';
 import { initEngine } from '@/lib/engine/init';
+import { engineStore } from '@/lib/engine/store';
+
+// Diagnostic hooks are E2E/dev-build only.
+//
+// VITE_E2E is a string at compile time ('1' or undefined), so this is a literal
+// boolean after Vite's substitution and Rollup drops the whole block from a
+// production bundle. Verified by scripts/check-assets.mjs, which fails the build
+// if any hook name reappears in dist/.
+const E2E_HOOKS = import.meta.env.VITE_E2E === '1';
 
 // With ?debug, install an early error collector BEFORE React mounts.
 //
 // Why here: the R3F frame loop starts on the first render, so any throw during
 // mount has already happened by the time a devtools console hook can be attached
 // from outside. Catching it at module-evaluation time is the only way to see the
-// real message. Costs nothing when the param is absent.
-if (new URLSearchParams(window.location.search).has('debug')) {
+// real message.
+if (E2E_HOOKS && new URLSearchParams(window.location.search).has('debug')) {
   const log: Array<{ kind: string; message: string; stack: string }> = [];
   Object.assign(window, { __bootErrors: log });
 
@@ -32,9 +41,7 @@ if (new URLSearchParams(window.location.search).has('debug')) {
   // Expose the engine store so a diagnostic can read the exact numbers behind a
   // boot (loaded bytes, first-event timestamp, decoded size) instead of inferring
   // them from the rendered percentage. Read-only use; nothing writes here.
-  void import('@/lib/engine/store').then(({ engineStore }) => {
-    Object.assign(window, { __engineStore: engineStore });
-  });
+  Object.assign(window, { __engineStore: engineStore });
 }
 
 const container = document.getElementById('root');

@@ -8,7 +8,7 @@
  * It also asserts the things the app needs at runtime are present, because a
  * missing DuckDB worker is a blank canvas, not a build error.
  */
-import { readdir, stat } from 'node:fs/promises';
+import { readFile, readdir, stat } from 'node:fs/promises';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -28,6 +28,35 @@ const REQUIRED = [
   'duckdb/duckdb-browser-eh.worker.js',
   'duckdb/duckdb-browser-mvp.worker.js',
 ];
+
+/**
+ * Diagnostic/test hook names that must NEVER appear in a production bundle.
+ *
+ * These are gated behind `import.meta.env.VITE_E2E === '1'` in the source, so
+ * Rollup's dead-code elimination removes them. If one reappears it means either
+ * the gate was dropped or Vite stopped folding the literal — both are silent in
+ * the browser and only visible here.
+ *
+ * `--allow-e2e` skips this check, because a `build:e2e` bundle legitimately
+ * contains them.
+ */
+const FORBIDDEN_HOOKS = [
+  '__SCENE_GATE_TIMEOUT_OVERRIDE__',
+  '__engineStore',
+  '__bootErrors',
+  '__camera',
+  '__globe',
+];
+
+/**
+ * Which bundles are ours.
+ *
+ * The check is scoped to assets/ because the DuckDB worker scripts in
+ * duckdb/ are third-party minified Emscripten output: a bare `__gl` appears
+ * inside them as part of unrelated internal identifiers, so scanning them
+ * produces false positives that would block every build.
+ */
+const isAppBundle = (rel) => rel.startsWith('assets/') && /\.(js|mjs)$/.test(rel);
 
 /**
  * Files that must NOT appear in dist/.
@@ -61,6 +90,7 @@ function fail(message) {
 }
 
 async function main() {
+  const allowE2E = process.argv.includes('--allow-e2e');
   const files = await walk(dist);
   const rows = await Promise.all(
     files.map(async (file) => ({
@@ -92,6 +122,32 @@ async function main() {
     fail(
       `${rel} is ${MB(size)} MB - Cloudflare Pages rejects single assets over 25 MiB. Serve it from a CDN (see BUNDLES in src/lib/duckdb.ts).`,
     );
+  }
+
+  // --- test hooks must not ship -------------------------------------------------
+  if (!allowE2E) {
+    const jsFiles = rows.filter((r) => isAppBundle(r.rel));
+    const leaks = [];
+    for (const { rel } of jsFiles) {
+      const source = await readFile(path.join(dist, rel), 'utf8');
+      for (const hook of FORBIDDEN_HOOKS) {
+        // Word-boundary match: minified code concatenates many identifiers, so a
+        // bare substring test would flag `__gl` inside `__globalX`.
+        if (new RegExp(`\\b${hook}\\b`).test(source)) leaks.push({ rel, hook });
+      }
+    }
+    for (const { rel, hook } of leaks) {
+      fail(
+        `test-only hook "${hook}" is present in ${rel} — it must be behind ` +
+          `import.meta.env.VITE_E2E and dead-code-eliminated. Use "pnpm build" ` +
+          `(not build:e2e) for a production bundle.`,
+      );
+    }
+    if (leaks.length === 0) {
+      console.log(`\n  OK  no test hooks in ${jsFiles.length} production JS assets`);
+    }
+  } else {
+    console.log('\n  note: --allow-e2e, skipping the test-hook check');
   }
 
   const forbidden = rows.filter((r) => FORBIDDEN.some((f) => f.test(r.rel)));
