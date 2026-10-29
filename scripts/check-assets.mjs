@@ -42,6 +42,7 @@ const REQUIRED = [
  */
 const FORBIDDEN_HOOKS = [
   '__SCENE_GATE_TIMEOUT_OVERRIDE__',
+  '__sceneGate',
   '__engineStore',
   '__bootErrors',
   '__camera',

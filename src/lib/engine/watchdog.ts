@@ -16,7 +16,8 @@
  *                 0.42 s, so 15 s is generous; a trip here means the transfer
  *                 died, not that it is slow.
  *   AUTO_CAP_MS — ceiling on a projected total, auto mode only. This is the
- *                 "too slow to be worth it" judgement.
+ *                 "too slow to be worth it" judgement. It counts from the FIRST
+ *                 PROGRESS EVENT, not from navigation start — see the constant.
  *   EARLY_ABORT_* — projects the finish time and gives up well before the cap
  *                 is reached, so a user on 400 kbps is not left waiting 137 s.
  *
@@ -32,7 +33,22 @@ export const CONNECT_MS = 12_000;
 /** Gap between consecutive progress events that means the transfer died. */
 export const STALL_MS = 15_000;
 
-/** Projected total boot ceiling, auto mode only. */
+/**
+ * Projected total boot ceiling, auto mode only.
+ *
+ * WHERE THE CLOCK STARTS — this matters and was previously undocumented:
+ *
+ * `AUTO_CAP_MS` is compared against a projection measured **from the first
+ * progress event**, not from navigation start and not from `createWatchdog()`.
+ * Everything before that event is governed by `CONNECT_MS` instead, and the
+ * worker download plus wasm fetch up to the first byte are not counted here.
+ *
+ * So a boot whose *window* (watchdog start -> ready) is shorter than 90 s can
+ * still not be at risk, while the same connection measured from navigation start
+ * may exceed 90 s because of scene-gate wait and worker acquisition. §10 of
+ * 2B-VERIFY restates the 0.8 / 1.0 Mbps results in window terms for exactly this
+ * reason.
+ */
 export const AUTO_CAP_MS = 90_000;
 
 /** Earliest point (since first progress event) at which early abort may trip. */
@@ -66,6 +82,22 @@ const EARLY_ABORT_CONSECUTIVE = 3;
  * A 6 s sliding window measures the CURRENT rate, which is what "will this finish
  * in time?" actually depends on. It is long enough to span several progress events
  * (the worst observed gap is 0.42 s) and short enough to forget the ramp-up.
+ *
+ * COMPRESSIBILITY BIAS (measured in 2B-gate-close): the rate here is in DECODED
+ * bytes per ms, because `bytesLoaded` counts decoded output while `bytesTotal` is
+ * the encoded size. The ratio between them is not constant:
+ *
+ *   - the CDN serves the wasm brotli-encoded, 6.45 MB wire / 32.66 MB decoded
+ *     (ratio 0.198)
+ *   - an uncompressed origin serves 32.66 MB wire for the same 32.66 MB decoded
+ *     (ratio 1.0)
+ *
+ * So the same socket throughput projects a *different* remaining time depending on
+ * how compressible the payload is on the wire. On a 400 kbps link the early abort
+ * therefore fires later against a compressed CDN than against an uncompressed
+ * server, even though both deliver bytes at the same rate. The rule is measuring
+ * decode progress, which is the only progress signal available, and its abort time
+ * inherits that bias.
  */
 export const EARLY_RATE_WINDOW_MS = 6_000;
 

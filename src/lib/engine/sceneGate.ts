@@ -186,6 +186,16 @@ export function getSceneGateState(): SceneGateState {
   return state;
 }
 
+/**
+ * E2E-only: publish the gate state so a trace can read the exact gate-open time.
+ *
+ * Guarded by the compile-time VITE_E2E literal, so the assignment (and the hook
+ * name) are removed from a production bundle. check-assets.mjs asserts that.
+ */
+if (import.meta.env.VITE_E2E === '1' && typeof window !== 'undefined') {
+  Object.assign(window, { __sceneGate: { getState: getSceneGateState } });
+}
+
 /** Subscribe to gate state changes (for `useSyncExternalStore`). */
 export function subscribeSceneGate(listener: Listener): () => void {
   listeners.add(listener);

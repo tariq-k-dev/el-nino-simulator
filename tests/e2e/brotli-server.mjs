@@ -95,6 +95,14 @@ const server = createServer(async (req, res) => {
     return;
   }
 
+  // Clear the log so a multi-run measurement counts each run separately.
+  if ((req.url || '').startsWith('/_serverreset')) {
+    requestLog.length = 0;
+    res.writeHead(200, { 'Content-Type': 'application/json' });
+    res.end('{"reset":true}');
+    return;
+  }
+
   const found = await resolveFile(req.url || '/');
 
   // SPA fallback, matching public/_redirects.
@@ -165,10 +173,37 @@ const server = createServer(async (req, res) => {
 
   res.setHeader('Content-Length', String(st.size));
   res.writeHead(200);
-  createReadStream(full).pipe(res);
+
+  // Count bytes ACTUALLY flushed to the socket, not the file size. When the
+  // client aborts mid-download (which is exactly what an early abort does), the
+  // difference between these two numbers is the whole measurement.
+  if (/\.wasm$/.test(full)) {
+    const entry = { url: req.url, status: 200, bytesSent: 0, total: st.size, completed: false };
+    requestLog.push(entry);
+    const stream = createReadStream(full, { highWaterMark: 64 * 1024 });
+    stream.on('data', (chunk) => {
+      entry.bytesSent += chunk.length;
+    });
+    stream.on('end', () => {
+      entry.completed = true;
+    });
+    stream.on('error', () => {
+      /* client gone */
+    });
+    res.on('close', () => {
+      stream.destroy();
+    });
+    stream.pipe(res);
+  } else {
+    const stream = createReadStream(full);
+    stream.pipe(res);
+  }
 
   if (isTracked) {
-    requestLog.push({ url: req.url, status: 200, ifNoneMatch: inm, etag, body: st.size });
+    // Worker/CSV are not the measurement target here; keep the old shape working.
+    if (!/\.wasm$/.test(full)) {
+      requestLog.push({ url: req.url, status: 200, ifNoneMatch: inm, etag, body: st.size });
+    }
   }
   stats.raw += 1;
   stats.bytesIn += st.size;

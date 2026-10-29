@@ -37,7 +37,51 @@ node tests/e2e/abort-trace.mjs --mbps 0.4 --stub
 
 # scene-gate edge cases (hanging textures, WebGL disabled)
 pnpm e2e -- tests/e2e/scene-gate.spec.ts
+
+# gate effectiveness: does the worker start only after the gate opens?
+node tests/e2e/gate-effect.mjs --mbps 1.6
+node tests/e2e/gate-effect.mjs --mbps 0.4
+
+# measured wire bytes at abort (needs the wasm served locally — see below)
+node tests/e2e/wire-bytes.mjs --mbps 0.4 --runs 3
+node tests/e2e/wire-bytes.mjs --mbps 0.4 --runs 3 --stub
 ```
+
+### Two different builds
+
+`pnpm build` produces the **production** bundle, with every diagnostic hook
+dead-code-eliminated. `scripts/check-assets.mjs` fails the build if any hook name
+reappears in `assets/*.js`.
+
+`pnpm build:e2e` sets `VITE_E2E=1`, which keeps the hooks. The tracing scripts
+(`gate-effect`, `wire-bytes`, `abort-trace`, `boot-timeline`) and the
+`?debug` URL param only work against that build:
+
+| Hook | What it exposes |
+|---|---|
+| `window.__engineStore` | live engine store state |
+| `window.__sceneGate` | gate outcome + settle time |
+| `window.__scene` / `__camera` / `__gl` | three.js objects |
+| `window.__bootErrors` | errors captured before mount |
+| `window.__SCENE_GATE_TIMEOUT_OVERRIDE__` | shorten the 30 s gate timeout |
+
+### Measuring wire bytes for real
+
+The wasm normally comes from the CDN, brotli-compressed, so a decoded-byte counter
+cannot tell you what crossed the wire. To measure it, serve the wasm from the local
+brotli server (which counts bytes actually flushed before a client disconnect) and
+bake that URL into an E2E build:
+
+```bash
+mkdir -p dist/duckdb && cp node_modules/@duckdb/duckdb-wasm/dist/duckdb-*.wasm dist/duckdb/
+VITE_E2E=1 VITE_DUCKDB_WASM_BASE=http://localhost:4199/duckdb \
+  node ./node_modules/vite/bin/vite.js build
+node tests/e2e/wire-bytes.mjs --mbps 0.4 --runs 3
+```
+
+Note the local server sends the wasm **uncompressed**, so the measured wire/decoded
+ratio is ~2.5 rather than the CDN's ~0.20. Results under both are in
+`docs/2B-VERIFY.md` §10.2.
 
 Each script prints a JSON summary and also writes it under `.cache/` (gitignored).
 
