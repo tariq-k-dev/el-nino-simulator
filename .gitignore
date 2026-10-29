@@ -31,3 +31,8 @@ __pycache__/
 
 # Temp CSV written by scripts/gen-engine-golden.mjs during a run
 enso-golden-*.csv
+
+# Playwright artifacts (reports, traces, failure screenshots) — never committed.
+.cache/
+test-results/
+playwright-report/
