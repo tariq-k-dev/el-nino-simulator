@@ -16,7 +16,9 @@ import { parquetMetadata, parquetReadObjects } from 'hyparquet';
  * in the same Node process as the rest of the suite.
  */
 
-const PARQUET = path.resolve(__dirname, '../../public/data/enso_historical.parquet');
+// Repo-only source of truth. Moved out of public/ in 2C so it can never be
+// served or copied into dist/; the browser only ever loads enso.csv.
+const PARQUET = path.resolve(__dirname, '../../data/enso_historical.parquet');
 
 interface Row {
   date: Date;

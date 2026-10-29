@@ -26,7 +26,7 @@ The historical record is **real**: 918 monthly observations (Jan 1950 – Jun 20
 | 3D | `@react-three/fiber`, `@react-three/drei`, `three` | Declarative scene graph; `useFrame` gives a single controlled render loop |
 | Post-processing | `@react-three/postprocessing` | Bloom on the atmosphere + vignette, pinned to the fiber-8 line |
 | Analytics | `@duckdb/duckdb-wasm` | Real OLAP in the browser — joins, windowing, and nearest-neighbour matching without shipping a server |
-| Data pipeline | Python + Polars | Fetches the CPC text table, parses the fixed-width format, emits the parquet |
+| Data pipeline | Python + Polars | Fetches the CPC text table, parses the fixed-width format, emits the CSV (served) and parquet (repo-only source of truth) |
 | Styling | Tailwind CSS | Design tokens in `tailwind.config.js`, component classes in `src/index.css` |
 | Icons | `lucide-react` | — |
 | Build | Vite 5 | — |
@@ -75,7 +75,7 @@ Two secondary levers modulate those bases linearly: jet-stream displacement (±1
 `https://www.cpc.ncep.noaa.gov/data/indices/ersst5.nino.mth.91-20.ascii` — the
 NOAA Climate Prediction Center's monthly ERSSTv5 indices for all four Niño
 regions on the 1991–2020 base — parses the fixed-width table with Polars, handles
-the `999` missing-value sentinels, and writes a Snappy-compressed parquet.
+the `999` missing-value sentinels, and writes both a CSV for the browser and a Snappy-compressed parquet kept in `data/` as a repo-only source of truth.
 
 **What is observed and what is modelled.** Every SST column is the CPC value
 verbatim. The regional impact columns (precip, drought, flood, convection) are
@@ -86,7 +86,7 @@ produced it. Every row carries a `model_basis` column saying so, and
 +2.72 °C, 1997-11 = +2.41 °C) so a silent ingest break cannot ship.
 
 ```bash
-pnpm data                        # fetch + rebuild the parquet
+pnpm data                        # fetch + rebuild the CSV and parquet
 uv run python scripts/generate_enso_data.py --offline   # reuse cached download
 uv run python scripts/generate_enso_data.py --since 1980
 ```
@@ -113,7 +113,7 @@ pnpm preview      # serve dist/ locally
 
 ### Regenerating the dataset (optional)
 
-The parquet is committed. To rebuild it:
+`data/enso_historical.parquet` is committed as the source of truth and is **never served** — `public/data/enso.csv` is what the browser loads. To rebuild both:
 
 ```bash
 uv run python scripts/generate_enso_data.py

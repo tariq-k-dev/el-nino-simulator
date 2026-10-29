@@ -56,7 +56,11 @@ SOURCE_NAME = "NOAA CPC ERSSTv5 (1991-2020 base)"
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 CACHE_DIR = PROJECT_ROOT / ".cache"
 CACHE_FILE = CACHE_DIR / "cpc_ersst5_nino.ascii"
-OUTPUT_FILE = PROJECT_ROOT / "public" / "data" / "enso_historical.parquet"
+# The parquet lives in data/, NOT public/, so it is a repo-only source of truth:
+# it is never served, never fetched, and never copied into dist/. The browser only
+# ever sees the CSV. Keeping it out of public/ makes "no parquet in dist" a
+# structural guarantee rather than a convention someone has to remember.
+OUTPUT_FILE = PROJECT_ROOT / "data" / "enso_historical.parquet"
 CSV_FILE = PROJECT_ROOT / "public" / "data" / "enso.csv"
 SCHEMA_FILE = PROJECT_ROOT / "public" / "data" / "schema.sql"
 
@@ -271,7 +275,7 @@ def main() -> int:
 
     df = enrich(parse(raw), args.since)
 
-    OUTPUT_FILE.parent.mkdir(parents=True, exist_ok=True)
+    args.out.parent.mkdir(parents=True, exist_ok=True)
     # Snappy, not ZSTD: it is the most portable parquet codec (readable by
     # duckdb-wasm, pyarrow, and browser-side readers like hyparquet without
     # extra decompression codecs). At 918 rows the size difference is nil.

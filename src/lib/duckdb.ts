@@ -22,10 +22,10 @@
  * networks. `read_csv()` is built into the wasm core and needs no extension, so
  * the engine becomes fully self-contained.
  *
- * `public/data/enso_historical.parquet` remains the source of truth in the
- * repo (and is what dataset.test.ts validates); `public/data/enso.csv` is a
- * derived artifact emitted from the same Polars frame by
- * scripts/generate_enso_data.py, so the two cannot drift.
+ * `data/enso_historical.parquet` is the repo-only source of truth (validated by
+ * dataset.test.ts); `public/data/enso.csv` is a derived artifact emitted from the
+ * same Polars frame by scripts/generate_enso_data.py, so the two cannot drift.
+ * The parquet deliberately lives outside public/ so it can never be served.
  */
 
 import * as duckdb from '@duckdb/duckdb-wasm';
@@ -46,7 +46,7 @@ import { acquireWorker, WorkerLoadError } from '@/lib/engine/workerBoot';
 export type BootMode = 'auto' | 'user';
 
 /**
- * Derived CSV, emitted next to the parquet by scripts/generate_enso_data.py.
+ * Derived CSV, emitted by scripts/generate_enso_data.py.
  * Loaded with read_csv() so no DuckDB extension is required at runtime.
  */
 const DATA_URL = '/data/enso.csv';

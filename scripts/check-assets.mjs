@@ -21,12 +21,26 @@ const TOTAL_BUDGET = 30 * 1024 * 1024;
 
 const REQUIRED = [
   'index.html',
-  // The runtime dataset: read_csv() needs no DuckDB extension, so this is the
-  // file the browser actually loads. The parquet alongside it is the repo source
-  // of truth, validated by dataset.test.ts.
+  // The runtime dataset. read_csv() needs no DuckDB extension, so this is the one
+  // and only data file the browser loads — it feeds both engines (TsEngine parses
+  // the text, DuckEngine reads it via registerFileText).
   'data/enso.csv',
   'duckdb/duckdb-browser-eh.worker.js',
   'duckdb/duckdb-browser-mvp.worker.js',
+];
+
+/**
+ * Files that must NOT appear in dist/.
+ *
+ * The parquet is now a repo-only source of truth in data/. Shipping it would
+ * mean either a second fetch the app does not use, or a silent regression back
+ * to the read_parquet path that needed the extensions.duckdb.org download.
+ */
+const FORBIDDEN = [
+  {
+    test: (rel) => rel.endsWith('.parquet'),
+    why: 'the parquet is a repo-only source of truth in data/; the browser only loads enso.csv',
+  },
 ];
 
 const MB = (bytes) => (bytes / 1024 / 1024).toFixed(2);
@@ -78,6 +92,12 @@ async function main() {
     fail(
       `${rel} is ${MB(size)} MB - Cloudflare Pages rejects single assets over 25 MiB. Serve it from a CDN (see BUNDLES in src/lib/duckdb.ts).`,
     );
+  }
+
+  const forbidden = rows.filter((r) => FORBIDDEN.some((f) => f.test(r.rel)));
+  for (const { rel } of forbidden) {
+    const rule = FORBIDDEN.find((f) => f.test(rel));
+    fail(`forbidden file in dist/: ${rel} — ${rule?.why}`);
   }
 
   // A local .wasm in dist means the CDN split was reverted by accident.
