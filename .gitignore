@@ -28,3 +28,6 @@ __pycache__/
 
 # Wrangler
 .wrangler/
+
+# Temp CSV written by scripts/gen-engine-golden.mjs during a run
+enso-golden-*.csv
