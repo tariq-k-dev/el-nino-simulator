@@ -19,6 +19,7 @@
  */
 
 import type { RegionId, ScenarioMetrics, ScenarioState } from '@/types/enso';
+import { fixed, signed } from '@/lib/format';
 
 export const SST_MIN = 0;
 export const SST_MAX = 3;
@@ -172,14 +173,17 @@ export function computeMetrics(state: ScenarioState): ScenarioMetrics {
 
 /** The headline metric per region, in display order, for cards and the HUD. */
 export function regionHeadline(metrics: ScenarioMetrics, region: RegionId): string {
+  // `signed` prints "+x" / "-x" / "0" — never "+0.00" and never "-0.00".
+  // A hardcoded "+" prefix printed "+0.00" at strength 0, and once the value
+  // became -0 it printed "+-0.00".
   switch (region) {
     case 'pacific':
-      return `+${metrics.pacificSstDev.toFixed(2)}°C SST dev`;
+      return `${signed(metrics.pacificSstDev, 2)}°C SST dev`;
     case 'us-west':
-      return `${metrics.usPrecip > 0 ? '+' : ''}${metrics.usPrecip.toFixed(1)}% precip`;
+      return `${signed(metrics.usPrecip, 1)}% precip`;
     case 'se-asia':
-      return `${metrics.asiaPrecip.toFixed(1)}% precip`;
+      return `${fixed(metrics.asiaPrecip, 1)}% precip`;
     case 'horn-africa':
-      return `+${metrics.africaPrecip.toFixed(1)}% precip`;
+      return `${signed(metrics.africaPrecip, 1)}% precip`;
   }
 }

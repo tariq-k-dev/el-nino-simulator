@@ -1,3 +1,4 @@
+import { fixed } from '@/lib/format';
 interface MetricBarProps {
   label: string;
   value: number;
@@ -21,7 +22,7 @@ export function MetricBar({
   format,
 }: MetricBarProps) {
   const clamped = Math.min(max, Math.max(min, value));
-  const display = format ? format(value) : `${value > 0 ? '+' : ''}${value.toFixed(1)}`;
+  const display = format ? format(value) : `${value > 0 ? '+' : ''}${fixed(value, 1)}`;
 
   const pct = ((clamped - min) / (max - min)) * 100;
   const zeroPct = ((0 - min) / (max - min)) * 100;

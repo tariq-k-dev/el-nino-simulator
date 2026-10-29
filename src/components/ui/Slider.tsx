@@ -1,4 +1,5 @@
 import { useId, useMemo } from 'react';
+import { fixed } from '@/lib/format';
 
 interface SliderProps {
   label: string;
@@ -32,7 +33,7 @@ export function Slider({
 }: SliderProps) {
   const id = useId();
   const pct = useMemo(() => ((value - min) / (max - min)) * 100, [value, min, max]);
-  const display = format ? format(value) : value.toFixed(2);
+  const display = format ? format(value) : fixed(value, 2);
 
   const trackStyle = {
     background: `linear-gradient(90deg, ${accent} 0%, ${accent} ${pct}%, rgba(148,197,255,0.16) ${pct}%, rgba(148,197,255,0.16) 100%)`,

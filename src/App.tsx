@@ -8,6 +8,7 @@ import { useScenario } from '@/state/useScenario';
 import { REGION_MAP } from '@/lib/regions';
 import { buildReportHtml, captureCanvas, downloadPng, openReport } from '@/lib/report';
 import type { RegionId } from '@/types/enso';
+import { fixed } from '@/lib/format';
 
 export default function App() {
   const {
@@ -41,7 +42,7 @@ export default function App() {
       if (snapshot) {
         downloadPng(
           snapshot,
-          `el-nino-snapshot-${scenario.sstAnomaly.toFixed(2)}C.png`,
+          `el-nino-snapshot-${fixed(scenario.sstAnomaly, 2)}C.png`,
         );
       }
       const html = buildReportHtml({

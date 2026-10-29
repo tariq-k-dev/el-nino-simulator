@@ -4,6 +4,7 @@ import { Slider } from '@/components/ui/Slider';
 import { Sparkline } from '@/components/ui/Sparkline';
 import type { HistoryState } from '@/state/useEngine';
 import { thermalColor, SST_MAX, SST_MIN } from '@/lib/model';
+import { fixed } from '@/lib/format';
 
 interface ControlDeckProps {
   scenario: ScenarioState;
@@ -74,7 +75,7 @@ export function ControlDeck({
               </div>
               <div className="text-right leading-none">
                 <span className="num text-[22px] font-semibold tracking-[-0.04em]" style={{ color: accent }}>
-                  {scenario.sstAnomaly.toFixed(2)}
+                  {fixed(scenario.sstAnomaly, 2)}
                 </span>
                 <span className="num ml-0.5 text-[10px] text-slate-400">°C</span>
               </div>
@@ -153,7 +154,7 @@ export function ControlDeck({
               step={0.01}
               accent="#a78bfa"
               onChange={(v) => onChange({ jetStreamShift: v })}
-              format={(v) => (v >= 0 ? `+${v.toFixed(2)}` : v.toFixed(2))}
+              format={(v) => (v >= 0 ? `+${fixed(v, 2)}` : fixed(v, 2))}
               hint="Negative = equatorward, positive = poleward displacement"
             />
 
@@ -179,7 +180,7 @@ export function ControlDeck({
                 <span className="text-[8px] uppercase tracking-[0.13em] text-slate-500">Impact Index</span>
               </div>
               <div className="num mt-1 text-[17px] font-semibold leading-none text-slate-100">
-                {metrics.globalImpactIndex.toFixed(1)}
+                {fixed(metrics.globalImpactIndex, 1)}
                 <span className="ml-0.5 text-[8.5px] font-medium text-slate-500">/100</span>
               </div>
             </div>
@@ -189,7 +190,7 @@ export function ControlDeck({
                 <span className="text-[8px] uppercase tracking-[0.13em] text-slate-500">Ag Exposure</span>
               </div>
               <div className="num mt-1 text-[17px] font-semibold leading-none text-slate-100">
-                {metrics.agricultureExposure.toFixed(0)}
+                {fixed(metrics.agricultureExposure, 0)}
                 <span className="ml-0.5 text-[8.5px] font-medium text-slate-500">%</span>
               </div>
             </div>

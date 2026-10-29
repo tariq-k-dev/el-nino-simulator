@@ -13,6 +13,7 @@
 import type { AnalyticsPayload, RegionDefinition, RegionId, ScenarioMetrics, ScenarioState } from '@/types/enso';
 import { REGION_MAP } from '@/lib/regions';
 import { thermalColor } from '@/lib/model';
+import { fixed } from '@/lib/format';
 
 export { captureCanvas } from '@/lib/canvasCapture';
 
@@ -27,16 +28,16 @@ export function downloadPng(dataUrl: string, filename: string): void {
 
 function metricRows(m: ScenarioMetrics): Array<[string, string, string]> {
   return [
-    ['Equatorial Pacific — SST deviation', `+${m.pacificSstDev.toFixed(2)}`, '°C'],
-    ['Equatorial Pacific — convection shift', m.pacificConvection.toFixed(1), '/100'],
-    ['Western US — precipitation change', `${m.usPrecip > 0 ? '+' : ''}${m.usPrecip.toFixed(1)}`, '%'],
-    ['Western US — temperature deviation', m.usTempDevF.toFixed(2), '°F'],
-    ['SE Asia — precipitation change', `${m.asiaPrecip.toFixed(1)}`, '%'],
-    ['SE Asia — drought index', m.asiaDrought.toFixed(2), '/10'],
-    ['Horn of Africa — precipitation change', `+${m.africaPrecip.toFixed(1)}`, '%'],
-    ['Horn of Africa — flood index', m.africaFlood.toFixed(2), '/10'],
-    ['Global impact index', m.globalImpactIndex.toFixed(1), '/100'],
-    ['Agriculture exposure', m.agricultureExposure.toFixed(0), '%'],
+    ['Equatorial Pacific — SST deviation', `+${fixed(m.pacificSstDev, 2)}`, '°C'],
+    ['Equatorial Pacific — convection shift', fixed(m.pacificConvection, 1), '/100'],
+    ['Western US — precipitation change', `${m.usPrecip > 0 ? '+' : ''}${fixed(m.usPrecip, 1)}`, '%'],
+    ['Western US — temperature deviation', fixed(m.usTempDevF, 2), '°F'],
+    ['SE Asia — precipitation change', `${fixed(m.asiaPrecip, 1)}`, '%'],
+    ['SE Asia — drought index', fixed(m.asiaDrought, 2), '/10'],
+    ['Horn of Africa — precipitation change', `+${fixed(m.africaPrecip, 1)}`, '%'],
+    ['Horn of Africa — flood index', fixed(m.africaFlood, 2), '/10'],
+    ['Global impact index', fixed(m.globalImpactIndex, 1), '/100'],
+    ['Agriculture exposure', fixed(m.agricultureExposure, 0), '%'],
   ];
 }
 
@@ -72,8 +73,8 @@ export function buildReportHtml({ scenario, metrics, analytics, activeRegion, sn
       (a) => `
         <tr>
           <td>${a.label}</td>
-          <td class="v">${a.anomaly.toFixed(2)}<span class="u">°C</span></td>
-          <td class="v dim">±${a.delta.toFixed(2)}</td>
+          <td class="v">${fixed(a.anomaly, 2)}<span class="u">°C</span></td>
+          <td class="v dim">±${fixed(a.delta, 2)}</td>
           <td>${a.riskTier}</td>
         </tr>`,
     )
@@ -138,7 +139,7 @@ export function buildReportHtml({ scenario, metrics, analytics, activeRegion, sn
     </div>
     <div style="text-align:right">
       <div class="pill">${metrics.riskTier}</div>
-      <div class="eyebrow" style="margin-top:8px">Global SST +${scenario.sstAnomaly.toFixed(2)} °C</div>
+      <div class="eyebrow" style="margin-top:8px">Global SST +${fixed(scenario.sstAnomaly, 2)} °C</div>
     </div>
   </header>
 
@@ -146,11 +147,11 @@ export function buildReportHtml({ scenario, metrics, analytics, activeRegion, sn
   <div class="grid">
     <div class="card">
       <div class="k">Global SST anomaly</div>
-      <div class="big">+${scenario.sstAnomaly.toFixed(2)} °C</div>
+      <div class="big">+${fixed(scenario.sstAnomaly, 2)} °C</div>
     </div>
     <div class="card">
       <div class="k">Jet displacement / ag weight</div>
-      <div class="big">${scenario.jetStreamShift >= 0 ? '+' : ''}${scenario.jetStreamShift.toFixed(2)} · ${Math.round(
+      <div class="big">${scenario.jetStreamShift >= 0 ? '+' : ''}${fixed(scenario.jetStreamShift, 2)} · ${Math.round(
         scenario.agricultureWeight * 100,
       )}%</div>
     </div>
@@ -192,7 +193,7 @@ export function buildReportHtml({ scenario, metrics, analytics, activeRegion, sn
 
   <footer>
     <span>Super El Niño Global Impact Simulator · tariqkhan.dev</span>
-    <span>Query ${analytics.queryMs.toFixed(1)} ms · model output, not a weather forecast</span>
+    <span>Query ${fixed(analytics.queryMs, 1)} ms · model output, not a weather forecast</span>
   </footer>
 </body>
 </html>`;

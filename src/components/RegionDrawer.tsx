@@ -6,6 +6,7 @@ import { MetricBar } from '@/components/ui/MetricBar';
 import { Sparkline } from '@/components/ui/Sparkline';
 import { deltaDisplay, formatDelta } from '@/lib/regions';
 import { thermalColor } from '@/lib/model';
+import { fixed } from '@/lib/format';
 
 interface RegionDrawerProps {
   region: RegionDefinition | null;
@@ -30,13 +31,13 @@ function buildHud(id: RegionId, m: ScenarioMetrics, units: 'metric' | 'imperial'
       return {
         headline: {
           label: 'SST Deviation',
-          value: `${dev.value >= 0 ? '+' : ''}${dev.value.toFixed(2)}`,
+          value: `${dev.value >= 0 ? '+' : ''}${fixed(dev.value, 2)}`,
           unit: dev.unit,
         },
         stats: [
-          { label: 'Convection Shift', value: m.pacificConvection.toFixed(0), unit: '/100', accent: '#38bdf8' },
+          { label: 'Convection Shift', value: fixed(m.pacificConvection, 0), unit: '/100', accent: '#38bdf8' },
           { label: 'Walker Displacement', value: m.pacificConvection > 60 ? 'Severe' : m.pacificConvection > 35 ? 'Moderate' : 'Weak', unit: '', accent: '#38bdf8' },
-          { label: 'Basin Anomaly', value: m.sst.toFixed(2), unit: '°C', accent: '#38bdf8' },
+          { label: 'Basin Anomaly', value: fixed(m.sst, 2), unit: '°C', accent: '#38bdf8' },
         ],
         bars: [
           { label: 'Convection displacement', value: m.pacificConvection, accent: '#38bdf8' },
@@ -62,7 +63,7 @@ function buildHud(id: RegionId, m: ScenarioMetrics, units: 'metric' | 'imperial'
             label: 'Temp Deviation',
             value: (() => {
               const d = deltaDisplay(m.usTempDevF * (5 / 9), units);
-              return `${d.value >= 0 ? '+' : ''}${d.value.toFixed(1)}`;
+              return `${d.value >= 0 ? '+' : ''}${fixed(d.value, 1)}`;
             })(),
             unit: units === 'imperial' ? '°F' : '°C',
             accent: '#a78bfa',
@@ -86,8 +87,8 @@ function buildHud(id: RegionId, m: ScenarioMetrics, units: 'metric' | 'imperial'
       return {
         headline: { label: 'Precip Change', value: formatDelta(m.asiaPrecip, '%'), unit: '' },
         stats: [
-          { label: 'Drought Index', value: m.asiaDrought.toFixed(2), unit: '/10', accent: '#fb923c' },
-          { label: 'Monsoon Deficit', value: `${Math.min(100, Math.abs(m.asiaPrecip)).toFixed(0)}`, unit: '%', accent: '#fb923c' },
+          { label: 'Drought Index', value: fixed(m.asiaDrought, 2), unit: '/10', accent: '#fb923c' },
+          { label: 'Monsoon Deficit', value: `${fixed(Math.min(100, Math.abs(m.asiaPrecip)), 0)}`, unit: '%', accent: '#fb923c' },
           { label: 'Fire Weather', value: m.asiaDrought > 6 ? 'Extreme' : m.asiaDrought > 3 ? 'Elevated' : 'Normal', unit: '', accent: '#f97316' },
         ],
         bars: [
@@ -104,8 +105,8 @@ function buildHud(id: RegionId, m: ScenarioMetrics, units: 'metric' | 'imperial'
       return {
         headline: { label: 'Precip Change', value: formatDelta(m.africaPrecip, '%'), unit: '' },
         stats: [
-          { label: 'Flood Index', value: m.africaFlood.toFixed(2), unit: '/10', accent: '#34d399' },
-          { label: 'Short-Rains Surplus', value: `+${Math.max(0, m.africaPrecip).toFixed(0)}`, unit: '%', accent: '#34d399' },
+          { label: 'Flood Index', value: fixed(m.africaFlood, 2), unit: '/10', accent: '#34d399' },
+          { label: 'Short-Rains Surplus', value: `+${fixed(Math.max(0, m.africaPrecip), 0)}`, unit: '%', accent: '#34d399' },
           { label: 'Displacement Risk', value: m.africaFlood > 5 ? 'High' : m.africaFlood > 2.5 ? 'Moderate' : 'Low', unit: '', accent: '#10b981' },
         ],
         bars: [
@@ -178,8 +179,8 @@ export function RegionDrawer({ region, metrics, analytics, units, onClose }: Reg
                   style={{ background: accent, boxShadow: `0 0 8px ${accent}` }}
                 />
                 <span className="font-mono text-[8.5px] uppercase tracking-[0.2em] text-slate-400">
-                  Impact Zone · {region?.lat.toFixed(0)}°{region && region.lat >= 0 ? 'N' : 'S'}{' '}
-                  {Math.abs(region?.lon ?? 0).toFixed(0)}°{region && region.lon >= 0 ? 'E' : 'W'}
+                  Impact Zone · {fixed(region?.lat ?? 0, 0)}°{region && region.lat >= 0 ? 'N' : 'S'}{' '}
+                  {fixed(Math.abs(region?.lon ?? 0), 0)}°{region && region.lon >= 0 ? 'E' : 'W'}
                 </span>
               </div>
               <h2 className="truncate text-[17px] font-semibold leading-tight tracking-[-0.015em] text-slate-50">
@@ -319,13 +320,13 @@ export function RegionDrawer({ region, metrics, analytics, units, onClose }: Reg
                           >
                             <td className="num px-2 py-1.5 text-[10px] text-slate-300">{a.label}</td>
                             <td className="num px-2 py-1.5 text-[10px] text-slate-100">
-                              {a.anomaly.toFixed(2)}
+                              {fixed(a.anomaly, 2)}
                             </td>
                             <td className="num px-2 py-1.5 text-[9.5px] text-slate-400">
-                              {a.absoluteSst > 0 ? a.absoluteSst.toFixed(1) : '—'}
+                              {a.absoluteSst > 0 ? fixed(a.absoluteSst, 1) : '—'}
                             </td>
                             <td className="num px-2 py-1.5 text-[9.5px] text-slate-500">
-                              ±{a.delta.toFixed(2)}
+                              ±{fixed(a.delta, 2)}
                             </td>
                             <td className="px-2 py-1.5">
                               <span
@@ -364,7 +365,7 @@ export function RegionDrawer({ region, metrics, analytics, units, onClose }: Reg
                 <div className="mt-1 flex items-center justify-between text-[8px] uppercase tracking-[0.1em] text-slate-500">
                   <span>{analytics.summary.rowCount} monthly obs</span>
                   <span>
-                    peak {analytics.summary.maxAnomaly.toFixed(2)}°C · {analytics.summary.maxAnomalyDate}
+                    peak {fixed(analytics.summary.maxAnomaly, 2)}°C · {analytics.summary.maxAnomalyDate}
                   </span>
                 </div>
                 {/* Provenance: a reader must be able to tell observed from modelled. */}
@@ -384,7 +385,7 @@ export function RegionDrawer({ region, metrics, analytics, units, onClose }: Reg
         <div className="shrink-0 border-t border-white/[0.07] px-4 py-2.5">
           <div className="flex items-center justify-between">
             <span className="num text-[8.5px] uppercase tracking-[0.12em] text-slate-500">
-              {analytics.queryMs > 0 ? `query ${analytics.queryMs.toFixed(1)} ms` : 'engine warming up'}
+              {analytics.queryMs > 0 ? `query ${fixed(analytics.queryMs, 1)} ms` : 'engine warming up'}
             </span>
             <span className="flex items-center gap-1 text-[8.5px] uppercase tracking-[0.12em] text-slate-500">
               <span className="h-1 w-1 rounded-full bg-emerald-400" />
