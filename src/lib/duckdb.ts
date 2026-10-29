@@ -465,20 +465,30 @@ async function boot(mode: BootMode = 'auto'): Promise<DuckDbClient> {
  */
 function getClient(mode: BootMode = 'auto'): Promise<DuckDbClient> {
   if (!clientPromise) {
-    clientPromise = boot(mode).catch((error) => {
-      // Mark the store *before* clearing the promise, so a subscriber reading
-      // status in the same tick never sees a transient "booting".
-      if (error instanceof EngineTooSlowError) {
-        engineStore.markFailed('too-slow');
-      } else if (error instanceof EngineUnreachableError) {
-        engineStore.markFailed('unreachable');
-      } else {
-        engineStore.markFailed('error');
-      }
-      // Reset so a later retry (e.g. the user clicking "Load anyway") can run.
-      clientPromise = null;
-      throw error;
-    });
+    const startedAt = performance.now();
+    clientPromise = boot(mode)
+      .then((client) => {
+        // Transition to ready HERE, not inside bootFromHost: this is the one
+        // place that knows both the host that actually succeeded and the total
+        // elapsed time. Without it the store would sit in `booting` forever and
+        // the UI would never switch off the TS model.
+        engineStore.markReady(activeWasmHost ?? 'unknown', Math.round(performance.now() - startedAt));
+        return client;
+      })
+      .catch((error) => {
+        // Mark the store *before* clearing the promise, so a subscriber reading
+        // status in the same tick never sees a transient "booting".
+        if (error instanceof EngineTooSlowError) {
+          engineStore.markFailed('too-slow');
+        } else if (error instanceof EngineUnreachableError) {
+          engineStore.markFailed('unreachable');
+        } else {
+          engineStore.markFailed('error');
+        }
+        // Reset so a later retry (e.g. the user clicking "Load anyway") can run.
+        clientPromise = null;
+        throw error;
+      });
   }
   return clientPromise;
 }
