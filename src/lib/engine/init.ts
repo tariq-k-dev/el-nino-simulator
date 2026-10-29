@@ -20,6 +20,7 @@ import { decideBootPolicy, type DeviceSignals } from '@/lib/engine/policy';
 import { engineStore } from '@/lib/engine/store';
 import { runScenario, type BootMode } from '@/lib/duckdb';
 import { loadDataset } from '@/lib/data/dataset';
+import { whenSceneSettled } from '@/lib/engine/sceneGate';
 import { AGRI_DEFAULT, JET_DEFAULT, SST_DEFAULT } from '@/lib/model';
 
 /** `requestIdleCallback` timeout: boot even if the page never goes idle. */
@@ -177,7 +178,8 @@ export function initEngine(): void {
 
   if (policy === 'on-demand') {
     // Leave the badge in `deferred` with the policy reason; enableEngine() will
-    // pick it up when the user clicks.
+    // pick it up when the user clicks. On-demand NEVER waits for the scene: the
+    // user asked for the engine, so waiting on a texture would be a mystery delay.
     started = false;
     engineStore.markDeferred('policy');
     return;
@@ -185,13 +187,28 @@ export function initEngine(): void {
 
   if (policy === 'idle') {
     started = true;
+    // Gate order for idle: scene settled, THEN idle, THEN visible. The scene gate
+    // first because it is the long pole; idling before it would just re-serialise.
     whenIdleAndVisible(() => {
-      void start('auto');
+      void whenSceneSettled().then(() => {
+        void start('auto');
+      });
     });
     return;
   }
 
-  void start('auto');
+  // Eager: wait for the globe to settle before touching the wasm.
+  //
+  // §7 measured 2.08 MB of texture overlapping the boot and costing ~10 s of boot
+  // time at 1.6 Mbps — 100% of non-boot traffic during boot. Letting the textures
+  // finish first gives the engine the pipe to itself.
+  //
+  // `whenSceneSettled()` always resolves (ready / failed / timeout) and never
+  // rejects, so a broken or slow scene can delay this by at most the gate's 30 s
+  // safety timeout, and a failed scene boots immediately.
+  void whenSceneSettled().then(() => {
+    void start('auto');
+  });
 }
 
 /**
@@ -204,7 +221,9 @@ export function enableEngine(): void {
   const status = engineStore.getSnapshot();
   if (status.phase === 'booting' || status.phase === 'ready') return;
 
-  // A user click pre-empts any pending idle start.
+  // A user click pre-empts any pending idle start, and NEVER waits for the scene
+  // gate: the user asked for the engine explicitly, so a texture still loading
+  // must not delay it.
   cancelPendingIdle();
   started = true;
   void start('user');

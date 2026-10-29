@@ -28,6 +28,13 @@ if (new URLSearchParams(window.location.search).has('debug')) {
 
   window.addEventListener('error', record('error'));
   window.addEventListener('unhandledrejection', record('rejection'));
+
+  // Expose the engine store so a diagnostic can read the exact numbers behind a
+  // boot (loaded bytes, first-event timestamp, decoded size) instead of inferring
+  // them from the rendered percentage. Read-only use; nothing writes here.
+  void import('@/lib/engine/store').then(({ engineStore }) => {
+    Object.assign(window, { __engineStore: engineStore });
+  });
 }
 
 const container = document.getElementById('root');

@@ -1,6 +1,6 @@
-import { Suspense, useRef } from 'react';
-import { Canvas } from '@react-three/fiber';
-import { AdaptiveDpr, OrbitControls, Preload } from '@react-three/drei';
+import { Component, Suspense, useEffect, useRef, type ReactNode } from 'react';
+import { Canvas, useFrame } from '@react-three/fiber';
+import { AdaptiveDpr, OrbitControls, Preload, useProgress } from '@react-three/drei';
 import { Bloom, EffectComposer, Vignette } from '@react-three/postprocessing';
 import type { OrbitControls as OrbitControlsImpl } from 'three-stdlib';
 import * as THREE from 'three';
@@ -13,6 +13,67 @@ import type { SpinState } from '@/scene/EarthSystem';
 import { REGIONS } from '@/lib/regions';
 import { regionHeadline } from '@/lib/model';
 import { registerRenderer } from '@/lib/canvasCapture';
+import { markSceneFailed, signalSceneCondition } from '@/lib/engine/sceneGate';
+
+/**
+ * Bridges drei's texture-progress store into the scene gate.
+ *
+ * `useProgress` is a zustand store, so it can be read outside React too — but a
+ * component is the simplest way to subscribe. `active === false && progress === 100`
+ * means every texture drei tracked has finished decoding.
+ */
+function TextureProgressSignal() {
+  const { active, progress } = useProgress();
+
+  useEffect(() => {
+    if (!active && progress === 100) signalSceneCondition('textures');
+  }, [active, progress]);
+
+  return null;
+}
+
+/**
+ * Signals the first presented frame.
+ *
+ * A `useFrame` callback runs before that frame is drawn, so the first invocation
+ * proves the renderer is alive. Kept separate from TextureProgressSignal because
+ * `active` can already be false when nothing needed loading — in that case only a
+ * frame proves the scene actually works.
+ */
+function FirstFrameSignal() {
+  const fired = useRef(false);
+  useFrame(() => {
+    if (fired.current) return;
+    fired.current = true;
+    signalSceneCondition('frame');
+  });
+  return null;
+}
+
+/**
+ * Turns a scene crash into a gate failure instead of a blank canvas.
+ *
+ * Without this, a thrown error inside the R3F tree unmounts the canvas and leaves
+ * the engine gate waiting for a frame that will never come — until the 30 s
+ * timeout. Reporting the failure immediately lets the engine boot straight away.
+ */
+class SceneErrorBoundary extends Component<{ children: ReactNode }, { failed: boolean }> {
+  state = { failed: false };
+
+  static getDerivedStateFromError() {
+    return { failed: true };
+  }
+
+  componentDidCatch(error: Error) {
+    markSceneFailed(`scene error boundary tripped: ${error.message}`);
+  }
+
+  render() {
+    if (!this.state.failed) return this.props.children;
+    // Keep a dark surface rather than unmounting to white.
+    return <div className="absolute inset-0 bg-void-950" />;
+  }
+}
 
 interface GlobeSceneProps {
   sst: number;
@@ -39,7 +100,18 @@ export function GlobeScene({
   const controlsRef = useRef<OrbitControlsImpl | null>(null);
   const spin = useRef<SpinState>({ y: 0, paused: false });
 
+  // WebGL can be absent entirely (headless, blocklisted GPU, disabled by policy).
+  // Mark the gate failed so the engine boots without waiting for a canvas.
+  useEffect(() => {
+    const canvas = document.createElement('canvas');
+    const hasWebGL =
+      typeof WebGLRenderingContext !== 'undefined' &&
+      !!(canvas.getContext('webgl2') || canvas.getContext('webgl'));
+    if (!hasWebGL) markSceneFailed('WebGL unavailable in this browser');
+  }, []);
+
   return (
+    <SceneErrorBoundary>
     <Canvas
       dpr={[1, 2]}
       gl={{
@@ -67,6 +139,12 @@ export function GlobeScene({
         if (new URLSearchParams(window.location.search).has('debug')) {
           Object.assign(window, { __scene: scene, __camera: camera, __gl: gl });
         }
+        // A lost context means the globe can never settle. Report it and let the
+        // engine boot rather than parking until the timeout.
+        gl.domElement.addEventListener('webglcontextlost', () => {
+          markSceneFailed('WebGL context lost');
+        });
+
         // Textures decode asynchronously; this fires once the first frame is up.
         requestAnimationFrame(() => onLoaded?.());
       }}
@@ -86,6 +164,8 @@ export function GlobeScene({
       <directionalLight position={[-3.4, 1.8, -5.0]} intensity={0.38} color="#c9d8ff" />
 
       <Suspense fallback={null}>
+        <TextureProgressSignal />
+        <FirstFrameSignal />
         <Starfield count={14000} />
         <EarthSystem
           sst={sst}
@@ -118,6 +198,7 @@ export function GlobeScene({
 
       <AdaptiveDpr pixelated />
     </Canvas>
+    </SceneErrorBoundary>
   );
 }
 

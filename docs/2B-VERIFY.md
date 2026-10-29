@@ -289,6 +289,89 @@ Two levers, neither applied here (constants were not to be changed):
 
 ---
 
+---
+
+## 9. Why the stubbed case-d run aborted 36 s after the first event
+
+Diagnostic: `node tests/e2e/abort-trace.mjs --mbps 0.4 [--stub]` logs the
+watchdog's inputs once per second, read from the live store (`window.__engineStore`
+under `?debug`) so `loaded` and `firstEventAt` are exact rather than inferred from
+the rendered percentage.
+
+### Textured (2.08 MB of globe textures competing)
+
+| t (ms) | elapsed since 1st event | loaded MB | rate KB/s | projected total | over threshold | ≥8 s armed |
+|---|---|---|---|---|---|---|
+| 30,110 | 993 | 0.03 | 30,371 | 1,127,491 | **YES** | n |
+| 31,151 | 2,034 | 0.06 | 28,519 | 1,200,686 | **YES** | n |
+| 33,200 | 4,083 | 0.10 | 26,743 | 1,280,451 | **YES** | n |
+| 35,260 | 6,143 | 0.16 | 27,232 | 1,257,448 | **YES** | n |
+| 37,324 | 8,207 | 0.31 | 39,038 | 877,168 | **YES** | **y** |
+| 38,349 | 9,232 | 0.44 | 50,195 | 682,192 | **YES** | y |
+| 39,369 | 10,252 | 0.57 | 57,814 | 592,287 | **YES** | y |
+
+Abort at **40,404 ms**, i.e. **11.3 s after the first event** — the projection is
+far over the cap from the very first sample, so the rule trips on the third
+*armed* evaluation.
+
+### Stubbed (textures are 1×1, no contention)
+
+| t (ms) | elapsed | loaded MB | rate KB/s | projected total | over | armed |
+|---|---|---|---|---|---|---|
+| 13,764 | 749 | 0.08 | 113,981 | 300,423 | YES | n |
+| 17,964 | 4,949 | 1.58 | 335,369 | 102,104 | **no** | n |
+| 21,097 | 8,082 | 2.80 | 363,885 | 94,103 | no | **y** |
+| 27,341 | 14,326 | 5.49 | 401,919 | 85,198 | no | y |
+| 33,582 | 20,567 | 7.70 | 392,641 | 87,211 | no | y |
+| 42,980 | 29,965 | 9.29 | 325,137 | 105,317 | no | y |
+| 49,246 | 36,231 | 10.50 | 303,997 | 112,641 | **YES** | y |
+| 50,288 | 37,273 | 10.74 | 302,226 | 113,301 | YES | y |
+| 51,335 | 38,320 | 11.09 | 303,365 | 112,876 | YES | y |
+
+Abort at **62,793 ms** — **49.8 s after the first event**.
+
+### Explanation
+
+Three effects compound, and none of them is "the projection is broken":
+
+**1. The rate ramps up.** Chrome's throttled HTTP transport delivers in small
+early chunks and speeds up as its buffer fills. The stubbed series starts at
+114 MB/s-ish of apparent progress (749 ms → 0.08 MB) and settles near **300 KB/s**,
+which is the true 400 kbps ceiling (400 kbit ÷ 8 = 50 KB/s per connection; with the
+worker's own socket plus the wasm stream the aggregate lands near 300 KB/s). The
+*projected total* therefore starts high and falls: 300 s → 94 s → 85 s, then drifts
+back **up** as the transfer approaches the tail.
+
+**2. The early-abort rule samples `lastLoaded / elapsedSinceFirst` — a *cumulative*
+average.** It never forgets the slow start. Worse, the projection is
+`elapsed + remaining/rate`, so a shrinking `rate` inflates `remaining/rate`
+non-linearly. That is why the stubbed projection is **non-monotonic**: 94,103 ms at
+8 s, 85,198 ms at 14 s, then climbing to 112,641 ms at 36 s.
+
+**3. The abort only happens when three *consecutive armed* evaluations exceed the
+threshold.** In the stubbed run the projection hovers **just below**
+`AUTO_CAP_MS × 1.25 = 112,500 ms` for ~25 s. It crosses only at 36,231 ms, and even
+then it flips back at 39,355 ms — the count resets, and it needs three more
+consecutive over-samples before tripping at 62.8 s. **This is the flapping the
+acceptance criteria call out.**
+
+So the stubbed run is not "slower"; it *appears* to take a more realistic rate, and
+that realism lands the projection within a few percent of the threshold, where the
+rule oscillates instead of deciding.
+
+**The textured run hides this** because texture traffic starves the wasm stream so
+badly that the projection is 10× over threshold from the first sample — no
+ambiguity, no flapping, fast abort.
+
+**Conclusion:** the abort *time* is dominated by proximity to the threshold, not by
+throughput. A connection that is 3× too slow aborts in 11 s (textured) or 50 s
+(stubbed) depending on how cleanly its rate maps onto the cap. Step 3 addresses this
+by projecting from a **sliding 6 s window** (so the slow start is forgotten) and
+lowering `EARLY_ABORT_FACTOR` to **1.0** with hysteresis, which removes both the
+cumulative-average lag and the near-threshold flapping.
+
+---
+
 ## Deviations from the brief
 
 1. **Step 2 found no regression to fix.** The task said to change constants only
