@@ -45,6 +45,15 @@ const MIME = {
 
 const stats = { compressed: 0, raw: 0, bytesOut: 0, bytesIn: 0, notModified: 0 };
 
+/**
+ * Per-request log, exposed at /_serverlog so a test can read what the client
+ * actually sent (If-None-Match) and what was returned. This is the only reliable
+ * way to distinguish "the browser revalidated and got a 304" from "the browser
+ * never made a conditional request at all" — resource timing cannot tell them
+ * apart.
+ */
+const requestLog = [];
+
 async function resolveFile(urlPath) {
   // Strip query/hash, decode, and confine to ROOT (no traversal).
   const clean = decodeURIComponent(urlPath.split('?')[0].split('#')[0]);
@@ -79,6 +88,13 @@ async function etagFor(full, st) {
 }
 
 const server = createServer(async (req, res) => {
+  // Test introspection endpoint: what the client sent and got, per request.
+  if ((req.url || '').startsWith('/_serverlog')) {
+    res.writeHead(200, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify(requestLog));
+    return;
+  }
+
   const found = await resolveFile(req.url || '/');
 
   // SPA fallback, matching public/_redirects.
@@ -106,8 +122,14 @@ const server = createServer(async (req, res) => {
   res.setHeader('ETag', etag);
   res.setHeader('Cache-Control', immutable ? 'public, max-age=31536000, immutable' : 'public, max-age=0, must-revalidate');
 
+  const inm = req.headers['if-none-match'] ?? null;
+  const isTracked = /duckdb-browser-.*worker\.js/.test(req.url || '');
+
   // Honour a conditional request exactly as Pages does.
-  if (req.headers['if-none-match'] === etag) {
+  if (inm === etag) {
+    if (isTracked) {
+      requestLog.push({ url: req.url, status: 304, ifNoneMatch: inm, etag, body: 0 });
+    }
     res.writeHead(304, { ETag: etag });
     res.end();
     stats.notModified += 1;
@@ -132,6 +154,9 @@ const server = createServer(async (req, res) => {
     res.writeHead(200);
     res.end(out);
 
+    if (isTracked) {
+      requestLog.push({ url: req.url, status: 200, ifNoneMatch: inm, etag, body: out.length });
+    }
     stats.compressed += 1;
     stats.bytesIn += buf.length;
     stats.bytesOut += out.length;
@@ -142,6 +167,9 @@ const server = createServer(async (req, res) => {
   res.writeHead(200);
   createReadStream(full).pipe(res);
 
+  if (isTracked) {
+    requestLog.push({ url: req.url, status: 200, ifNoneMatch: inm, etag, body: st.size });
+  }
   stats.raw += 1;
   stats.bytesIn += st.size;
   stats.bytesOut += st.size;

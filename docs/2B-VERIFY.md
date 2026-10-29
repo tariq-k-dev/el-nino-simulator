@@ -196,6 +196,99 @@ tracked (`git ls-files | grep -E '\.(png|zip|webm|trace)$'` → empty).
 
 ---
 
+---
+
+## 7. Boot-time decomposition (report only — no constants changed)
+
+Measured with `node tests/e2e/boot-timeline.mjs --case c|d [--stub]`, against the
+Brotli server. All timings come from **one clock domain** (network events on the
+browser context), because a Worker's `PerformanceResourceTiming` lives in the
+worker's own timeline and mixing it with page timings produces impossible numbers
+(`responseEnd < startTime`) and false conclusions.
+
+Throttling was verified to apply before the run: worker `responseEnd` moved
+3,959 ms → 7,397 ms when the 1.6 Mbps profile was enabled.
+
+### Milestones (ms from navigation start)
+
+| Case | window load | status→booting | worker resp end | CSV resp end | 1st progress | 50% | last event | ready / abort |
+|---|---|---|---|---|---|---|---|---|
+| **c** 1.6 Mbps | 1,989 | 2,000 | 7,382 | 2,935 | 8,243 | 28,238 | 47,496 | **47,579** ready |
+| **c** 1.6 Mbps, textures stubbed | 2,010 | 2,021 | **3,719** | 2,756 | **4,362** | **18,971** | 37,333 | **37,483** ready |
+| **d** 400 kbps | 6,731 | 6,742 | 26,860 | 10,183 | 29,693 | — | 39,735 | **39,787** abort |
+| **d** 400 kbps, textures stubbed | 6,710 | 6,724 | **12,294** | 8,220 | **13,430** | — | 49,455 | **49,559** abort |
+
+Case d never reaches 50% — it is the auto-cap trip (`failed → too-slow`), which is
+the designed outcome at 400 kbps.
+
+### Phase breakdown of the boot window (sums exactly to the window; residual 0)
+
+| Case | worker download | → 1st event | → 50% | 50% → last event | compile tail | **window** |
+|---|---|---|---|---|---|---|
+| c | 5,382 | 861 | 19,995 | 19,258 | 82 | **45,578** |
+| c stubbed | **1,698** | 643 | **14,609** | 18,362 | 150 | **35,462** |
+| d | 20,118 | 2,833 | — | 10,042 | 52 | **33,045** |
+| d stubbed | **5,570** | 1,136 | — | 36,025 | 104 | **42,835** |
+
+The residual is zero by construction: the milestones partition the window, so
+there is no unexplained gap to attribute.
+
+### Non-boot traffic during the boot window
+
+| Case | resources overlapping | total bytes | of which textures |
+|---|---|---|---|
+| c | 5 | **2,076,879** | **2,076,879** (100%) |
+| c stubbed | 5 | 1,850 | 1,850 |
+| d | 2 | **647,516** | **647,516** (100%) |
+| d stubbed | 2 | 1,850 | 1,850 |
+
+Every non-boot byte is a globe texture. In case c they overlap the boot almost
+entirely (`earth_clouds.jpg` 965,976 B runs 2,128 → 17,222 ms; `earth_day.jpg`
+463,387 B 2,128 → 12,179 ms; specular/night/normal 269 KB / 256 KB / 123 KB all
+start at 2,128 ms). The app starts fetching textures as soon as the R3F tree
+mounts, which is *before* the engine finishes booting — so they compete for the
+same 1.6 Mbps pipe.
+
+### Attribution
+
+| | with textures | stubbed | delta |
+|---|---|---|---|
+| **c** boot window | 45,578 ms | 35,462 ms | **−10,116 ms (−22%)** |
+| **d** boot window | 33,045 ms | 42,835 ms | **+9,790 ms (+30%)** |
+
+**Case c: textures cost ~10 s of boot time.** 2.08 MB of texture on a 1.6 Mbps
+link is ~10.4 s of transfer; when it runs concurrently with a 6.76 MB wasm the two
+split the bandwidth almost exactly as their sizes predict. Removing them returns
+22% of the boot.
+
+**Case d: stubbing makes it slower, which needs explaining rather than hiding.**
+The abort is a *projected* cap trip, not a fixed deadline, and the rate it
+projects from is measured after the first progress event. At 400 kbps the textures
+(648 KB) delay the *first* progress event to 29,693 ms; without them it arrives at
+13,430 ms — so the projection is evaluated over a much shorter sample. A short
+sample early in a slow transfer yields a pessimistic rate, and the trip fires
+later in wall-clock terms (49,559 vs 39,787 ms) even though less work was done.
+The abort time is therefore sensitive to *when* the first sample lands, not only
+to throughput.
+
+### Residual and what it means
+
+There is no unexplained residual in the boot window — the milestones account for
+all of it. What the table does show is that **the boot is not the only thing on
+the wire**: 100% of non-boot traffic during boot is globe texture, and on a
+constrained link that traffic is charged directly to boot latency.
+
+Two levers, neither applied here (constants were not to be changed):
+
+1. **Defer texture loading until the engine settles**, or gate textures on the
+   same policy that gates the Wasm boot. At 1.6 Mbps this is worth ~10 s.
+2. **Make the early-abort projection robust to a short first sample** — e.g.
+   require a minimum elapsed window before the first evaluation, or ignore
+   projections taken before N bytes have arrived. Today the same connection can
+   abort at 40 s or 50 s depending on texture contention.
+
+---
+
 ## Deviations from the brief
 
 1. **Step 2 found no regression to fix.** The task said to change constants only
@@ -211,6 +304,23 @@ tracked (`git ls-files | grep -E '\.(png|zip|webm|trace)$'` → empty).
 3. **`@testing-library/react` + `jsdom` + `@playwright/test` added as
    devDependencies.** Required by steps 3 and 6; lockfile updated.
 
-4. **One genuine defect found and left unfixed** (step 4): the worker script is
-   re-downloaded on host fallback, ~156 KB / ~4 s at 1.6 Mbps. Outside the
-   "only change constants if a target is missed" constraint — reported, not fixed.
+4. **Step 4's worker-cache finding was an artifact — retracted in step 8.** The
+   first measurement used `page.route()` to black-hole jsDelivr, and Chromium
+   disables the HTTP cache for any request the DevTools protocol intercepts, so a
+   cache miss was guaranteed. Re-tested with `--host-resolver-rules` instead (DNS
+   black-hole, no interception) and a server that logs `If-None-Match`:
+
+   | Request | Status | `If-None-Match` | Body |
+   |---|---|---|---|
+   | 1st host attempt | `200` | `null` | **155,830 B** |
+   | 2nd host attempt | `304` | `"t2dKFUrT7Fb66NB5YEA0"` | **0 B** |
+
+   **The worker is cached. Finding closed** — one body download across two host
+   attempts, so the fallback path costs no extra bytes.
+
+5. **Step 7 found the boot is competing with texture downloads** (§7). On 1.6 Mbps,
+   2.08 MB of globe texture — 100% of non-boot traffic during boot — costs ~10 s of
+   boot time (45,578 → 35,462 ms when stubbed). At 400 kbps, stubbing made the
+   *abort* later (39,787 → 49,559 ms) because the early-abort projection samples a
+   rate after the first progress event, and textures delay that event from 13.4 s
+   to 29.7 s. Reported, not fixed: both are behaviour changes outside this pass.
