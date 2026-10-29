@@ -162,7 +162,14 @@ export function whenSceneSettled(): Promise<SceneOutcome> {
     return settledPromise;
   }
 
-  const ms = timeoutOverride ?? SCENE_GATE_TIMEOUT_MS;
+  // E2E override: a hanging-texture test must not wait the full 30 s. Read from
+  // the page rather than plumbing a prop through React — the gate lives outside
+  // the component tree.
+  const pageOverride =
+    typeof window !== 'undefined'
+      ? (window as { __SCENE_GATE_TIMEOUT_OVERRIDE__?: number }).__SCENE_GATE_TIMEOUT_OVERRIDE__
+      : undefined;
+  const ms = timeoutOverride ?? pageOverride ?? SCENE_GATE_TIMEOUT_MS;
   timeoutTimer = setTimeout(() => {
     settle('timeout', `scene did not settle within ${ms} ms — booting anyway`);
   }, ms);

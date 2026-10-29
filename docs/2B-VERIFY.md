@@ -291,7 +291,102 @@ Two levers, neither applied here (constants were not to be changed):
 
 ---
 
-## 9. Why the stubbed case-d run aborted 36 s after the first event
+---
+
+## 8. Scene gate, sliding-window abort, and the acceptance matrix
+
+### Why the stubbed abort is still slower than the textured one
+
+Re-traced with the new rule (`node tests/e2e/abort-trace.mjs --mbps 0.4 [--stub]`).
+
+**Textured** — the projection is ~10× over the cap from the first armed sample, so
+all three consecutive evaluations agree immediately:
+
+| elapsed since 1st event | loaded MB | rate KB/s | projected total | over |
+|---|---|---|---|---|
+| 854 | 0.05 | 58,385 | 586,494 | YES |
+| 3,920 | 0.36 | 95,102 | 360,062 | YES |
+| 8,042 | 1.07 | 139,576 | 245,333 | YES ← trip |
+| 10,108 | 1.60 | 165,819 | 206,506 | YES |
+
+**Stubbed** — the rate is dominated by the real 400 kbps ceiling, and the projection
+sits **below** the 90 s cap for 22 s:
+
+| elapsed since 1st event | loaded MB | rate KB/s | projected total | over |
+|---|---|---|---|---|
+| 9,026 | 3.12 | 362,799 | 94,384 | no |
+| 14,214 | 5.48 | 404,098 | 84,738 | no |
+| 19,399 | 7.48 | 404,086 | 84,741 | no |
+| 22,517 | 8.05 | 374,673 | 91,393 | no |
+| 23,561 | — | — | over 90,000 | **trip** |
+
+**The explanation is arithmetic, not a bug.** `projected = elapsed + remaining/rate`.
+With 32.66 MB decoded and a true 400 kbps line the aggregate rate settles near
+400 KB/s, so `remaining / rate` is ~70 s and `elapsed` grows to ~20 s before the sum
+crosses 90 s. The rule is behaving exactly as specified — it aborts when the
+evidence says the transfer cannot finish inside `AUTO_CAP_MS`, and until ~22 s the
+evidence genuinely does not say that.
+
+The textured run aborts sooner because texture traffic inflates `elapsed` while
+starving the wasm stream, so the same sum crosses 90 s much earlier. **Both are
+correct readings of the same rule.** The 12.2 s spread between them is the rule
+honestly reporting that the two runs have different effective throughput.
+
+### The `wasm bytes at abort` criterion
+
+"wasm bytes at abort < 1.5 MB" is a **wire** measurement, and the store's `loaded`
+counts **decoded** bytes (2B's own finding: `bytesLoaded` is decoded, `bytesTotal`
+is the brotli size). Converting with the measured ratio (0.1976):
+
+| Run | `loaded` at abort (decoded) | wire bytes | < 1.5 MB |
+|---|---|---|---|
+| textured | 2.00 MB | **0.40 MB** | **PASS** |
+| stubbed | 8.00 MB | **1.58 MB** | **FAIL by 0.08 MB** |
+
+The stubbed run simply has more time to download before the projection crosses the
+cap, so it gets further through a 6.45 MB wire payload.
+
+### Step 4 acceptance matrix
+
+Three runs per profile, Brotli server, CDP-throttled, textures present unless noted.
+`node tests/e2e/acceptance-matrix.mjs --mbps N --runs 3 [--stub]`.
+
+| Profile | Runs | Outcome | ready / abort (ms) | textures last `responseEnd` | hosts | Verdict |
+|---|---|---|---|---|---|---|
+| **c 1.6 Mbps** | 3/3 | ready, no abort | **49,297 / 49,500 / 49,541** | **12,767 / 12,772 / 12,783** | 1 | **PASS** |
+| **d 400 kbps textured** | 3/3 | failed `too-slow` | abort-after-1st **11,118 / 11,289 / 12,058** | 39,486 / 39,595 / 39,777 | 1 | **PASS** (≤25 s, spread 0.94 s, 1 host) |
+| **d 400 kbps stubbed** | 3/3 | failed `too-slow` | abort-after-1st **23,094 / 23,184 / 23,270** | 6,745 / 6,754 / 6,888 | 1 | **PARTIAL** (≤25 s, spread 0.18 s, 1 host — but see misses) |
+| **1.0 Mbps** | 3/3 | **ready, no abort** | 76,349 / 76,404 / 76,682 | 19,869 / 19,887 / 19,930 | 1 | **PASS** (false-positive guard) |
+| **0.8 Mbps** | 3/3 | **ready** (borderline) | 94,603 / 94,949 / 95,174 | — | 1 | report only |
+| **0.5 Mbps** | 3/3 | failed `too-slow` | abort-after-1st 21,156 / 21,179 / 22,352 | 41,530 | 1 | **PASS** |
+| **hanging textures** | 1 | ready after gate timeout | 6.9 s wall, gate override 3 s | n/a | 1 | **PASS** |
+| **WebGL disabled** | 1 | ready immediately | 2.6 s wall | n/a | 1 | **PASS** |
+
+Case c's texture figure is the headline result: **17.2 s baseline → 12.77 s**, and
+the engine now starts only after they finish (worker `start` 13,686 ms vs textures
+ending 12,767 ms). The gate does what §7 said it would.
+
+### Two criteria that did NOT fully pass
+
+**1. Case d spread ≤ 5 s — FAILS at 12.2 s** (textured 11.1–12.1 s vs stubbed
+23.1–23.3 s). Within each variant the spread is tight (0.94 s and 0.18 s); the
+12.2 s is *between* variants. Per the analysis above this is not instability, it is
+the rule correctly reading two genuinely different throughputs. Meeting the 5 s
+criterion would require the textured run to also be allowed to run to ~23 s, i.e.
+removing the textural interference — which is what the scene gate now does at
+*eager* boot. Case d is deliberately not gated (connection-undefined → eager, but
+its abort path dominates), so the two variants still differ.
+
+**2. Stubbed `wasm bytes at abort < 1.5 MB` — FAILS at 1.58 MB** by 0.08 MB. A
+stricter `EARLY_ABORT_FACTOR` or a shorter `EARLY_EVAL_START_MS` would fix it, but
+both are outside what this pass was allowed to change (`AUTO_CAP_MS`, `CONNECT_MS`
+and `STALL_MS` are frozen, and the factor/window were specified at 1.0 / 6 s).
+
+Both are reported rather than papered over.
+
+---
+
+## 9. (Diagnosis, pre-fix) why the stubbed case-d run aborted 36 s after the first event
 
 Diagnostic: `node tests/e2e/abort-trace.mjs --mbps 0.4 [--stub]` logs the
 watchdog's inputs once per second, read from the live store (`window.__engineStore`
@@ -365,10 +460,14 @@ ambiguity, no flapping, fast abort.
 
 **Conclusion:** the abort *time* is dominated by proximity to the threshold, not by
 throughput. A connection that is 3× too slow aborts in 11 s (textured) or 50 s
-(stubbed) depending on how cleanly its rate maps onto the cap. Step 3 addresses this
-by projecting from a **sliding 6 s window** (so the slow start is forgotten) and
-lowering `EARLY_ABORT_FACTOR` to **1.0** with hysteresis, which removes both the
-cumulative-average lag and the near-threshold flapping.
+(stubbed) depending on how cleanly its rate maps onto the cap. Step 3 addressed the
+cumulative-average lag and the flapping by projecting from a **sliding 6 s window**
+with `EARLY_ABORT_FACTOR = 1.0` and one-sample hysteresis.
+
+**Post-fix result:** stubbed abort dropped **49.8 s → 23.6 s** after the first event,
+and the flapping is gone (the counter no longer resets on a single dip). The
+remaining 23.6 s is arithmetically required: with 32.66 MB decoded at ~400 KB/s the
+projection does not cross 90 s until roughly 22 s of elapsed transfer. See §8.
 
 ---
 

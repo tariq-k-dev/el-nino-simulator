@@ -9,9 +9,41 @@ from a CDN.
 
 ```bash
 pnpm build      # the suite serves dist/, so build first
-pnpm e2e        # all cases — measured 5.0 min wall clock on this machine
+pnpm e2e        # all specs — measured 5.0 min wall clock on this machine
 pnpm e2e:report # open the HTML report from the last run
 ```
+
+### Running one profile at a time
+
+The throttled profiles are slow by design (case d needs minutes) and the acceptance
+matrix runs each three times, so the measurement tools are separate scripts with a
+`--case`/`--mbps` selector. Run them against the Brotli server:
+
+```bash
+# one-time: serve dist/ with Brotli on 4199
+node tests/e2e/brotli-server.mjs dist 4199
+
+# acceptance matrix — 3 runs, min/median/max
+node tests/e2e/acceptance-matrix.mjs --mbps 1.6 --runs 3
+node tests/e2e/acceptance-matrix.mjs --mbps 0.4 --runs 3           # textured
+node tests/e2e/acceptance-matrix.mjs --mbps 0.4 --runs 3 --stub    # 1x1 textures
+node tests/e2e/acceptance-matrix.mjs --mbps 1.0 --runs 3           # false-positive guard
+node tests/e2e/acceptance-matrix.mjs --mbps 0.5 --runs 3           # must abort
+node tests/e2e/acceptance-matrix.mjs --mbps 0.8 --runs 3           # borderline, report only
+
+# per-second early-abort evaluation trace
+node tests/e2e/abort-trace.mjs --mbps 0.4
+node tests/e2e/abort-trace.mjs --mbps 0.4 --stub
+
+# scene-gate edge cases (hanging textures, WebGL disabled)
+pnpm e2e -- tests/e2e/scene-gate.spec.ts
+```
+
+Each script prints a JSON summary and also writes it under `.cache/` (gitignored).
+
+> **Do not run two matrix profiles at once.** Both drive the same emulated network
+> profile through one browser and measure wall-clock timing; concurrency makes every
+> figure meaningless.
 
 Measured per case (serial, one worker, this machine):
 
@@ -58,12 +90,32 @@ per-host cache behaviour in case f observable.
 
 ```
 tests/e2e/
-├── boot.spec.ts         cases a-i
-├── fixtures.ts          connection/pointer overrides, CDP throttling, byte ledger
-├── brotli-server.mjs    Pages-like static server (Brotli + ETag/304)
-└── globals.d.ts         window.__LT / window.__MUT for page-side observers
-playwright.config.ts     serial, 400 s timeout, boots the server via webServer
+├── boot.spec.ts               cases a-i
+├── harden.spec.ts             negative zero, dataset failure, fetch overlap, badge a11y
+├── scene-gate.spec.ts         hanging textures + WebGL-disabled edge cases
+├── acceptance-matrix.mjs      N-run min/median/max per network profile
+├── abort-trace.mjs            per-second early-abort evaluation dump
+├── boot-timeline.mjs          boot-time decomposition (textured vs stubbed)
+├── fixtures.ts                connection/pointer overrides, CDP throttling, byte ledger
+├── brotli-server.mjs          Pages-like static server (Brotli + ETag/304 + request log)
+└── globals.d.ts               window.__LT / window.__MUT for page-side observers
+playwright.config.ts           serial, 400 s timeout, boots the server via webServer
 ```
+
+### Debug hooks the measurement scripts rely on
+
+Append `?debug` to any URL to get:
+
+| Global | What it is |
+|---|---|
+| `window.__engineStore` | the live engine store — `getSnapshot()` gives exact `loaded`, `firstEventAt`, `decoded`, `phase`, `reason` |
+| `window.__scene`, `__camera`, `__gl` | the live three.js objects, for visual QA |
+| `window.__bootErrors` | errors captured before React mounts |
+| `window.__SCENE_GATE_TIMEOUT_OVERRIDE__` | set before load to shorten the 30 s scene-gate timeout in a test |
+
+Reading the store beats parsing the rendered percentage: the badge is throttled to
+10 writes/s and rounds to whole percent, so a 250 ms poll of the DOM cannot
+reconstruct the rate the watchdog actually used.
 
 ## Cases
 
