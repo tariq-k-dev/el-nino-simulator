@@ -14,6 +14,26 @@ import { engineStore, type EngineStatus } from '@/lib/engine/store';
  * claims knowledge the app does not have, and an ETA would be a fabrication.
  */
 
+/**
+ * The text a sighted user actually sees: every text node NOT inside an sr-only
+ * span. Assertions that care about "no percentage on screen" must use this, since
+ * the sr-only sentence deliberately contains the numbers a screen reader needs.
+ */
+function visibleText(): string {
+  const root = document.body;
+  const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT);
+  let out = '';
+  for (let n = walker.nextNode(); n; n = walker.nextNode()) {
+    const parent = n.parentElement;
+    if (parent && parent.closest('.sr-only')) continue;
+    // Concatenate WITHOUT an inserted separator, then normalise runs of
+    // whitespace. Inserting ' ' between nodes turned "DuckDB (~7 MB)" into
+    // "DuckDB ( ~7 MB)" and broke exact-substring assertions.
+    out += n.textContent ?? '';
+  }
+  return out.replace(/\s+/g, ' ').trim();
+}
+
 /** Drive the store into a specific status, then render the badge. */
 function renderWith(status: EngineStatus, now?: number) {
   // The store is a singleton; each case resets it then applies the target state.
@@ -71,7 +91,8 @@ describe('EngineBadge — zero progress events', () => {
   it('renders "Starting DuckDB…" with NO percentage and NO ETA', () => {
     renderWith(booting({ loaded: 0, firstEventAt: null }));
 
-    const text = document.body.textContent ?? '';
+    // Read the VISIBLE text (the sr-only sentence is separate by design).
+    const text = visibleText();
     expect(text).toContain('Starting DuckDB…');
     // The whole point: no number is invented during the worker download.
     expect(text).not.toMatch(/\d+\s*%/);
@@ -79,13 +100,30 @@ describe('EngineBadge — zero progress events', () => {
     expect(text).not.toMatch(/Loading DuckDB/);
   });
 
-  it('marks the region aria-busy and aria-live=polite', () => {
+  it('exposes an aria-live sr-only sentence, with the visual spans aria-hidden', () => {
     renderWith(booting({ loaded: 0, firstEventAt: null }));
 
-    const region = screen.getByText(/Starting DuckDB/).closest('[aria-live]');
-    expect(region).not.toBeNull();
-    expect(region?.getAttribute('aria-live')).toBe('polite');
-    expect(region?.getAttribute('aria-busy')).toBe('true');
+    // The announcement lives on the sr-only sentence, not the wrapper, so a
+    // screen reader reads the sentence rather than concatenated chrome.
+    const live = document.querySelector('[aria-live="polite"].sr-only');
+    expect(live).not.toBeNull();
+    expect(live?.textContent).toMatch(/Loading the DuckDB analytics engine/);
+
+    // The visible label must be hidden from assistive tech or it doubles up.
+    const visual = [...document.querySelectorAll('span')].find(
+      (el) => el.textContent?.trim() === 'Starting DuckDB…',
+    );
+    expect(visual?.getAttribute('aria-hidden')).toBe('true');
+
+    // Busy state still marks the region.
+    expect(document.querySelector('[aria-busy="true"]')).not.toBeNull();
+  });
+
+  it('the sr-only sentence carries no numbers during worker load', () => {
+    renderWith(booting({ loaded: 0, firstEventAt: null }));
+    const live = document.querySelector('[aria-live="polite"].sr-only');
+    expect(live?.textContent ?? '').not.toMatch(/\d+\s*%/);
+    expect(live?.textContent ?? '').not.toMatch(/\d+\s*second/);
   });
 
   it('shows an indeterminate bar (no width from progress)', () => {
@@ -110,7 +148,7 @@ describe('EngineBadge — determinate progress after the first event', () => {
       booting({ loaded: 17_121_293, decoded: 34_242_586, firstEventAt: Date.now() - 9_000 }),
     );
 
-    const text = document.body.textContent ?? '';
+    const text = visibleText();
     expect(text).toMatch(/Loading DuckDB \d+%/);
     expect(text).not.toContain('Starting DuckDB');
     // ~50% of 34,242,586
@@ -125,7 +163,7 @@ describe('EngineBadge — determinate progress after the first event', () => {
     // 2 s of data time: below the ETA threshold, so no estimate.
     const early = Date.now();
     renderWith(booting({ loaded: 5_000_000, decoded: 34_242_586 }), early + 2_000);
-    expect(document.body.textContent ?? '').not.toMatch(/s left/);
+    expect(visibleText()).not.toMatch(/s left/);
 
     cleanup();
     engineStore.__reset();
@@ -134,13 +172,13 @@ describe('EngineBadge — determinate progress after the first event', () => {
     // comfortably inside the 1-hour sanity bound.
     const later = Date.now();
     renderWith(booting({ loaded: 20_000_000, decoded: 34_242_586 }), later + 10_000);
-    expect(document.body.textContent ?? '').toMatch(/~\d+ s left/);
+    expect(visibleText()).toMatch(/~\d+ s left/);
   });
 
   it('never renders an ETA when the decoded size is unknown', () => {
     const t = Date.now();
     renderWith(booting({ loaded: 5_000_000, decoded: null }), t + 30_000);
-    const text = document.body.textContent ?? '';
+    const text = visibleText();
     expect(text).toContain('Loading DuckDB');
     expect(text).not.toMatch(/\d+\s*%/);
     expect(text).not.toMatch(/s left/);
@@ -155,25 +193,65 @@ describe('EngineBadge — other phases unchanged', () => {
 
   it('deferred offers the opt-in button with the wire size', () => {
     renderWith({ phase: 'deferred', reason: 'policy' });
-    expect(screen.getByRole('button').textContent).toMatch(/Load DuckDB \(~7 MB\)/);
+    expect(screen.getByRole('button')).toBeTruthy();
+    expect(visibleText()).toMatch(/Load DuckDB \(~7 MB\)/);
+    expect(document.querySelector('[aria-live="polite"].sr-only')?.textContent).toMatch(
+      /built-in model/,
+    );
   });
 
-  it('ready shows host and boot time', () => {
+  it('ready shows host and boot time visually', () => {
     renderWith({ phase: 'ready', host: 'jsdelivr', bootMs: 1234 });
-    const text = document.body.textContent ?? '';
+    const text = visibleText();
     expect(text).toContain('DuckDB-WASM');
     expect(text).toContain('jsdelivr');
     expect(text).toContain('1234 ms');
   });
 
+  it('ready announces one full sentence, not concatenated spans', () => {
+    renderWith({ phase: 'ready', host: 'jsdelivr', bootMs: 28 });
+    const live = document.querySelector('[aria-live="polite"].sr-only');
+    expect(live?.textContent).toBe('DuckDB engine ready, served from jsdelivr, 28 milliseconds.');
+    // The old failure mode: the VISIBLE text glued the spans together with no
+    // separators. The sr-only sentence is what fixes the announcement, so this
+    // asserts the accessible name, not the raw concatenation.
+    expect(live?.textContent ?? '').not.toMatch(/DuckDB-WASMjsdelivr/);
+  });
+
+  it('every visible span in the ready badge is aria-hidden', () => {
+    renderWith({ phase: 'ready', host: 'unpkg', bootMs: 99 });
+
+    // Locate the badge by its sr-only sentence, then walk up to the wrapper.
+    // Escaping Tailwind's `min-h-[44px]` inside a CSS selector is fragile, so the
+    // structure is found by relationship instead.
+    const live = document.querySelector('[aria-live="polite"].sr-only');
+    expect(live, 'the sr-only sentence must exist in the ready phase').not.toBeNull();
+
+    const wrapper = live?.closest('div');
+    expect(wrapper, 'the sr-only sentence must sit inside the badge wrapper').not.toBeNull();
+
+    const spans = [...(wrapper?.querySelectorAll('span') ?? [])].filter(
+      (el) => !el.classList.contains('sr-only'),
+    );
+    expect(spans.length, 'the ready badge should have visible spans').toBeGreaterThan(0);
+    for (const el of spans) expect(el.getAttribute('aria-hidden')).toBe('true');
+  });
+
   it('too-slow offers "Load anyway"', () => {
     renderWith({ phase: 'failed', reason: 'too-slow' });
-    expect(screen.getByRole('button').textContent).toMatch(/Needs a faster connection/);
-    expect(screen.getByRole('button').textContent).toMatch(/Load anyway/);
+    const t = visibleText();
+    expect(t).toMatch(/Needs a faster connection/);
+    expect(t).toMatch(/Load anyway/);
+    expect(document.querySelector('[aria-live="polite"].sr-only')?.textContent).toMatch(
+      /too slow/,
+    );
   });
 
   it('unreachable offers Retry', () => {
     renderWith({ phase: 'failed', reason: 'unreachable' });
-    expect(screen.getByRole('button').textContent).toMatch(/Retry/);
+    expect(visibleText()).toMatch(/Retry/);
+    expect(document.querySelector('[aria-live="polite"].sr-only')?.textContent).toMatch(
+      /could not be reached/,
+    );
   });
 });

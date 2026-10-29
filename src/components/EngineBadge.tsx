@@ -58,22 +58,47 @@ function estimateRemainingSeconds(
 const ACTION_BUTTON =
   'pointer-events-auto flex min-h-[44px] items-center gap-1.5 rounded-full border border-sky-300/30 bg-sky-400/10 px-3 text-[10px] font-medium uppercase tracking-[0.1em] text-sky-100 transition-colors hover:border-sky-300/50 hover:bg-sky-400/20';
 
+/** Visually hidden but screen-reader visible. */
+const SR_ONLY = 'sr-only';
+
+/**
+ * One sentence of meaning per phase, for assistive tech.
+ *
+ * Why this exists: the badge's visual spans concatenate with no separators, so
+ * `textContent` read "DuckDB-WASMjsdelivr2820 ms". A screen reader announced that
+ * string, and the e2e assertions had to parse it. Each phase now emits a complete
+ * sentence here and marks its visual spans aria-hidden, so the announced text is
+ * the sentence and nothing else.
+ */
+function ScreenReaderOnly({ children }: { children: string }) {
+  return (
+    <span className={SR_ONLY} aria-live="polite">
+      {children}
+    </span>
+  );
+}
+
 /**
  * The engine status badge.
  *
- * `aria-live="polite"` so a screen reader announces phase changes (boot started,
- * engine ready, boot failed) without interrupting whatever it is currently
- * saying. Progress percentages are inside the same live region, but because the
- * store throttles writes to <=10/s the announcement rate stays reasonable.
+ * `aria-live="polite"` lives on the sr-only sentence rather than the wrapper, so
+ * the announcement is the sentence and not the concatenated chrome. The store
+ * throttles progress writes to <=10/s, which also bounds the announcement rate.
  */
 export function EngineBadge({ now = Date.now() }: { now?: number }) {
   const status = useEngineStatus();
 
   if (status.phase === 'deferred') {
     return (
-      <button type="button" onClick={enableEngine} className={ACTION_BUTTON} aria-live="polite">
-        <Radar size={11} className="text-slate-400" />
-        Client-side model · Load DuckDB ({WASM_WIRE_SIZE_LABEL})
+      <button type="button" onClick={enableEngine} className={ACTION_BUTTON}>
+        <Radar size={11} className="text-slate-400" aria-hidden />
+        <span aria-hidden>
+          Client-side model · Load DuckDB ({WASM_WIRE_SIZE_LABEL})
+        </span>
+        <ScreenReaderOnly>
+          Using the built-in model. DuckDB analytics engine is not loaded. Activate to load it,
+          about 7 megabytes.
+        </ScreenReaderOnly>
       </button>
     );
   }
@@ -107,14 +132,21 @@ export function EngineBadge({ now = Date.now() }: { now?: number }) {
       return (
         <div
           className="pointer-events-auto flex min-h-[44px] items-center gap-2 rounded-full border border-white/[0.08] bg-black/40 px-2.5 backdrop-blur-md"
-          aria-live="polite"
           aria-busy="true"
         >
-          <Loader2 size={11} className="animate-spin text-sky-400" />
-          <span className="num text-[9.5px] tracking-tight text-slate-300">Starting DuckDB…</span>
-          <span className="relative block h-[3px] w-14 overflow-hidden rounded-full bg-white/10">
+          <Loader2 size={11} className="animate-spin text-sky-400" aria-hidden />
+          <span className="num text-[9.5px] tracking-tight text-slate-300" aria-hidden>
+            Starting DuckDB…
+          </span>
+          <span
+            className="relative block h-[3px] w-14 overflow-hidden rounded-full bg-white/10"
+            aria-hidden
+          >
             <span className="block h-full w-1/3 animate-pulse rounded-full bg-sky-400" />
           </span>
+          <ScreenReaderOnly>
+            Loading the DuckDB analytics engine. Preparing to download.
+          </ScreenReaderOnly>
         </div>
       );
     }
@@ -122,18 +154,20 @@ export function EngineBadge({ now = Date.now() }: { now?: number }) {
     return (
       <div
         className="pointer-events-auto flex min-h-[44px] items-center gap-2 rounded-full border border-white/[0.08] bg-black/40 px-2.5 backdrop-blur-md"
-        aria-live="polite"
         aria-busy="true"
       >
-        <Loader2 size={11} className="animate-spin text-sky-400" />
-        <span className="num text-[9.5px] tracking-tight text-slate-300">
+        <Loader2 size={11} className="animate-spin text-sky-400" aria-hidden />
+        <span className="num text-[9.5px] tracking-tight text-slate-300" aria-hidden>
           Loading DuckDB
           {indeterminate ? '' : ` ${pct}%`}
           {remaining !== null ? ` · ~${remaining} s left` : ''}
         </span>
         {/* Slim bar. Indeterminate has no width animation: a fake progress
             indication is worse than none. */}
-        <span className="relative block h-[3px] w-14 overflow-hidden rounded-full bg-white/10">
+        <span
+          className="relative block h-[3px] w-14 overflow-hidden rounded-full bg-white/10"
+          aria-hidden
+        >
           <span
             className={[
               'block h-full rounded-full bg-sky-400 transition-[width] duration-200 ease-out',
@@ -142,6 +176,13 @@ export function EngineBadge({ now = Date.now() }: { now?: number }) {
             style={indeterminate ? undefined : { width: `${pct}%` }}
           />
         </span>
+        <ScreenReaderOnly>
+          {indeterminate
+            ? 'Loading the DuckDB analytics engine. Progress unknown.'
+            : `Loading the DuckDB analytics engine, ${pct} percent complete${
+                remaining !== null ? `, about ${remaining} seconds remaining` : ''
+              }.`}
+        </ScreenReaderOnly>
       </div>
     );
   }
@@ -150,13 +191,21 @@ export function EngineBadge({ now = Date.now() }: { now?: number }) {
     return (
       <div
         className="pointer-events-auto flex min-h-[44px] items-center gap-1.5 rounded-full border border-white/[0.08] bg-black/40 px-2.5 backdrop-blur-md"
-        aria-live="polite"
       >
-        <Radar size={11} className="text-emerald-400" />
-        <span className="num text-[9.5px] tracking-tight text-emerald-300">DuckDB-WASM</span>
-        <span className="h-2.5 w-px bg-white/15" />
-        <span className="num text-[9.5px] tracking-tight text-slate-400">{status.host}</span>
-        <span className="num text-[9.5px] tracking-tight text-slate-500">{status.bootMs} ms</span>
+        <Radar size={11} className="text-emerald-400" aria-hidden />
+        <span className="num text-[9.5px] tracking-tight text-emerald-300" aria-hidden>
+          DuckDB-WASM
+        </span>
+        <span className="h-2.5 w-px bg-white/15" aria-hidden />
+        <span className="num text-[9.5px] tracking-tight text-slate-400" aria-hidden>
+          {status.host}
+        </span>
+        <span className="num text-[9.5px] tracking-tight text-slate-500" aria-hidden>
+          {status.bootMs} ms
+        </span>
+        <ScreenReaderOnly>
+          {`DuckDB engine ready, served from ${status.host}, ${status.bootMs} milliseconds.`}
+        </ScreenReaderOnly>
       </div>
     );
   }
@@ -164,9 +213,15 @@ export function EngineBadge({ now = Date.now() }: { now?: number }) {
   // failed
   if (status.reason === 'too-slow') {
     return (
-      <button type="button" onClick={enableEngine} className={ACTION_BUTTON} aria-live="polite">
-        <Radar size={11} className="text-amber-400" />
-        Client-side model · Needs a faster connection · Load anyway ({WASM_WIRE_SIZE_LABEL})
+      <button type="button" onClick={enableEngine} className={ACTION_BUTTON}>
+        <Radar size={11} className="text-amber-400" aria-hidden />
+        <span aria-hidden>
+          Client-side model · Needs a faster connection · Load anyway ({WASM_WIRE_SIZE_LABEL})
+        </span>
+        <ScreenReaderOnly>
+          Using the built-in model. The connection is too slow for the DuckDB analytics engine,
+          about 7 megabytes. Activate to load it anyway.
+        </ScreenReaderOnly>
       </button>
     );
   }
@@ -175,9 +230,15 @@ export function EngineBadge({ now = Date.now() }: { now?: number }) {
   // the only sensible action, and the label distinguishes the cause.
   const cause = status.reason === 'unreachable' ? 'DuckDB unavailable' : 'DuckDB error';
   return (
-    <button type="button" onClick={enableEngine} className={ACTION_BUTTON} aria-live="polite">
-      <Radar size={11} className="text-rose-400" />
-      Client-side model · {cause} · Retry
+    <button type="button" onClick={enableEngine} className={ACTION_BUTTON}>
+      <Radar size={11} className="text-rose-400" aria-hidden />
+      <span aria-hidden>
+        Client-side model · {cause} · Retry
+      </span>
+      <ScreenReaderOnly>
+        Using the built-in model. The DuckDB analytics engine could not be reached. Activate to
+        retry.
+      </ScreenReaderOnly>
     </button>
   );
 }

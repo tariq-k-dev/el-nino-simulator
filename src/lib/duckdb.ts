@@ -325,9 +325,61 @@ interface DuckDbClient {
   conn: duckdb.AsyncDuckDBConnection;
   db: duckdb.AsyncDuckDB;
   version: string;
+  /**
+   * Whether `enso_historical` exists.
+   *
+   * False when the dataset was unavailable at boot. The scenario and risk-tier
+   * queries still work (they never touch the table); summary/analogs/timeline
+   * throw, and callers fall back to the TS engine for those.
+   */
+  hasHistory: boolean;
 }
 
 let clientPromise: Promise<DuckDbClient> | null = null;
+
+/**
+ * Create the materialised history table.
+ *
+ * Returns false instead of throwing when the dataset cannot be read, so the
+ * engine still boots and the scenario keeps working. The reason is logged once;
+ * the UI surfaces "History unavailable" via the dataset loader's own state.
+ *
+ * Materialised rather than a view: the 918-row CSV is parsed exactly once, so the
+ * per-slider scenario queries never re-read the file. A view over read_csv()
+ * would re-parse on every query.
+ */
+async function createHistoryTable(conn: duckdb.AsyncDuckDBConnection): Promise<boolean> {
+  try {
+    await conn.query(`
+      CREATE OR REPLACE TABLE enso_historical AS
+      SELECT * FROM read_csv('${DATA_FILE}', header=true, columns=${CSV_COLUMNS});
+    `);
+    return true;
+  } catch (error) {
+    console.warn('[duckdb] history table unavailable; scenario still works:', error);
+    return false;
+  }
+}
+
+/**
+ * Try to (re)create the history table after the dataset becomes available.
+ *
+ * Called by the retry path: the engine may have booted while the CSV was
+ * blocked, and a later successful fetch must be able to add the table without
+ * rebooting the wasm. Idempotent — a second call is a cheap CREATE OR REPLACE.
+ */
+export async function ensureHistoryTable(): Promise<boolean> {
+  if (!clientPromise) return false;
+  try {
+    const client = await clientPromise;
+    if (client.hasHistory) return true;
+    const ok = await createHistoryTable(client.conn);
+    if (ok) client.hasHistory = true;
+    return ok;
+  } catch {
+    return false;
+  }
+}
 
 /**
  * Try one wasm host end to end.
@@ -416,16 +468,18 @@ async function bootFromHost(
     await conn.query('SET autoinstall_known_extensions=false');
     await conn.query('SET autoload_known_extensions=false');
 
-    // Materialise rather than view: the 918-row CSV is parsed exactly once at
-    // boot, so the per-slider scenario queries never re-read the file. A view
-    // over read_csv() would re-parse on every query.
-    await conn.query(`
-      CREATE OR REPLACE TABLE enso_historical AS
-      SELECT * FROM read_csv('${DATA_FILE}', header=true, columns=${CSV_COLUMNS});
-    `);
+    // Materialise the history table — but do NOT let a dataset failure kill the
+    // engine.
+    //
+    // SCENARIO_SQL and RISK_TIER_SQL never reference enso_historical (verified in
+    // semantics.test.ts), so every number the user can change with a slider works
+    // without the table. Failing the whole boot here would mean a blocked or
+    // corrupt CSV takes the scenario engine down with it, which is strictly worse
+    // than losing only history.
+    const hasHistory = await createHistoryTable(conn);
 
     watchdog.dispose();
-    return { conn, db, version: duckdb.PACKAGE_VERSION };
+    return { conn, db, version: duckdb.PACKAGE_VERSION, hasHistory };
   } catch (error) {
     watchdog.dispose();
 

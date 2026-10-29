@@ -23,8 +23,12 @@ import type { DataEngine } from '@/lib/engine/dataEngine';
 import { runScenario, type AnalyticsCache, type BootMode } from '@/lib/duckdb';
 
 export interface DuckEngineOptions {
-  /** CSV text already fetched by loadDataset(). Avoids a second network request. */
-  datasetText: string;
+  /**
+   * CSV text already fetched by loadDataset(). Avoids a second network request.
+   * Null when the dataset was unavailable — the scenario queries still work, and
+   * the history queries will reject because `hasHistory` is false.
+   */
+  datasetText: string | null;
   mode?: BootMode;
   cache?: AnalyticsCache;
 }
