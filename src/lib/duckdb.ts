@@ -40,6 +40,7 @@ import { computeMetrics } from '@/lib/model';
 import { engineStore } from '@/lib/engine/store';
 import { getDecodedBytes, type BundleKind } from '@/lib/engine/manifest';
 import { BootTimeoutError, createWatchdog } from '@/lib/engine/watchdog';
+import { acquireWorker, WorkerLoadError } from '@/lib/engine/workerBoot';
 
 /** 'auto' applies the projected cap and early abort; 'user' only connect + stall. */
 export type BootMode = 'auto' | 'user';
@@ -180,6 +181,8 @@ export type BootFailureKind =
   | 'connect'
   /** Watchdog tripped: transfer died mid-flight. Try next host. */
   | 'stall'
+  /** The worker script itself never loaded/started. Try next host. */
+  | 'worker-load'
   /** Any other error from instantiate/registration. Try next host. */
   | 'error';
 
@@ -345,11 +348,20 @@ async function bootFromHost(wasmBase: string, mode: BootMode): Promise<DuckDbCli
   const bundleKind: BundleKind = bundle.mainModule.includes('duckdb-mvp') ? 'mvp' : 'eh';
   const decoded = getDecodedBytes(bundleKind).decodedBytes;
 
-  const worker = new Worker(bundle.mainWorker);
-
   // Surface the chosen host and decoded size to the UI before any bytes land, so
   // the badge can render a determinate bar from the first frame.
   engineStore.startBooting({ host: label, decoded, mode });
+
+  // Acquire the worker script FIRST, on its own budget.
+  //
+  // `new Worker(url)` returns immediately but fetches the 755 KB script
+  // asynchronously, and no InstantiationProgress event can fire until it runs.
+  // Starting the watchdog before this point spent CONNECT_MS waiting for an
+  // event that could not arrive: measured on 400 kbps, `connect` tripped at 12 s
+  // while the worker script alone needed ~15 s, so the wasm was never requested
+  // at all (wasmFetchCount: 0). WorkerLoadError is retried on the next host by
+  // boot(), because a worker that will not load is a host/local-serve problem.
+  const worker = await acquireWorker(bundle.mainWorker);
 
   const watchdog = createWatchdog({
     mode,
@@ -413,6 +425,9 @@ async function bootFromHost(wasmBase: string, mode: BootMode): Promise<DuckDbCli
     // Normalise the watchdog's own error type into a typed host failure.
     if (error instanceof BootTimeoutError) {
       throw new HostBootError(error.reason, error.message, { cause: error });
+    }
+    if (error instanceof WorkerLoadError) {
+      throw new HostBootError('worker-load', error.message, { cause: error });
     }
     if (error instanceof HostBootError) throw error;
     throw new HostBootError('error', error instanceof Error ? error.message : String(error), {
