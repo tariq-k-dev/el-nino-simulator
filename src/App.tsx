@@ -10,7 +10,16 @@ import { buildReportHtml, captureCanvas, downloadPng, openReport } from '@/lib/r
 import type { RegionId } from '@/types/enso';
 
 export default function App() {
-  const { scenario, setScenario, reset, analytics, units, toggleUnits } = useScenario();
+  const {
+    scenario,
+    setScenario,
+    reset,
+    analytics,
+    history,
+    retryHistory,
+    units,
+    toggleUnits,
+  } = useScenario();
 
   const [activeRegion, setActiveRegion] = useState<RegionId | null>(null);
   const [focusNonce, setFocusNonce] = useState(0);
@@ -122,6 +131,8 @@ export default function App() {
             scenario={scenario}
             metrics={analytics.metrics}
             timeline={timeline}
+            history={history}
+            onRetryHistory={retryHistory}
             onChange={setScenario}
             onReset={reset}
           />

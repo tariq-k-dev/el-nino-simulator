@@ -2,12 +2,16 @@ import { CircleDot, RotateCcw, ThermometerSun, Waves, Wheat, Wind } from 'lucide
 import type { ScenarioState, ScenarioMetrics } from '@/types/enso';
 import { Slider } from '@/components/ui/Slider';
 import { Sparkline } from '@/components/ui/Sparkline';
+import type { HistoryState } from '@/state/useEngine';
 import { thermalColor, SST_MAX, SST_MIN } from '@/lib/model';
 
 interface ControlDeckProps {
   scenario: ScenarioState;
   metrics: ScenarioMetrics;
   timeline: number[];
+  /** Availability of the historical dataset, independent of the engine. */
+  history: HistoryState;
+  onRetryHistory: () => void;
   onChange: (patch: Partial<ScenarioState>) => void;
   onReset: () => void;
 }
@@ -25,7 +29,15 @@ const RISK_STOPS = [
  * the readout shows the historical Niño 3.4 record from the parquet, with the
  * current scenario drawn in as a dashed reference line.
  */
-export function ControlDeck({ scenario, metrics, timeline, onChange, onReset }: ControlDeckProps) {
+export function ControlDeck({
+  scenario,
+  metrics,
+  timeline,
+  history,
+  onRetryHistory,
+  onChange,
+  onReset,
+}: ControlDeckProps) {
   const accent = thermalColor(metrics.sst, 0.95);
 
   return (
@@ -80,21 +92,45 @@ export function ControlDeck({ scenario, metrics, timeline, onChange, onReset }: 
               scale={['Neutral', 'Mega El Niño']}
             />
 
-            {/* Historical context strip */}
+            {/* Historical context strip.
+                Three states, because the dataset is independent of DuckDB: it can
+                be loading, ready (in any engine state), or genuinely unavailable
+                after a failed fetch. Only the last one is an error. */}
             <div className="relative mt-2.5 overflow-hidden rounded-lg border border-white/[0.05] bg-black/25 px-2 pb-1 pt-1.5">
               <div className="mb-0.5 flex items-center justify-between">
                 <span className="text-[8px] uppercase tracking-[0.14em] text-slate-500">
                   Niño 3.4 · observed record
                 </span>
-                <span className="num text-[8px] text-slate-500">{timeline.length} mo</span>
+                {history.status === 'ready' ? (
+                  <span className="num text-[8px] text-slate-500">{timeline.length} mo</span>
+                ) : (
+                  <span className="num text-[8px] text-slate-600">—</span>
+                )}
               </div>
-              <Sparkline
-                data={timeline}
-                height={34}
-                accent="#38bdf8"
-                markerValue={scenario.sstAnomaly}
-                ariaLabel="Historical Niño 3.4 anomaly record with current scenario marker"
-              />
+
+              {history.status === 'unavailable' ? (
+                <button
+                  type="button"
+                  onClick={onRetryHistory}
+                  className="flex min-h-[44px] w-full items-center justify-center gap-1.5 rounded-md border border-amber-400/25 bg-amber-400/[0.06] text-[10px] font-medium text-amber-200 transition-colors hover:border-amber-400/40 hover:bg-amber-400/10"
+                >
+                  <RotateCcw size={11} />
+                  History unavailable · Retry
+                </button>
+              ) : timeline.length === 0 ? (
+                // Loading: reserve the same height so the panel does not jump.
+                <div className="flex h-[34px] items-center justify-center">
+                  <span className="h-[2px] w-24 animate-pulse rounded-full bg-sky-400/40" />
+                </div>
+              ) : (
+                <Sparkline
+                  data={timeline}
+                  height={34}
+                  accent="#38bdf8"
+                  markerValue={scenario.sstAnomaly}
+                  ariaLabel="Historical Niño 3.4 anomaly record with current scenario marker"
+                />
+              )}
             </div>
           </div>
 

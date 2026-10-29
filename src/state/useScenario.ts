@@ -1,8 +1,8 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { AnalyticsPayload, ScenarioState, UnitSystem } from '@/types/enso';
-import { runScenario, type AnalyticsCache } from '@/lib/duckdb';
 import { useEngineStatus, type EngineStatus as StoreStatus } from '@/lib/engine/store';
-import { computeMetrics, AGRI_DEFAULT, JET_DEFAULT, SST_DEFAULT } from '@/lib/model';
+import { useEngine, type HistoryState } from '@/state/useEngine';
+import { AGRI_DEFAULT, JET_DEFAULT, SST_DEFAULT } from '@/lib/model';
 
 /**
  * Derive the legacy status vocabulary from the engine store.
@@ -20,6 +20,10 @@ export interface ScenarioHandle {
   reset: () => void;
   analytics: AnalyticsPayload;
   status: EngineStatus;
+  /** History availability, independent of the engine state. */
+  history: HistoryState;
+  /** Re-fetch the dataset after a failure. */
+  retryHistory: () => void;
   units: UnitSystem;
   toggleUnits: () => void;
 }
@@ -28,6 +32,42 @@ const INITIAL: ScenarioState = {
   sstAnomaly: SST_DEFAULT,
   jetStreamShift: JET_DEFAULT,
   agricultureWeight: AGRI_DEFAULT,
+};
+
+/** Empty payload used before the dataset has parsed. */
+const EMPTY: AnalyticsPayload = {
+  metrics: {
+    sst: SST_DEFAULT,
+    jet: JET_DEFAULT,
+    agri: AGRI_DEFAULT,
+    pacificSstDev: 0,
+    pacificConvection: 0,
+    usPrecip: 0,
+    usPrecipBase: 0,
+    usTempDevF: 0,
+    asiaPrecip: 0,
+    asiaDrought: 0,
+    africaPrecip: 0,
+    africaFlood: 0,
+    globalImpactIndex: 0,
+    agricultureExposure: 0,
+    riskTier: 'pending',
+  },
+  analogs: [],
+  summary: {
+    rowCount: 0,
+    firstDate: '—',
+    lastDate: '—',
+    meanAnomaly: 0,
+    maxAnomaly: 0,
+    maxAnomalyDate: '—',
+    analogCount: 0,
+    extremeMonths: 0,
+    laninaMonths: 0,
+    source: '—',
+  },
+  timeline: [],
+  queryMs: 0,
 };
 
 /** Map the engine store's phase onto the UI's status vocabulary. */
@@ -43,70 +83,33 @@ function toLegacyStatus(engine: StoreStatus, querying: boolean): EngineStatus {
   }
 }
 
-/**
- * Immediate, zero-latency payload from the TS model.
- *
- * This is what renders until the engine is `ready`. model.ts and the scenario
- * SQL are asserted to agree by model.test.ts, so switching between them produces
- * identical metrics — the DuckDB path adds history and analogs, not different
- * arithmetic.
- */
-function modelPayload(state: ScenarioState, previous?: AnalyticsPayload): AnalyticsPayload {
-  return {
-    metrics: computeMetrics(state),
-    // History/analogs are 2C scope. Preserve whatever the engine last returned
-    // rather than blanking the sparkline on every slider move.
-    analogs: previous?.analogs ?? [],
-    summary:
-      previous?.summary ?? {
-        rowCount: 0,
-        firstDate: '—',
-        lastDate: '—',
-        meanAnomaly: 0,
-        maxAnomaly: 0,
-        maxAnomalyDate: '—',
-        analogCount: 0,
-        extremeMonths: 0,
-        laninaMonths: 0,
-        source: '—',
-      },
-    timeline: previous?.timeline ?? [],
-    queryMs: previous?.queryMs ?? 0,
-  };
-}
-
 export function useScenario(): ScenarioHandle {
-  const engine = useEngineStatus();
+  const engineStatus = useEngineStatus();
+  const { engine, history, retryDataset } = useEngine();
+
   const [scenario, setScenarioState] = useState<ScenarioState>(INITIAL);
-  const [analytics, setAnalytics] = useState<AnalyticsPayload>(() => modelPayload(INITIAL));
+  const [analytics, setAnalytics] = useState<AnalyticsPayload>(EMPTY);
   const [units, setUnits] = useState<UnitSystem>('metric');
   const [querying, setQuerying] = useState(false);
 
-  const cacheRef = useRef<AnalyticsCache>({});
   /**
-   * Monotonic request id. A DuckDB round-trip can outlive a faster slider move,
-   * so a stale result must never overwrite a newer one. Every dispatch
-   * increments this; a response is applied only if its id is still current.
+   * Monotonic request id. A query can outlive a faster slider move, so a stale
+   * result must never overwrite a newer one. Every dispatch increments this; a
+   * response is applied only if its id is still current.
    */
   const requestId = useRef(0);
   const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   /**
-   * Bumped once when the engine becomes `ready`, so the current scenario is
-   * recomputed exactly once against the real engine rather than once per state
+   * Bumped once when DuckDB becomes `ready`, so the current scenario is
+   * recomputed exactly once against the new engine rather than once per state
    * change while booting.
    */
   const [epoch, setEpoch] = useState(0);
   const readySeen = useRef(false);
 
   const setScenario = useCallback((patch: Partial<ScenarioState>) => {
-    setScenarioState((prev) => {
-      const next = { ...prev, ...patch };
-      // Paint from the TS model synchronously: the slider must feel weightless
-      // even when the engine is booting or a query is in flight.
-      setAnalytics((old) => modelPayload(next, old));
-      return next;
-    });
+    setScenarioState((prev) => ({ ...prev, ...patch }));
   }, []);
 
   const reset = useCallback(() => setScenarioState(INITIAL), []);
@@ -114,20 +117,26 @@ export function useScenario(): ScenarioHandle {
   // On the transition into `ready`, recompute once. Keyed on the phase so it
   // fires once per boot rather than on every render.
   useEffect(() => {
-    if (engine.phase === 'ready' && !readySeen.current) {
+    if (engineStatus.phase === 'ready' && !readySeen.current) {
       readySeen.current = true;
       setEpoch((e) => e + 1);
     }
-    if (engine.phase === 'booting') {
+    if (engineStatus.phase === 'booting') {
       // A retry re-arms the one-shot recompute.
       readySeen.current = false;
     }
-  }, [engine.phase]);
+  }, [engineStatus.phase]);
 
-  // Run the scenario through DuckDB only when the engine is ready.
+  /**
+   * The single query effect.
+   *
+   * It runs whenever the scenario, the engine, or the epoch changes — including
+   * the moment the dataset finishes loading, which is what makes history appear
+   * WITHOUT DuckDB. Previously this effect was gated on `phase === 'ready'`, so
+   * history was unavailable until the wasm arrived.
+   */
   useEffect(() => {
-    if (engine.phase !== 'ready') {
-      // Nothing to query; the TS model already painted the metrics.
+    if (!engine) {
       setQuerying(false);
       return;
     }
@@ -135,32 +144,41 @@ export function useScenario(): ScenarioHandle {
     let cancelled = false;
     if (debounceRef.current) clearTimeout(debounceRef.current);
 
-    setQuerying(true);
-    debounceRef.current = setTimeout(async () => {
+    // DuckDB round-trips deserve a debounce; the TS engine answers synchronously
+    // in microseconds, so it runs immediately and the slider stays live.
+    const isDuck = engine.kind === 'duckdb';
+    setQuerying(isDuck);
+
+    const run = async () => {
       const id = ++requestId.current;
       try {
-        const payload = await runScenario(scenario, cacheRef.current);
+        const payload = await engine.run(scenario);
         // Stale guard: a newer request (or an unmount) wins.
         if (cancelled || id !== requestId.current) return;
         setAnalytics(payload);
       } catch (error) {
         if (cancelled || id !== requestId.current) return;
-        console.warn('[duckdb] scenario query failed; keeping model values:', error);
-        setAnalytics((old) => modelPayload(scenario, old));
+        console.warn('[engine] query failed:', error);
       } finally {
         if (!cancelled && id === requestId.current) setQuerying(false);
       }
-    }, 40);
+    };
+
+    if (isDuck) {
+      debounceRef.current = setTimeout(run, 40);
+    } else {
+      void run();
+    }
 
     return () => {
       cancelled = true;
       if (debounceRef.current) clearTimeout(debounceRef.current);
     };
-    // `epoch` is a dependency so the one-shot recompute on `ready` triggers this
+    // `epoch` is a dependency so the one-shot recompute on `ready` re-runs this
     // effect even though `scenario` itself did not change.
-  }, [scenario, epoch, engine.phase]);
+  }, [scenario, engine, epoch]);
 
-  const status = useMemo(() => toLegacyStatus(engine, querying), [engine, querying]);
+  const status = useMemo(() => toLegacyStatus(engineStatus, querying), [engineStatus, querying]);
 
   return {
     scenario,
@@ -168,6 +186,8 @@ export function useScenario(): ScenarioHandle {
     reset,
     analytics,
     status,
+    history,
+    retryHistory: retryDataset,
     units,
     toggleUnits: () => setUnits((u) => (u === 'metric' ? 'imperial' : 'metric')),
   };

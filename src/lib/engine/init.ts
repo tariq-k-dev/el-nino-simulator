@@ -19,6 +19,7 @@
 import { decideBootPolicy, type DeviceSignals } from '@/lib/engine/policy';
 import { engineStore } from '@/lib/engine/store';
 import { runScenario, type BootMode } from '@/lib/duckdb';
+import { loadDataset } from '@/lib/data/dataset';
 import { AGRI_DEFAULT, JET_DEFAULT, SST_DEFAULT } from '@/lib/model';
 
 /** `requestIdleCallback` timeout: boot even if the page never goes idle. */
@@ -77,10 +78,26 @@ async function start(mode: BootMode): Promise<void> {
   started = true;
 
   try {
+    // Hand DuckDB the CSV text the loader already fetched (or is fetching), so
+    // the engine uses registerFileText and does NOT issue a second request for
+    // it. Awaiting loadDataset() here is cheap: it is memoised, and the UI has
+    // already kicked it off on mount, so this normally resolves immediately.
+    //
+    // Without this the warmup called runScenario() with no text, fell back to
+    // registerFileURL, and the browser fetched enso.csv twice — which the
+    // "exactly ONE request" acceptance criterion forbids.
+    let datasetText: string | null = null;
+    try {
+      datasetText = (await loadDataset()).text;
+    } catch {
+      // History is unavailable; DuckDB can still try its own URL fallback.
+      datasetText = null;
+    }
+
     // A cheap query is enough to force instantiation, register the CSV and
     // materialise the table. Its result is discarded: `useScenario` will run the
     // real scenario and bump the epoch when the store flips to `ready`.
-    await runScenario(WARMUP_STATE, undefined, mode);
+    await runScenario(WARMUP_STATE, undefined, mode, datasetText);
   } catch (error) {
     // `getClient` already marked the store failed; this is only for visibility.
     console.warn(`[engine] boot did not complete (${mode}):`, error);
