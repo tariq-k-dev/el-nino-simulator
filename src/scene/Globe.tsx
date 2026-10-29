@@ -1,0 +1,270 @@
+import { useMemo, useRef } from 'react';
+import { useFrame } from '@react-three/fiber';
+import { useTexture } from '@react-three/drei';
+import * as THREE from 'three';
+import { thermalVector } from '@/lib/model';
+import {
+  atmosphereFragment,
+  atmosphereVertex,
+  surfaceOverlayFragment,
+  surfaceOverlayVertex,
+} from '@/scene/shaders';
+import { SHELLS } from '@/scene/constants';
+
+interface GlobeProps {
+  /** 0..3 degC - drives the emissive heat and the atmosphere colour. */
+  sst: number;
+  /** World-space direction the key light comes from. Shared by every layer. */
+  sunDirection: [number, number, number];
+}
+
+/**
+ * The Earth.
+ *
+ * Layers, outside in:
+ *   1. atmosphere shell (1.028R) - single analytic Rayleigh/Mie pass
+ *   2. cloud shell (1.004R)      - real alpha, not additive
+ *   3. surface (1.000R)          - day map, gloss-masked water
+ *   4. overlay shell (1.0012R)   - ocean sun glint + anomaly heat
+ *
+ * Every per-frame write is a uniform or a material scalar. No geometry rebuilds
+ * and no texture uploads, so dragging the anomaly slider never touches the
+ * CPU-side scene graph.
+ */
+export function Globe({ sst, sunDirection }: GlobeProps) {
+  const cloudRef = useRef<THREE.Mesh>(null);
+  const surfaceMat = useRef<THREE.MeshPhysicalMaterial>(null);
+  const cloudMat = useRef<THREE.MeshStandardMaterial>(null);
+  const atmosphereMat = useRef<THREE.ShaderMaterial>(null);
+  const overlayMat = useRef<THREE.ShaderMaterial>(null);
+
+  const [dayMap, nightMap, glossMap, normalMap, cloudsMap] = useTexture([
+    '/textures/earth_day.jpg',
+    '/textures/earth_night.jpg',
+    '/textures/earth_specular.jpg',
+    '/textures/earth_normal.jpg',
+    '/textures/earth_clouds.jpg',
+  ]);
+
+  useMemo(() => {
+    // Colour *albedo* must be sRGB or everything renders desaturated and dark.
+    // The gloss mask and normal map are data, not colour, and must stay linear.
+    //
+    // cloudsMap is the one that is easy to get wrong: it is grayscale, but it is
+    // still diffuse albedo painted through `map`, so it needs sRGB. Treated as
+    // linear, a mid-gray of 0.4 decodes to an sRGB value of ~0.66 and the cloud
+    // deck becomes a bright gray curtain over the planet — measured as mean
+    // saturation collapsing 0.54 -> 0.27 the moment the cloud shell was enabled.
+    const dataTextures = new Set([glossMap, normalMap]);
+    for (const tex of [dayMap, nightMap, glossMap, normalMap, cloudsMap]) {
+      tex.colorSpace = dataTextures.has(tex) ? THREE.NoColorSpace : THREE.SRGBColorSpace;
+      tex.anisotropy = 8;
+      tex.generateMipmaps = true;
+      tex.minFilter = THREE.LinearMipmapLinearFilter;
+    }
+  }, [dayMap, nightMap, glossMap, normalMap, cloudsMap]);
+
+  // Roughness map is INVERTED: earth_specular.jpg is white on water (a gloss
+  // mask), but three's roughnessMap reads white as rough. Binding it raw made
+  // the oceans matte and the continents mirror-like - exactly backwards.
+  //
+  // Doing the inversion once on a canvas at load time costs ~20 ms; inverting in
+  // the fragment shader would put a texture read plus arithmetic on every pixel
+  // of the globe for every frame.
+  const roughnessMap = useMemo(() => {
+    const image = glossMap.image as CanvasImageSource & { width?: number; height?: number };
+    if (!image || !image.width || !image.height) return glossMap;
+
+    const canvas = document.createElement('canvas');
+    canvas.width = image.width;
+    canvas.height = image.height;
+    const ctx = canvas.getContext('2d', { willReadFrequently: false });
+    if (!ctx) return glossMap;
+
+    ctx.drawImage(image, 0, 0, image.width, image.height);
+    const pixels = ctx.getImageData(0, 0, image.width, image.height);
+    const data = pixels.data;
+    for (let i = 0; i < data.length; i += 4) {
+      const inverted = 255 - data[i];
+      data[i] = inverted;
+      data[i + 1] = inverted;
+      data[i + 2] = inverted;
+    }
+    ctx.putImageData(pixels, 0, 0);
+
+    const tex = new THREE.CanvasTexture(canvas);
+    tex.colorSpace = THREE.NoColorSpace;
+    tex.anisotropy = 8;
+    tex.wrapS = THREE.RepeatWrapping;
+    tex.wrapT = THREE.ClampToEdgeWrapping;
+    tex.needsUpdate = true;
+    return tex;
+  }, [glossMap]);
+
+  const sunVector = useMemo(
+    () => new THREE.Vector3(...sunDirection).normalize(),
+    [sunDirection],
+  );
+
+  const atmosphereUniforms = useMemo(
+    () => ({
+      uSunDirection: { value: sunVector.clone() },
+      uRayleighColor: { value: new THREE.Color('#1d63d8') },
+      uMieColor: { value: new THREE.Color('#ffd9a3') },
+      uHorizonColor: { value: new THREE.Color('#9fe8ff') },
+      uIntensity: { value: 0.62 },
+      uRayleighPower: { value: 2.4 },
+      uHorizonPower: { value: 5.5 },
+      uSunGlow: { value: 0.85 },
+      uTime: { value: 0 },
+    }),
+    [sunVector],
+  );
+
+  const overlayUniforms = useMemo(
+    () => ({
+      uOceanMask: { value: glossMap },
+      uSunDirection: { value: sunVector.clone() },
+      uHeatColor: { value: new THREE.Color('#fb923c') },
+      uHeat: { value: 0.5 },
+      uSpecularPower: { value: 160 },
+      uSpecularStrength: { value: 0.5 },
+      uSunGlow: { value: 0.85 },
+    }),
+    [glossMap, sunVector],
+  );
+
+  useFrame((state, delta) => {
+    const t = state.clock.elapsedTime;
+    const step = Math.min(1, delta * 2.5);
+
+    // Planet spin lives on the parent <EarthSystem> group so hotspot markers
+    // share the transform. Clouds drift a touch faster - parallax for free.
+    if (cloudRef.current) cloudRef.current.rotation.y += delta * 0.012;
+
+    const [r, g, b] = thermalVector(sst);
+    const heat = Math.min(1, sst / 3);
+
+    if (atmosphereMat.current) {
+      const u = atmosphereMat.current.uniforms;
+      // The atmosphere stays blue. Rayleigh scattering is a property of the
+      // gas column, not of the ocean temperature — recolouring the whole rim
+      // red at high SST read as a lava planet, not as a warm Pacific. The
+      // anomaly drives intensity and a faint gold bias on the sun-facing Mie
+      // lobe only; the horizon fringe keeps its cyan.
+      const atmosphereHeat = heat * 0.18;
+      (u.uMieColor.value as THREE.Color).setRGB(
+        1.0,
+        0.85 - atmosphereHeat * 0.22,
+        0.64 - atmosphereHeat * 0.3,
+      );
+      (u.uHorizonColor.value as THREE.Color).setRGB(
+        0.62 - atmosphereHeat * 0.1,
+        0.91,
+        1.0 - atmosphereHeat * 0.08,
+      );
+      const targetIntensity = 0.6 + heat * 0.1;
+      u.uIntensity.value += (targetIntensity - u.uIntensity.value) * step;
+      u.uSunGlow.value += (0.75 + heat * 0.2 - u.uSunGlow.value) * step;
+      u.uTime.value = t;
+    }
+
+    if (overlayMat.current) {
+      const u = overlayMat.current.uniforms;
+      (u.uHeatColor.value as THREE.Color).setRGB(r, g, b);
+      u.uHeat.value += (0.35 + heat * 0.65 - u.uHeat.value) * step;
+    }
+
+    // City lights bloom a little harder as the ocean warms.
+    if (surfaceMat.current) {
+      const target = 0.18 + heat * 0.1;
+      surfaceMat.current.emissiveIntensity +=
+        (target - surfaceMat.current.emissiveIntensity) * Math.min(1, delta * 2);
+    }
+
+    // Real clouds brighten slightly with the anomaly instead of fading away,
+    // which is the opposite of what the old additive shell did.
+    if (cloudMat.current) {
+      const target = 0.9 + heat * 0.06;
+      cloudMat.current.opacity += (target - cloudMat.current.opacity) * Math.min(1, delta * 2);
+    }
+  });
+
+  return (
+    <group>
+      {/* Atmosphere, drawn first in the transparent pass so it never occludes
+          the surface or the glint. */}
+      <mesh scale={SHELLS.atmosphere} renderOrder={1}>
+        <sphereGeometry args={[1, 96, 96]} />
+        <shaderMaterial
+          ref={atmosphereMat}
+          vertexShader={atmosphereVertex}
+          fragmentShader={atmosphereFragment}
+          uniforms={atmosphereUniforms}
+          transparent
+          side={THREE.BackSide}
+          blending={THREE.NormalBlending}
+          depthWrite={false}
+        />
+      </mesh>
+
+      {/* Cloud shell.
+          earth_clouds.jpg is a single-channel coverage map with NO alpha: dark
+          means clear sky, bright means dense cloud. Binding it as `map` with a
+          uniform opacity paints 40% gray over *every* pixel — including the clear
+          ones — which measured as mean saturation dropping 0.65 -> 0.39 and was
+          the main source of the "muddy wash". The luminance belongs in `alphaMap`,
+          with flat white as the cloud colour, so clear sky is genuinely transparent. */}
+      <mesh ref={cloudRef} scale={SHELLS.clouds} renderOrder={2}>
+        <sphereGeometry args={[1, 96, 96]} />
+        <meshStandardMaterial
+          ref={cloudMat}
+          color="#ffffff"
+          alphaMap={cloudsMap}
+          transparent
+          opacity={0.92}
+          depthWrite={false}
+          roughness={1}
+          metalness={0}
+          emissive="#ffffff"
+          emissiveIntensity={0.04}
+        />
+      </mesh>
+
+      <mesh renderOrder={0}>
+        <sphereGeometry args={[1, 128, 128]} />
+        <meshPhysicalMaterial
+          ref={surfaceMat}
+          map={dayMap}
+          // The supplied normal map is flat (R/G std ~1.4 on a 0-255 scale) so
+          // it carries almost no relief; the scale is dialled back rather than
+          // pretending it encodes mountain ranges that are not there.
+          normalMap={normalMap}
+          normalScale={new THREE.Vector2(0.35, 0.35)}
+          roughnessMap={roughnessMap}
+          roughness={0.72}
+          metalness={0.02}
+          clearcoat={0.06}
+          clearcoatRoughness={0.35}
+          emissiveMap={nightMap}
+          emissive={new THREE.Color('#6fb8ff')}
+          emissiveIntensity={0.18}
+        />
+      </mesh>
+
+      {/* Ocean glint + anomaly heat, one pixel above the surface. */}
+      <mesh scale={SHELLS.overlay} renderOrder={3}>
+        <sphereGeometry args={[1, 128, 128]} />
+        <shaderMaterial
+          ref={overlayMat}
+          vertexShader={surfaceOverlayVertex}
+          fragmentShader={surfaceOverlayFragment}
+          uniforms={overlayUniforms}
+          transparent
+          depthWrite={false}
+          blending={THREE.AdditiveBlending}
+        />
+      </mesh>
+    </group>
+  );
+}

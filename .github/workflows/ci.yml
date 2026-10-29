@@ -1,0 +1,77 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  verify:
+    name: Lint, typecheck, test, build
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 10
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      # copy-duckdb runs from the prebuild hook and needs node_modules present.
+      - name: Stage DuckDB-WASM assets
+        run: node scripts/copy-duckdb.mjs
+
+      - name: Lint
+        run: pnpm lint
+
+      - name: Typecheck
+        run: pnpm exec tsc -b
+
+      - name: Test
+        run: pnpm test
+
+      - name: Build
+        run: pnpm build
+
+      # `pnpm build` already runs scripts/check-assets.mjs, which fails on any
+      # asset over Cloudflare's 25 MiB limit. These assertions cover the runtime
+      # pieces that a build can silently omit.
+      - name: Assert build output
+        run: |
+          test -f dist/index.html
+          test -f dist/duckdb/duckdb-browser-eh.worker.js
+          test -f dist/duckdb/duckdb-browser-mvp.worker.js
+          test -f dist/data/enso_historical.parquet
+          test -f dist/_headers
+          test -f dist/_redirects
+          # The DuckDB wasm must NOT be in dist: it is served from the CDN.
+          if ls dist/duckdb/*.wasm >/dev/null 2>&1; then
+            echo "ERROR: DuckDB wasm found in dist/. It must come from the CDN." >&2
+            exit 1
+          fi
+          echo "Build artifacts present and within Pages limits."
+
+      - name: Upload build artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: dist
+          path: dist
+          retention-days: 7

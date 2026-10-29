@@ -1,0 +1,183 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  :root {
+    color-scheme: dark;
+    --grid-line: rgba(148, 197, 255, 0.055);
+  }
+
+  * {
+    -webkit-tap-highlight-color: transparent;
+  }
+
+  html,
+  body,
+  #root {
+    height: 100%;
+    margin: 0;
+  }
+
+  body {
+    @apply bg-void-950 text-slate-200 antialiased;
+    font-family: 'Inter', system-ui, sans-serif;
+    overflow: hidden;
+    text-rendering: optimizeLegibility;
+  }
+
+  ::selection {
+    background: rgba(56, 189, 248, 0.28);
+    color: #fff;
+  }
+
+  /* Slim custom scrollbars inside the drawer */
+  .scroll-thin {
+    scrollbar-width: thin;
+    scrollbar-color: rgba(148, 197, 255, 0.22) transparent;
+  }
+  .scroll-thin::-webkit-scrollbar {
+    width: 6px;
+    height: 6px;
+  }
+  .scroll-thin::-webkit-scrollbar-thumb {
+    background: rgba(148, 197, 255, 0.22);
+    border-radius: 999px;
+  }
+  .scroll-thin::-webkit-scrollbar-track {
+    background: transparent;
+  }
+
+  :focus-visible {
+    outline: 2px solid rgba(56, 189, 248, 0.75);
+    outline-offset: 2px;
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    *,
+    *::before,
+    *::after {
+      animation-duration: 0.01ms !important;
+      animation-iteration-count: 1 !important;
+      transition-duration: 0.01ms !important;
+    }
+  }
+}
+
+@layer components {
+  /* The signature surface: layered translucency + a 1px inner highlight, which
+     is what separates "glassmorphism" from "semi-transparent grey box". */
+  .glass {
+    background:
+      linear-gradient(160deg, rgba(19, 29, 48, 0.86) 0%, rgba(9, 14, 26, 0.9) 100%);
+    border: 1px solid rgba(148, 197, 255, 0.11);
+    box-shadow:
+      0 24px 70px -24px rgba(0, 0, 0, 0.92),
+      inset 0 1px 0 0 rgba(255, 255, 255, 0.06);
+    backdrop-filter: blur(18px) saturate(150%);
+    -webkit-backdrop-filter: blur(18px) saturate(150%);
+  }
+
+  .glass-soft {
+    background: rgba(12, 19, 33, 0.55);
+    border: 1px solid rgba(148, 197, 255, 0.08);
+    backdrop-filter: blur(12px) saturate(130%);
+    -webkit-backdrop-filter: blur(12px) saturate(130%);
+  }
+
+  .hairline {
+    background-image: linear-gradient(
+      90deg,
+      transparent,
+      rgba(148, 197, 255, 0.22),
+      transparent
+    );
+  }
+
+  .text-gradient {
+    background: linear-gradient(100deg, #e2f3ff 0%, #7dd3fc 45%, #fbbf24 100%);
+    -webkit-background-clip: text;
+    background-clip: text;
+    color: transparent;
+  }
+
+  /* Range input: fully custom track/thumb, because the native dark slider is
+     the single biggest "unpolished" tell in a data app. */
+  .slider {
+    -webkit-appearance: none;
+    appearance: none;
+    width: 100%;
+    height: 26px;
+    background: transparent;
+    cursor: grab;
+  }
+  .slider:active {
+    cursor: grabbing;
+  }
+  .slider::-webkit-slider-runnable-track {
+    height: 4px;
+    border-radius: 999px;
+    background: rgba(148, 197, 255, 0.16);
+  }
+  .slider::-moz-range-track {
+    height: 4px;
+    border-radius: 999px;
+    background: rgba(148, 197, 255, 0.16);
+  }
+  .slider::-webkit-slider-thumb {
+    -webkit-appearance: none;
+    appearance: none;
+    width: 15px;
+    height: 15px;
+    margin-top: -5.5px;
+    border-radius: 999px;
+    background: #f8fbff;
+    border: 1px solid rgba(255, 255, 255, 0.85);
+    box-shadow:
+      0 0 0 3px rgba(56, 189, 248, 0.18),
+      0 2px 10px rgba(0, 0, 0, 0.6);
+    transition: box-shadow 180ms ease, transform 180ms ease;
+  }
+  .slider:hover::-webkit-slider-thumb {
+    box-shadow:
+      0 0 0 5px rgba(56, 189, 248, 0.24),
+      0 2px 14px rgba(0, 0, 0, 0.65);
+    transform: scale(1.06);
+  }
+  .slider::-moz-range-thumb {
+    width: 15px;
+    height: 15px;
+    border-radius: 999px;
+    background: #f8fbff;
+    border: 1px solid rgba(255, 255, 255, 0.85);
+    box-shadow: 0 0 0 3px rgba(56, 189, 248, 0.18);
+  }
+
+  .num {
+    font-family: 'JetBrains Mono', ui-monospace, monospace;
+    font-variant-numeric: tabular-nums;
+    letter-spacing: -0.02em;
+  }
+
+  /* Animated conic sweep behind the hero metric — cheap "live instrument" feel. */
+  .scan::after {
+    content: '';
+    position: absolute;
+    inset: 0;
+    border-radius: inherit;
+    background: conic-gradient(
+      from 0deg,
+      transparent 0deg,
+      rgba(56, 189, 248, 0.14) 40deg,
+      transparent 90deg
+    );
+    animation: spin 6s linear infinite;
+    pointer-events: none;
+  }
+}
+
+@keyframes spin {
+  to {
+    transform: rotate(360deg);
+  }
+}

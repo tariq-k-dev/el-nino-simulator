@@ -1,0 +1,30 @@
+# Node
+node_modules/
+dist/
+*.log
+
+# DuckDB workers, staged from node_modules by scripts/copy-duckdb.mjs on every
+# install/build. Only the ~1.5 MB workers live here; the 33-38 MB wasm is served
+# from a CDN (jsDelivr primary, unpkg fallback) and never touches the repo.
+public/duckdb/
+
+# Belt-and-braces: wasm must never be committed or copied into dist/. Cloudflare
+# Pages rejects any single asset over 25 MiB, and these are 33-39 MB.
+public/duckdb/*.wasm
+
+# NOAA source cache (re-downloadable, see scripts/generate_enso_data.py)
+.cache/
+
+# Python data pipeline
+.venv/
+__pycache__/
+*.pyc
+.python-version
+
+# Editor / OS
+.DS_Store
+.vscode/
+.idea/
+
+# Wrangler
+.wrangler/
