@@ -1,13 +1,17 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { AnalyticsPayload, ScenarioState, UnitSystem } from '@/types/enso';
-import {
-  getActiveWasmHost,
-  runScenario,
-  runScenarioFallback,
-  type AnalyticsCache,
-} from '@/lib/duckdb';
+import { runScenario, type AnalyticsCache } from '@/lib/duckdb';
+import { useEngineStatus, type EngineStatus as StoreStatus } from '@/lib/engine/store';
 import { computeMetrics, AGRI_DEFAULT, JET_DEFAULT, SST_DEFAULT } from '@/lib/model';
 
+/**
+ * Derive the legacy status vocabulary from the engine store.
+ *
+ * The Header's status dot was written against a four-value union while the store
+ * has a richer phase model. Mapping here keeps one source of truth — the store.
+ * `deferred` and `failed` share the fallback colour because, from the user's
+ * point of view, both mean "the numbers are coming from the TS model".
+ */
 export type EngineStatus = 'booting' | 'ready' | 'fallback' | 'running';
 
 export interface ScenarioHandle {
@@ -16,7 +20,6 @@ export interface ScenarioHandle {
   reset: () => void;
   analytics: AnalyticsPayload;
   status: EngineStatus;
-  engineLabel: string;
   units: UnitSystem;
   toggleUnits: () => void;
 }
@@ -27,111 +30,137 @@ const INITIAL: ScenarioState = {
   agricultureWeight: AGRI_DEFAULT,
 };
 
-/** Immediate, zero-latency metrics so the UI never waits on the engine. */
-function optimistic(state: ScenarioState): AnalyticsPayload {
+/** Map the engine store's phase onto the UI's status vocabulary. */
+function toLegacyStatus(engine: StoreStatus, querying: boolean): EngineStatus {
+  switch (engine.phase) {
+    case 'ready':
+      return querying ? 'running' : 'ready';
+    case 'booting':
+      return 'booting';
+    case 'failed':
+    case 'deferred':
+      return 'fallback';
+  }
+}
+
+/**
+ * Immediate, zero-latency payload from the TS model.
+ *
+ * This is what renders until the engine is `ready`. model.ts and the scenario
+ * SQL are asserted to agree by model.test.ts, so switching between them produces
+ * identical metrics — the DuckDB path adds history and analogs, not different
+ * arithmetic.
+ */
+function modelPayload(state: ScenarioState, previous?: AnalyticsPayload): AnalyticsPayload {
   return {
     metrics: computeMetrics(state),
-    analogs: [],
-    summary: {
-      rowCount: 0,
-      firstDate: '—',
-      lastDate: '—',
-      meanAnomaly: 0,
-      maxAnomaly: 0,
-      maxAnomalyDate: '—',
-      analogCount: 0,
-      extremeMonths: 0,
-      laninaMonths: 0,
-      source: '—',
-    },
-    timeline: [],
-    queryMs: 0,
+    // History/analogs are 2C scope. Preserve whatever the engine last returned
+    // rather than blanking the sparkline on every slider move.
+    analogs: previous?.analogs ?? [],
+    summary:
+      previous?.summary ?? {
+        rowCount: 0,
+        firstDate: '—',
+        lastDate: '—',
+        meanAnomaly: 0,
+        maxAnomaly: 0,
+        maxAnomalyDate: '—',
+        analogCount: 0,
+        extremeMonths: 0,
+        laninaMonths: 0,
+        source: '—',
+      },
+    timeline: previous?.timeline ?? [],
+    queryMs: previous?.queryMs ?? 0,
   };
 }
 
 export function useScenario(): ScenarioHandle {
+  const engine = useEngineStatus();
   const [scenario, setScenarioState] = useState<ScenarioState>(INITIAL);
-  const [analytics, setAnalytics] = useState<AnalyticsPayload>(() => optimistic(INITIAL));
-  const [status, setStatus] = useState<EngineStatus>('booting');
+  const [analytics, setAnalytics] = useState<AnalyticsPayload>(() => modelPayload(INITIAL));
   const [units, setUnits] = useState<UnitSystem>('metric');
-  const [engineVersion, setEngineVersion] = useState<string>('');
+  const [querying, setQuerying] = useState(false);
 
   const cacheRef = useRef<AnalyticsCache>({});
+  /**
+   * Monotonic request id. A DuckDB round-trip can outlive a faster slider move,
+   * so a stale result must never overwrite a newer one. Every dispatch
+   * increments this; a response is applied only if its id is still current.
+   */
   const requestId = useRef(0);
   const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  // Guard against React 18 StrictMode double-invocation racing the boot.
-  const bootedRef = useRef(false);
+
+  /**
+   * Bumped once when the engine becomes `ready`, so the current scenario is
+   * recomputed exactly once against the real engine rather than once per state
+   * change while booting.
+   */
+  const [epoch, setEpoch] = useState(0);
+  const readySeen = useRef(false);
 
   const setScenario = useCallback((patch: Partial<ScenarioState>) => {
     setScenarioState((prev) => {
       const next = { ...prev, ...patch };
-      // Paint the numbers synchronously — this is what makes the sliders feel
-      // weightless even while DuckDB is still working.
-      setAnalytics((old) => ({
-        ...old,
-        metrics: computeMetrics(next),
-      }));
+      // Paint from the TS model synchronously: the slider must feel weightless
+      // even when the engine is booting or a query is in flight.
+      setAnalytics((old) => modelPayload(next, old));
       return next;
     });
   }, []);
 
   const reset = useCallback(() => setScenarioState(INITIAL), []);
 
+  // On the transition into `ready`, recompute once. Keyed on the phase so it
+  // fires once per boot rather than on every render.
   useEffect(() => {
+    if (engine.phase === 'ready' && !readySeen.current) {
+      readySeen.current = true;
+      setEpoch((e) => e + 1);
+    }
+    if (engine.phase === 'booting') {
+      // A retry re-arms the one-shot recompute.
+      readySeen.current = false;
+    }
+  }, [engine.phase]);
+
+  // Run the scenario through DuckDB only when the engine is ready.
+  useEffect(() => {
+    if (engine.phase !== 'ready') {
+      // Nothing to query; the TS model already painted the metrics.
+      setQuerying(false);
+      return;
+    }
+
     let cancelled = false;
     if (debounceRef.current) clearTimeout(debounceRef.current);
 
-    setStatus((prev) => (prev === 'booting' ? prev : 'running'));
-
+    setQuerying(true);
     debounceRef.current = setTimeout(async () => {
       const id = ++requestId.current;
       try {
         const payload = await runScenario(scenario, cacheRef.current);
+        // Stale guard: a newer request (or an unmount) wins.
         if (cancelled || id !== requestId.current) return;
         setAnalytics(payload);
-        setStatus('ready');
-        // Surface which CDN actually served the wasm, so a fallback to unpkg is
-        // visible in the UI instead of only in the console.
-        setEngineVersion(() => {
-          const host = getActiveWasmHost();
-          return host ? `DuckDB-WASM · ${host}` : 'DuckDB-WASM';
-        });
       } catch (error) {
         if (cancelled || id !== requestId.current) return;
-        console.error('[duckdb] scenario query failed:', error);
-        if (!bootedRef.current) {
-          // First boot failed — degrade to the pure-TS path rather than dying.
-          setAnalytics(runScenarioFallback(scenario, analytics.timeline));
-          setStatus('fallback');
-          setEngineVersion('client-side model');
-        } else {
-          setStatus('ready');
-        }
+        console.warn('[duckdb] scenario query failed; keeping model values:', error);
+        setAnalytics((old) => modelPayload(scenario, old));
+      } finally {
+        if (!cancelled && id === requestId.current) setQuerying(false);
       }
-      bootedRef.current = true;
     }, 40);
 
     return () => {
       cancelled = true;
       if (debounceRef.current) clearTimeout(debounceRef.current);
     };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [scenario]);
+    // `epoch` is a dependency so the one-shot recompute on `ready` triggers this
+    // effect even though `scenario` itself did not change.
+  }, [scenario, epoch, engine.phase]);
 
-  const engineLabel = useMemo(() => {
-    switch (status) {
-      case 'booting':
-        return 'Booting engine…';
-      case 'running':
-        return 'Querying…';
-      case 'fallback':
-        // Name the cause: the app still works, but the user should know the
-        // analytics engine is degraded and why.
-        return 'Client-side model (CDN unreachable)';
-      default:
-        return `${engineVersion || 'DuckDB-WASM'} · ${analytics.queryMs.toFixed(1)} ms`;
-    }
-  }, [status, engineVersion, analytics.queryMs]);
+  const status = useMemo(() => toLegacyStatus(engine, querying), [engine, querying]);
 
   return {
     scenario,
@@ -139,7 +168,6 @@ export function useScenario(): ScenarioHandle {
     reset,
     analytics,
     status,
-    engineLabel,
     units,
     toggleUnits: () => setUnits((u) => (u === 'metric' ? 'imperial' : 'metric')),
   };

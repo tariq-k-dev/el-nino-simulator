@@ -1,34 +1,17 @@
-import { Download, Github, Globe2, Gauge, Radar } from 'lucide-react';
-import type { EngineStatus } from '@/state/useScenario';
+import { Download, Github, Globe2, Gauge } from 'lucide-react';
 import type { ScenarioMetrics, UnitSystem } from '@/types/enso';
 import { thermalColor } from '@/lib/model';
+import { EngineBadge } from '@/components/EngineBadge';
 
 interface HeaderProps {
   metrics: ScenarioMetrics;
-  status: EngineStatus;
-  engineLabel: string;
   units: UnitSystem;
   onToggleUnits: () => void;
   onExport: () => void;
   exporting: boolean;
 }
 
-const STATUS_DOT: Record<EngineStatus, string> = {
-  booting: 'bg-amber-400',
-  running: 'bg-sky-400',
-  ready: 'bg-emerald-400',
-  fallback: 'bg-slate-400',
-};
-
-export function Header({
-  metrics,
-  status,
-  engineLabel,
-  units,
-  onToggleUnits,
-  onExport,
-  exporting,
-}: HeaderProps) {
+export function Header({ metrics, units, onToggleUnits, onExport, exporting }: HeaderProps) {
   const alertColor = thermalColor(metrics.sst, 0.95);
   const isAlert = metrics.sst >= 1.5;
 
@@ -80,11 +63,10 @@ export function Header({
 
       {/* Controls */}
       <div className="pointer-events-auto flex items-center gap-1.5">
-        <div className="hidden items-center gap-1.5 rounded-full border border-white/[0.08] bg-black/40 px-2.5 py-1 backdrop-blur-md md:flex">
-          <Radar size={11} className="text-slate-500" />
-          <span className="h-1.5 w-1.5 rounded-full" />
-          <span className={`h-1.5 w-1.5 rounded-full ${STATUS_DOT[status]} ${status === 'running' ? 'animate-pulse' : ''}`} />
-          <span className="num text-[9.5px] tracking-tight text-slate-400">{engineLabel}</span>
+        {/* Engine state is its own component now: it owns the opt-in button,
+            the progress bar and the failed/retry affordances. */}
+        <div className="hidden md:flex">
+          <EngineBadge />
         </div>
 
         <div className="flex items-center overflow-hidden rounded-full border border-white/[0.08] bg-black/40 p-0.5 backdrop-blur-md">
