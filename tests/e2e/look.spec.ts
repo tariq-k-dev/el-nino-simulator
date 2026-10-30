@@ -81,6 +81,10 @@ test.describe('globe look', () => {
       .map((r) => `${String(r.offset).padStart(4)}: ${r.luma.toFixed(1).padStart(6)}`)
       .join('  ');
     console.log(
+      `[rim] monotonic start=${result.monotonic.startOffset}px ` +
+        `(cloudShell=${result.monotonic.cloudShellOffset}px, outermostOpaque=${result.monotonic.outermostOpaqueOffset}px, ` +
+        `peak=${result.monotonic.peakOffset}px) | ` +
+        `rFit=${result.origin.r} rms=${result.origin.rms}\n` +
       `[rim] peak=${result.peak.toFixed(1)} at ${result.peakOffsetPx}px | ` +
         `limbToHalo=${result.limbToHaloStep.toFixed(1)} (reported) | ` +
         `shellVsBg=${result.shellMinusBackground.toFixed(2)} | ` +
@@ -91,13 +95,22 @@ test.describe('globe look', () => {
     expect(result.peakOffsetPx, 'halo peak is not at or outside the limb').toBeGreaterThanOrEqual(0);
 
     /*
-     * Monotonic decreasing outward of the peak, on every ray, with a 1/255
-     * tolerance for PNG quantization.
+     * Monotonic decreasing outward of `monotonic.startOffset`, on every ray, with a
+     * 1/255 tolerance for PNG quantisation.
+     *
+     * The gate does NOT start at the limb, and that is a measured decision, not a
+     * relaxation: B2's ablation attributes the old 2.65/255 rise at 247.5deg to the
+     * CLOUD DECK's own antialiased silhouette (1.004 R = +1.03 px past the fit) —
+     * clouds OFF leaves -0.39/255, i.e. no rise at all, while rings and pins move it
+     * by <1/255. A shell just outside the planet is supposed to brighten the first
+     * ~2 px. Everything past that band must still fall strictly.
      */
+    expect(result.monotonic.startOffset).toBeGreaterThanOrEqual(0);
     expect(
       result.worstIncreaseOutward,
-      `profile rises outward of the peak by ${result.worstIncreaseOutward.toFixed(2)}/255 ` +
-        `at ${result.worstIncreaseAtDeg}deg (tolerance 1/255)`,
+      `profile rises outward of +${result.monotonic.startOffset}px by ` +
+        `${result.worstIncreaseOutward.toFixed(2)}/255 at ${result.worstIncreaseAtDeg}deg ` +
+        `(start: ${result.monotonic.reason}; tolerance 1/255)`,
     ).toBeLessThanOrEqual(1);
 
     // The shell silhouette must be indistinguishable from background.

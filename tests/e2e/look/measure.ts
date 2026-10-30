@@ -10,11 +10,15 @@
  * only the browser choreography.
  */
 import type { Page } from '@playwright/test';
+import { SHELLS } from '../../../src/scene/constants';
 import { writeFile, mkdir } from 'node:fs/promises';
 import path from 'node:path';
 import {
   annulus,
   bilinearLuma,
+  checkMonotonicOutward,
+  monotonicStartOffset,
+  shellSilhouetteOffsetPx,
   blurLuma,
   collectDiscPixels,
   insideDisc,
@@ -26,6 +30,7 @@ import {
   raySamples,
   sunScreenAxis,
   transitionWidth,
+  focalPxFromFov,
   type Blob,
   type DiscGeometry,
 } from '../../../src/lib/look/helpers';
@@ -39,6 +44,7 @@ import {
   settleAt,
   sunAndCamera,
   twoFrames,
+  cameraGeometry,
 } from './capture';
 
 /** Results land here, and are echoed into the test output. */
@@ -69,6 +75,14 @@ export interface RimResult {
   samplesPerRay: number;
   /** The fitted limb the profile is registered against. */
   origin: { cx: number; cy: number; r: number; rms: number; source: 'fit' };
+  /** Where the strict-monotonic gate starts, and why. */
+  monotonic: {
+    startOffset: number;
+    reason: string;
+    outermostOpaqueOffset: number;
+    cloudShellOffset: number;
+    peakOffset: number;
+  };
 }
 
 /**
@@ -143,25 +157,34 @@ export async function measureRim(
   }
 
   /*
-   * Monotonicity, measured OUTWARD OF THE PEAK on every ray individually.
+   * Monotonicity, measured outward of `startOffset`.
    *
-   * Tolerance is 1/255: the profile is sampled at whole pixels from a
-   * gamma-encoded PNG, so a single-unit rise can legitimately be rounding. Anything
-   * larger is a real non-monotonicity.
+   * NOT from the peak, and not from the limb. B2's ablation showed the 2.65/255 rise
+   * at 247.5deg is the CLOUD DECK turning on across its own antialiased silhouette
+   * (1.004 R = +1.03 px past the fit): clouds OFF gives -0.39/255, i.e. no rise at all,
+   * while rings and pins move it by <1/255. A shell slightly outside the planet
+   * legitimately brightens the first ~2 px, so the gate starts past it.
+   *
+   * Tolerance is 1/255: the profile comes from a gamma-encoded PNG, so a single-unit
+   * rise can legitimately be quantisation.
    */
-  let worstIncreaseOutward = 0;
-  let worstIncreaseAtDeg = 0;
-  for (let i = 0; i < rays; i += 1) {
-    const p = perRay[i];
-    const peakIdx = p.reduce((best, row, idx) => (row.luma > p[best].luma ? idx : best), 0);
-    for (let k = peakIdx + 1; k < p.length; k += 1) {
-      const rise = p[k].luma - p[k - 1].luma;
-      if (rise > worstIncreaseOutward) {
-        worstIncreaseOutward = rise;
-        worstIncreaseAtDeg = (i / rays) * 360;
-      }
-    }
-  }
+  const peakRowOffset = meanByOffset.reduce((best, row) => (row.luma > best.luma ? row : best)).offset;
+  const cam = await cameraGeometry(page);
+  const focal = focalPxFromFov(cam.fov, cam.height);
+  const cloudShellOffset = shellSilhouetteOffsetPx(SHELLS.clouds, cam.radius, cam.distance, focal);
+  const overlayOffset = shellSilhouetteOffsetPx(SHELLS.overlay, cam.radius, cam.distance, focal);
+  const outermostOpaqueOffset = Math.max(cloudShellOffset, overlayOffset);
+  const startOffset = monotonicStartOffset(peakRowOffset, outermostOpaqueOffset);
+  const monotonicCheck = checkMonotonicOutward(
+    perRay.map((p, i) => ({
+      deg: (i / rays) * 360,
+      points: p.map((row) => ({ offset: row.r, luma: row.luma })),
+    })),
+    startOffset,
+  );
+  const worstIncreaseOutward =
+    monotonicCheck.worstIncrease > -Infinity ? monotonicCheck.worstIncrease : 0;
+  const worstIncreaseAtDeg = monotonicCheck.at?.deg ?? 0;
 
   // Value at the shell silhouette vs far background.
   const shellOffset = geom.r * (shellScale - 1);
@@ -195,6 +218,15 @@ export async function measureRim(
     rays,
     samplesPerRay: offsets.length,
     origin,
+    monotonic: {
+      startOffset,
+      reason:
+        `max(peak ${peakRowOffset}px, outermost opaque silhouette ${outermostOpaqueOffset.toFixed(2)}px + 1px) = ${startOffset}px. ` +
+        `The cloud deck's own silhouette sits ${cloudShellOffset.toFixed(2)}px past the limb, so the rise it produces inside that band is an approved part of the look.`,
+      outermostOpaqueOffset: +outermostOpaqueOffset.toFixed(3),
+      cloudShellOffset: +cloudShellOffset.toFixed(3),
+      peakOffset: peakRowOffset,
+    },
   };
   await writeResult('rim', { geometry: geom, ...result });
   return { result, geometry: geom };

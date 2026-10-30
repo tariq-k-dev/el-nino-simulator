@@ -646,6 +646,93 @@ export function fitCircle(points: Array<[number, number]>): CircleFit | null {
   return { cx, cy, r, rms: Math.sqrt(sq / n), n };
 }
 
+// ------------------------------------------------------------- rim monotonicity
+
+/**
+ * Where a shell of radius `shellR` puts its silhouette, in px beyond the limb.
+ *
+ * `f*r/sqrt(d^2 - r^2)` is the perspective-exact silhouette radius, so subtracting
+ * the planet's own (`R_fit`) gives the offset in the profile's coordinate system.
+ *
+ * This is what turns "the profile rises at +1 px" into "the CLOUD SHELL is there",
+ * which is the difference between a defect and an approved feature.
+ */
+export function shellSilhouetteOffsetPx(
+  shellR: number,
+  planetR: number,
+  distance: number,
+  focalPx: number,
+): number {
+  const outer = discRadiusTangentPx(shellR, distance, focalPx);
+  const inner = discRadiusTangentPx(planetR, distance, focalPx);
+  if (!Number.isFinite(outer) || !Number.isFinite(inner)) return NaN;
+  return outer - inner;
+}
+
+export interface MonotonicResult {
+  /** Worst outward rise on any ray, in 1/255 units. Negative means every ray fell. */
+  worstIncrease: number;
+  /** Which ray and which offset pair produced it, for the failure message. */
+  at: { deg: number; fromOffset: number; toOffset: number } | null;
+  /** First offset the check applies at (whole pixels). */
+  startOffset: number;
+}
+
+/**
+ * Strictly-decreasing check on every ray, measured OUTWARD OF `startOffset`.
+ *
+ * `startOffset` is not 0, and that is the whole point. Profiles near a limb are not
+ * monotonic by physics: a shell that sits slightly OUTSIDE the planet (the cloud deck
+ * at 1.004 R, i.e. +1.03 px) turns on across its own antialiased silhouette, so luma
+ * rises by a few /255 within ~2 px of the limb before the halo takes over. Measuring
+ * monotonicity from the peak instead of from the limb ignores that band; measuring it
+ * across the band reports an approved feature as a defect. It did: 2.65/255 at
+ * 247.5deg, of which ablation showed CLOUDS OFF leaves **-0.39** (no rise at all).
+ *
+ * The tolerance exists for PNG quantisation, not for slack.
+ */
+export function checkMonotonicOutward(
+  profiles: Array<{ deg: number; points: Array<{ offset: number; luma: number }> }>,
+  startOffset: number,
+): MonotonicResult {
+  let worstIncrease = -Infinity;
+  let at: MonotonicResult['at'] = null;
+  for (const { deg, points } of profiles) {
+    for (let i = 1; i < points.length; i += 1) {
+      const prev = points[i - 1];
+      const cur = points[i];
+      // Only pairs at or beyond the start; the sample BEFORE it is still read, so the
+      // first checked step spans the boundary rather than starting inside it.
+      if (prev.offset < startOffset) continue;
+      const rise = cur.luma - prev.luma;
+      // Reports the RAW worst rise; the caller compares it against its tolerance so a
+      // failure message can quote both numbers.
+      if (rise > worstIncrease) {
+        worstIncrease = rise;
+        at = { deg, fromOffset: prev.offset, toOffset: cur.offset };
+      }
+    }
+  }
+  if (!Number.isFinite(worstIncrease)) worstIncrease = -Infinity;
+  return { worstIncrease, at, startOffset };
+}
+
+/**
+ * The offset a strict-monotonic gate may start at.
+ *
+ * `max(peak offset, outermost opaque silhouette + 1 px)`: past the peak (nothing
+ * should rise once the halo has turned over) and past the outermost thing that
+ * actually blocks the background. The atmosphere is deliberately excluded — it is an
+ * additive halo, so treating its 1.1 R silhouette (+35.9 px) as opaque would skip the
+ * entire profile.
+ */
+export function monotonicStartOffset(
+  peakOffset: number,
+  outermostOpaqueOffset: number,
+): number {
+  return Math.max(peakOffset, Math.ceil(outermostOpaqueOffset + 1));
+}
+
 // --------------------------------------------------- difference images (glint)
 
 export interface DiffStats {

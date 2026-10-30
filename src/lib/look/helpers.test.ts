@@ -15,6 +15,7 @@ import {
   bilinearLuma,
   blurLuma,
   cameraBasis,
+  checkMonotonicOutward,
   collectDiscPixels,
   diffStats,
   discRadiusNaivePx,
@@ -29,10 +30,12 @@ import {
   lumaAt,
   meanAbsDiff,
   median,
+  monotonicStartOffset,
   percentile,
   pixelAt,
   radialProfile,
   raySamples,
+  shellSilhouetteOffsetPx,
   specularMask,
   sunScreenAxis,
   transitionWidth,
@@ -600,5 +603,102 @@ describe('specularMask', () => {
     const on = makeImage(80, 80, () => [2, 2, 2]);
     const m = specularMask(on, off, geom, { threshold: 3 });
     expect(m.pixels).toBe(0);
+  });
+});
+
+describe('shellSilhouetteOffsetPx', () => {
+  it('matches the measured cloud-shell offset at the default camera', () => {
+    /*
+     * Measured on the real render in B2: the cloud shell (1.004 R) sits at +1.028 px
+     * past R_fit. This helper works in the TANGENT-limb frame, where R_fit is +0.402 px
+     * outside the tangent circle (the fit's centre sits half a pixel off a pixel grid,
+     * and the sub-pixel edge lands on the boundary), so 1.430 - 0.402 = 1.028.
+     */
+    const focal = 1042.036;
+    expect(shellSilhouetteOffsetPx(1.004, 1, 3.3533565, focal)).toBeCloseTo(1.430, 2);
+    expect(shellSilhouetteOffsetPx(1.1, 1, 3.3533565, focal)).toBeCloseTo(36.283, 2);
+    expect(
+      shellSilhouetteOffsetPx(1.004, 1, 3.3533565, focal) -
+        shellSilhouetteOffsetPx(1, 1, 3.3533565, focal),
+    ).toBeCloseTo(1.430, 2); // the planet's own offset cancels to 0
+  });
+
+  it('puts the atmosphere shell beyond every opaque layer', () => {
+    const focal = 1042.036;
+    // Not treated as opaque: 36 px would skip the whole halo.
+    expect(shellSilhouetteOffsetPx(1.1, 1, 3.3533565, focal)).toBeGreaterThan(30);
+  });
+
+  it('is 0 for a shell at the planet radius and NaN inside it', () => {
+    expect(shellSilhouetteOffsetPx(1, 1, 3.35, 1042)).toBeCloseTo(0, 9);
+    expect(shellSilhouetteOffsetPx(1.002, 1, 3.35, 1042)).toBeGreaterThan(0);
+  });
+});
+
+describe('checkMonotonicOutward', () => {
+  /** A descending halo, optionally with a rise at `riseAt`. */
+  const profile = (deg: number, riseAt: number | null, rise = 8) => {
+    const points = [];
+    for (let o = -6; o <= 20; o += 1) {
+      let v = 100 - (o + 6) * 2; // falls 2/255 per px
+      if (riseAt !== null && o >= riseAt) v += rise;
+      points.push({ offset: o, luma: v });
+    }
+    return { deg, points };
+  };
+
+  it('passes a strictly descending profile', () => {
+    const r = checkMonotonicOutward([profile(0, null), profile(90, null)], 0);
+    expect(r.worstIncrease).toBeCloseTo(-2, 6);
+  });
+
+  it('passes a rise at +1 px when the gate starts past the shell band', () => {
+    // Rule (b): a rise inside the antialiased silhouette band is approved.
+    // ceil(1.430 + 1) = 3: past the cloud shell's own silhouette.
+    const start = monotonicStartOffset(0, 1.430);
+    expect(start).toBe(3);
+    const r = checkMonotonicOutward([profile(247.5, 1)], start);
+    // The rise is at +1, which is BEFORE the start, so it is not measured.
+    expect(r.worstIncrease).toBeLessThanOrEqual(1);
+  });
+
+  it('fails a rise at +10 px even with the shifted start', () => {
+    const start = monotonicStartOffset(0, 1.430);
+    const r = checkMonotonicOutward([profile(247.5, 10)], start);
+    // An 8/255 step up net of the 2/255 baseline fall.
+    expect(r.worstIncrease).toBeCloseTo(6, 6);
+    expect(r.at).toEqual({ deg: 247.5, fromOffset: 9, toOffset: 10 });
+  });
+
+  it('fails the same rise when the gate starts at 0', () => {
+    const r = checkMonotonicOutward([profile(247.5, 1)], 0);
+    expect(r.worstIncrease).toBeCloseTo(6, 6);
+  });
+
+  it('allows exactly the tolerance but not more', () => {
+    const base = profile(0, null);
+    const jittered = base.points.map((p) => ({ ...p, luma: p.luma + (p.offset === 5 ? 1 : 0) }));
+    // A single +1 step: the step INTO it is +1 and the step OUT is -3, so worst = 1.
+    const r = checkMonotonicOutward([{ deg: 0, points: jittered }], 0);
+    // Baseline falls 2/px, so a +1 bump nets -1: quantisation noise cannot trip 1/255.
+    expect(r.worstIncrease).toBeCloseTo(-1, 6);
+    expect(r.worstIncrease).toBeLessThanOrEqual(1);
+  });
+
+  it('reports a degenerate profile as no rise rather than NaN', () => {
+    const r = checkMonotonicOutward([], 0);
+    expect(r.worstIncrease).toBe(-Infinity);
+    expect(r.at).toBeNull();
+  });
+});
+
+describe('monotonicStartOffset', () => {
+  it('takes the peak when the peak is further out than the shells', () => {
+    expect(monotonicStartOffset(6, 1.028)).toBe(6);
+  });
+
+  it('takes outermost silhouette + 1 when that is further out than the peak', () => {
+    expect(monotonicStartOffset(0, 1.430)).toBe(3);
+    expect(monotonicStartOffset(1, 3.7)).toBe(5);
   });
 });
