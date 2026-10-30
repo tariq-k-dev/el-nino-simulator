@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { cleanup, fireEvent, render, screen } from '@testing-library/react';
+import { act, cleanup, fireEvent, render, screen } from '@testing-library/react';
 import { EngineBadge } from '@/components/EngineBadge';
 import { engineStore, type EngineStatus } from '@/lib/engine/store';
 import { enableEngine } from '@/lib/engine/init';
@@ -116,7 +116,7 @@ describe('EngineBadge — zero progress events', () => {
     // screen reader reads the sentence rather than concatenated chrome.
     const live = document.querySelector('[aria-live="polite"].sr-only');
     expect(live).not.toBeNull();
-    expect(live?.textContent).toMatch(/Loading the DuckDB analytics engine/);
+    expect(live?.textContent?.trim()).toBe('Loading the DuckDB engine.');
 
     // The visible label must be hidden from assistive tech or it doubles up.
     const visual = [...document.querySelectorAll('span')].find(
@@ -131,17 +131,30 @@ describe('EngineBadge — zero progress events', () => {
   it('the sr-only sentence carries no numbers during worker load', () => {
     renderWith(booting({ loaded: 0, firstEventAt: null }));
     const live = document.querySelector('[aria-live="polite"].sr-only');
+    expect(live?.textContent?.trim()).toBe('Loading the DuckDB engine.');
     expect(live?.textContent ?? '').not.toMatch(/\d+\s*%/);
     expect(live?.textContent ?? '').not.toMatch(/\d+\s*second/);
   });
 
   it('shows an indeterminate bar (no width from progress)', () => {
     renderWith(booting({ loaded: 0, firstEventAt: null }));
-    // The pulsing bar is the w-1/3 element; a determinate bar would carry an
+    // The pulsing fill is the w-1/3 element; a determinate bar would carry an
     // inline width style derived from progressPercent().
     const bar = document.querySelector('.animate-pulse');
     expect(bar).not.toBeNull();
     expect((bar as HTMLElement).style.width).toBe('');
+  });
+
+  it('exposes role="progressbar" with no aria-valuenow while indeterminate', () => {
+    renderWith(booting({ loaded: 0, firstEventAt: null }));
+    const bar = screen.getByRole('progressbar');
+    expect(bar).toBeTruthy();
+    // 0/100 bounds are always present; the VALUE is omitted on purpose —
+    // inventing 0 would claim knowledge the app does not have.
+    expect(bar.getAttribute('aria-valuemin')).toBe('0');
+    expect(bar.getAttribute('aria-valuemax')).toBe('100');
+    expect(bar.getAttribute('aria-valuenow')).toBeNull();
+    expect(bar.getAttribute('aria-valuetext')).toBe('Preparing to download');
   });
 });
 
@@ -162,6 +175,107 @@ describe('EngineBadge — determinate progress after the first event', () => {
     expect(text).not.toContain('Starting DuckDB');
     // ~50% of 34,242,586
     expect(text).toMatch(/Loading DuckDB 50%/);
+  });
+
+  it('puts the percentage on the progressbar, NOT in the live region', () => {
+    renderWith(
+      // Exactly 25% of the decoded size: the percentage FLOORS, so an
+      // approximate quarter lands on 24 and would assert the wrong thing.
+      booting({ loaded: 8_560_646.5, decoded: 34_242_586, firstEventAt: Date.now() - 9_000 }),
+    );
+
+    // The machine-readable value is on the bar.
+    const bar = screen.getByRole('progressbar');
+    expect(bar.getAttribute('aria-valuenow')).toBe('25');
+    expect(bar.getAttribute('aria-valuetext')).toMatch(/^25%/);
+
+    // And the announcement is still the static sentence — no number in it.
+    const live = document.querySelector('[aria-live="polite"].sr-only');
+    expect(live?.textContent?.trim()).toBe('Loading the DuckDB engine.');
+  });
+
+  /**
+   * The defect this pins: the percentage used to live inside the
+   * `aria-live="polite"` sentence, so a throttled 45 s boot re-announced on every
+   * store write — hundreds of interruptions, each more useless than the last.
+   *
+   * 100 progress updates must produce AT MOST ONE change to the live region's
+   * text. "At most one" rather than "zero" because the phase transition into
+   * `booting` is legitimately announced once; what must not happen is a change
+   * per update.
+   */
+  it('100 progress updates change the live region at most once', () => {
+    const DECODED = 34_242_586;
+
+    /*
+     * Text sampling per render, NOT a MutationObserver.
+     *
+     * Two instruments were tried and both are wrong here:
+     *
+     *  - An observer bound to the sr-only span: React may REPLACE that node rather
+     *    than mutate its text, so the observer watches a detached element and
+     *    reports zero changes no matter what the component does.
+     *  - An observer on the wrapper: still dependent on microtask delivery, which
+     *    a synchronous loop never reaches, so `disconnect()` discards every queued
+     *    record. Verified by breaking the markup and watching the test pass.
+     *
+     * Sampling the text after each render measures the property directly — "how
+     * many distinct announcements were there" — with no delivery timing in the way.
+     *
+     * Fake timers and no `__reset()` in the loop, because:
+     *  1. the store throttles progress writes to <=10/s with a trailing write, so
+     *     100 synchronous reports collapse into one and the badge never re-renders;
+     *  2. `__reset()` clears the subscriber set, so the badge would stop receiving
+     *     updates after the first iteration and every later "no change" would be
+     *     measuring a component that is no longer subscribed.
+     */
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+    try {
+      engineStore.__reset();
+      engineStore.startBooting({ host: 'jsdelivr', decoded: DECODED, mode: 'auto' });
+      const { rerender } = render(<EngineBadge now={Date.now()} />);
+
+      const liveSel = '[aria-live="polite"].sr-only';
+      const liveText = () => (document.querySelector(liveSel)?.textContent ?? '').trim();
+
+      const announcements: string[] = [liveText()];
+      const barValues: Array<string | null> = [];
+
+      for (let i = 1; i <= 100; i += 1) {
+        act(() => {
+          engineStore.reportProgress(Math.round((i / 100) * DECODED));
+          // Past the throttle window, so this write is committed, not queued.
+          vi.advanceTimersByTime(100);
+        });
+        rerender(<EngineBadge now={Date.now() + i * 100} />);
+
+        announcements.push(liveText());
+        barValues.push(screen.getByRole('progressbar').getAttribute('aria-valuenow'));
+      }
+
+      // Vacuity guard: the progressbar must have carried MANY DISTINCT values. If
+      // the component never re-rendered, every sample is identical and the
+      // "at most one announcement" result below would mean nothing.
+      const distinctBarValues = new Set(barValues.filter((v) => v !== null));
+      expect(
+        distinctBarValues.size,
+        `the progressbar showed only ${distinctBarValues.size} distinct value(s) across ` +
+          '100 updates — the component was not re-rendering, so this test proves nothing',
+      ).toBeGreaterThan(50);
+
+      const transitions = announcements.filter((t, i) => i > 0 && t !== announcements[i - 1]).length;
+      expect(
+        transitions,
+        `the live region changed ${transitions} times across 100 progress updates ` +
+          `(saw: ${[...new Set(announcements)].slice(0, 4).map((t) => JSON.stringify(t)).join(', ')}) — ` +
+          'it must carry the phase only, never the percentage',
+      ).toBeLessThanOrEqual(1);
+
+      // And it is still the static sentence, not the last percentage.
+      expect(liveText()).toBe('Loading the DuckDB engine.');
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it('shows an ETA only after 5 s of data time', () => {
@@ -193,6 +307,7 @@ describe('EngineBadge — determinate progress after the first event', () => {
     expect(text).not.toMatch(/s left/);
   });
 });
+
 
 describe('EngineBadge — waiting for the scene gate', () => {
   beforeEach(() => {

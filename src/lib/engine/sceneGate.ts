@@ -305,9 +305,28 @@ export function whenSceneSettled(): Promise<SceneOutcome> {
   return settledPromise;
 }
 
-/** Current gate state, for the badge/diagnostics. */
+/**
+ * Current gate state, for the badge/diagnostics.
+ *
+ * `createdAt` is derived from the live module variable rather than read off
+ * `state`, because `state` is only rebuilt when something TRANSITIONS. Reading
+ * `state.createdAt` while the gate is still open returns null — which made "was
+ * the dataset requested before the gate was even created?" unanswerable from
+ * outside, the one question that proves the dataset load is not on the boot path.
+ */
 export function getSceneGateState(): SceneGateState {
-  return state;
+  return {
+    ...state,
+    createdAt: hasCreatedAt ? createdAt : null,
+    // Once settled, `settledInMs` and `openedAt` are the frozen pair; while open,
+    // report the elapsed time so a diagnostic can see how long it has been waiting.
+    settledInMs:
+      state.settledInMs !== null
+        ? state.settledInMs
+        : hasCreatedAt
+          ? Math.round(clock() - createdAt)
+          : null,
+  };
 }
 
 /**

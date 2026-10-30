@@ -164,28 +164,40 @@ export function EngineBadge({ now = Date.now() }: { now?: number }) {
     const awaitingFirstEvent = status.firstEventAt === null;
     const indeterminate = pct === null;
 
-    if (awaitingFirstEvent) {
-      return (
-        <div
-          className="pointer-events-auto flex min-h-[44px] items-center gap-2 rounded-full border border-white/[0.08] bg-black/40 px-2.5 backdrop-blur-md"
-          aria-busy="true"
-        >
-          <Loader2 size={11} className="animate-spin text-sky-400" aria-hidden />
-          <span className="num text-[9.5px] tracking-tight text-slate-300" aria-hidden>
-            Starting DuckDB…
-          </span>
-          <span
-            className="relative block h-[3px] w-14 overflow-hidden rounded-full bg-white/10"
-            aria-hidden
-          >
-            <span className="block h-full w-1/3 animate-pulse rounded-full bg-sky-400" />
-          </span>
-          <ScreenReaderOnly>
-            Loading the DuckDB analytics engine. Preparing to download.
-          </ScreenReaderOnly>
-        </div>
-      );
-    }
+    /*
+     * Whether the bar has NO usable value, which is a wider condition than
+     * `indeterminate`.
+     *
+     * `progressPercent()` returns 0 — not null — while `loaded` is 0 against a
+     * known `decoded` size, so the awaiting-first-event window looked
+     * DETERMINATE and rendered a stuck 0% bar: false precision, which is exactly
+     * what this phase exists to avoid. Pulse whenever no progress event has
+     * arrived yet, regardless of what the percentage function says.
+     */
+    const noValueYet = awaitingFirstEvent || indeterminate;
+
+    /*
+     * Announcements are STATIC in this phase.
+     *
+     * The previous version put the percentage inside the `aria-live="polite"`
+     * sentence, so a throttled 45 s boot re-announced up to ~450 times
+     * ("Loading ... 47 percent complete", "48 percent", ...). A screen-reader
+     * user gets a stream of numbers instead of the one fact they need, and every
+     * announcement interrupts the previous one.
+     *
+     * Progress is a machine-readable value, so it belongs on a `progressbar`
+     * with `aria-valuenow` / `aria-valuemin` / `aria-valuemax` — an assistive
+     * technology can then query it on demand, at its own pace, instead of being
+     * pushed an update per store write. The live region carries the PHASE only,
+     * which changes a handful of times per session.
+     *
+     * One sentence for both sub-states, deliberately: the worker-download window
+     * and the byte-transfer window are the same phase to a listener, and changing
+     * the sentence between them would be a second announcement for no new fact.
+     * The visual label still distinguishes them ("Starting DuckDB…" vs
+     * "Loading DuckDB 47%").
+     */
+    const label = awaitingFirstEvent ? 'Starting DuckDB…' : 'Loading DuckDB';
 
     return (
       <div
@@ -194,31 +206,45 @@ export function EngineBadge({ now = Date.now() }: { now?: number }) {
       >
         <Loader2 size={11} className="animate-spin text-sky-400" aria-hidden />
         <span className="num text-[9.5px] tracking-tight text-slate-300" aria-hidden>
-          Loading DuckDB
-          {indeterminate ? '' : ` ${pct}%`}
-          {remaining !== null ? ` · ~${remaining} s left` : ''}
+          {label}
+          {/* Numbers are VISUAL only. Announcing them would be the flood again. */}
+          {noValueYet ? '' : ` ${pct}%`}
+          {noValueYet || remaining === null ? '' : ` · ~${remaining} s left`}
         </span>
-        {/* Slim bar. Indeterminate has no width animation: a fake progress
-            indication is worse than none. */}
+
+        {/*
+          The bar carries the machine-readable progress, and is NOT the live
+          region. `aria-valuenow` is omitted while indeterminate — which is the
+          correct ARIA expression of "we do not know", and better than inventing
+          0 or 100. `aria-valuetext` gives a human reading without a percentage
+          the app cannot honestly produce.
+        */}
         <span
+          role="progressbar"
+          aria-label="DuckDB engine download"
+          aria-valuemin={0}
+          aria-valuemax={100}
+          {...(noValueYet ? {} : { 'aria-valuenow': pct as number })}
+          aria-valuetext={
+            awaitingFirstEvent
+              ? 'Preparing to download'
+              : indeterminate
+                ? 'Progress unknown'
+                : `${pct}%${remaining !== null ? `, about ${remaining} seconds remaining` : ''}`
+          }
           className="relative block h-[3px] w-14 overflow-hidden rounded-full bg-white/10"
-          aria-hidden
         >
           <span
+            aria-hidden
             className={[
               'block h-full rounded-full bg-sky-400 transition-[width] duration-200 ease-out',
-              indeterminate ? 'w-1/3 animate-pulse' : '',
+              noValueYet ? 'w-1/3 animate-pulse' : '',
             ].join(' ')}
-            style={indeterminate ? undefined : { width: `${pct}%` }}
+            style={noValueYet ? undefined : { width: `${pct}%` }}
           />
         </span>
-        <ScreenReaderOnly>
-          {indeterminate
-            ? 'Loading the DuckDB analytics engine. Progress unknown.'
-            : `Loading the DuckDB analytics engine, ${pct} percent complete${
-                remaining !== null ? `, about ${remaining} seconds remaining` : ''
-              }.`}
-        </ScreenReaderOnly>
+
+        <ScreenReaderOnly>Loading the DuckDB engine.</ScreenReaderOnly>
       </div>
     );
   }
