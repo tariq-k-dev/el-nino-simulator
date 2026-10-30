@@ -16,7 +16,7 @@ import {
   disc,
   frameNoise,
   measureBlueCircle,
-  measurePinCores,
+  measurePinGates,
   measureRingCast,
   measureGlare,
   measureRim,
@@ -341,70 +341,76 @@ test.describe('globe look', () => {
     }
   });
   // ---------------------------------------------------- 3.5 pins day and night --
-  test('3.5 pins: readable cores day and night, never black, never blown', async ({ page }) => {
+  test('3.5 pins: readable, unblown and still amber — day and night', async ({ page }) => {
     /*
-     * Day core ~ (255,255,185), night core ~ (255,255,182), tolerance +-12 per channel.
+     * SEMANTIC gate. No RGB windows, old or new.
      *
-     * These ranges are the REAL RENDER values recorded in 2A4, not the brief's original
-     * (255,255,158..172) / (240,238,123)..(255,255,150) guesses. 2A4 measured all four
-     * cores at B 181-189 and reported the mismatch instead of widening a window; the
-     * approved look is what it is, so the spec now encodes it. The tolerance is
-     * unchanged at +-12, so the spec still catches a core drifting more than 12/255.
+     * The intent: the core must be not black, not blown out, and still amber-tinted.
+     * Those are four predicates (P1-P4 below) that hold whatever the exact pixel values
+     * drift to. The hardcoded windows are retired because B0 measured the render as
+     * byte-identical across eleven commits while the windows moved twice — they described
+     * a sampling, not the look.
      *
-     * A pin is judged on the brightest pixel of its 13x13 core box (the emissive sphere's
-     * centre); the surrounding housing is deliberately near-black and would drag a mean
-     * toward 0.
+     * Measured medians are printed as INFORMATION, so drift stays visible without a
+     * threshold having to be invented for it.
      */
-    const TOL = 12;
+    const AZ = [0, 90, 180, 270];
+    const all: Array<Awaited<ReturnType<typeof measurePinGates>>['results'][number]> = [];
+    for (const az of AZ) {
+      const { results } = await measurePinGates(page, az);
+      all.push(...results);
+    }
 
-    const day = await measurePinCores(page, 0);
-    const night = await measurePinCores(page, 180);
-    const all = [...day.cores, ...night.cores];
-
-    expect(all.length, 'no facing pins were found at az 0 or az 180').toBeGreaterThan(0);
-
-    // At least one night-side pin must be visible, per the brief.
-    const nightSide = all.filter((c) => c.side === 'night');
-    expect(nightSide.length, 'no night-side pin was visible at az 0 or 180').toBeGreaterThan(0);
+    const valid = all.filter((r) => r.valid);
+    const invalid = all.filter((r) => !r.valid);
+    const dayPins = valid.filter((r) => r.side === 'day');
+    const nightPins = valid.filter((r) => r.side === 'night');
 
     console.log(
-      `[pins] tolerance +-${TOL}/channel | day target (255,255,185) | night target (255,255,182) — real render values\n` +
+      `[pins] semantic gate P1 luma>=180, P2 no min(RGB)>=250, P3 sat>=0.15, P4 R>=240 G>=200 B<=G\n` +
         all
           .map(
-            (c) =>
-              `  az=${String(c.az).padStart(3)} ${c.id.padEnd(12)} ${c.side.padEnd(5)} ` +
-              `core=(${c.coreRgb.join(',')}) at (${c.coreAt.join(',')}) ` +
-              `pureWhite=${c.pureWhitePx} black=${c.blackPx}`,
+            (r) =>
+              `  az=${String(r.az).padStart(3)} ${r.id.padEnd(12)} ${r.side.padEnd(10)} ` +
+              `r/R=${r.rOverR.toFixed(3)} n·cam=${r.facingDot.toFixed(2)} n·sun=${r.sunDot.toFixed(2)} ` +
+              (r.valid && r.sample && r.gates
+                ? `n=${String(r.sample.count).padStart(3)} med=(${r.sample.median.join(',')}) ` +
+                  `luma=${r.sample.medianLuma.toFixed(1)} sat=${r.sample.medianSaturation.toFixed(3)} ` +
+                  `blown=${r.sample.blownPx} | ` +
+                  `P1=${r.gates.P1 ? 'ok' : 'FAIL'} P2=${r.gates.P2 ? 'ok' : 'FAIL'} ` +
+                  `P3=${r.gates.P3 ? 'ok' : 'FAIL'} P4=${r.gates.P4 ? 'ok' : 'FAIL'}`
+                : `INVALID: ${r.validityReason}`),
           )
           .join('\n'),
     );
 
-    await writeResult('pin-cores', { tolerance: TOL, rows: all });
+    await writeResult('pin-gates', { az: AZ, rows: all });
 
-    for (const c of all) {
-      expect(Number.isFinite(c.coreRgb[0]), `${c.id}: core R is not finite`).toBe(true);
+    // Coverage: the gate is only meaningful if day and night are both represented.
+    expect(dayPins.length, 'no valid DAY pin in az {0,90,180,270} (needs n·sun > 0.2)').toBeGreaterThan(0);
+    expect(nightPins.length, 'no valid NIGHT pin in az {0,90,180,270} (needs n·sun < -0.1)').toBeGreaterThan(0);
+    expect(invalid.length, `all pins invalid: ${invalid.map((r) => `${r.id}@${r.az} ${r.validityReason}`).join('; ')}`)
+      .toBeLessThan(all.length);
 
-      // Core is not black.
+    for (const r of valid) {
+      const s2 = r.sample!;
+      const g = r.gates!;
+      // Inputs before verdicts.
+      expect(s2.count, `${r.id}@${r.az}: only ${s2.count} core samples`).toBeGreaterThanOrEqual(5);
+      expect(Number.isFinite(s2.medianLuma), `${r.id}@${r.az}: median luma is NaN`).toBe(true);
+      expect(Number.isFinite(s2.medianSaturation), `${r.id}@${r.az}: median saturation is NaN`).toBe(true);
+
+      expect(g.P1, `${r.id}@${r.az} P1: median core luma ${s2.medianLuma.toFixed(1)} < 180`).toBe(true);
+      expect(g.P2, `${r.id}@${r.az} P2: ${s2.blownPx} fully-blown core px`).toBe(true);
       expect(
-        c.coreRgb[0] + c.coreRgb[1] + c.coreRgb[2],
-        `${c.id} @ az ${c.az}: core is black`,
-      ).toBeGreaterThan(0);
-
-      // No blown pixels inside the core.
-      expect(c.pureWhitePx, `${c.id} @ az ${c.az}: ${c.pureWhitePx} pure-white px in the core`).toBe(0);
-
-      const [r, g, b] = c.coreRgb;
-      if (c.side === 'day') {
-        expect(Math.abs(r - 255), `${c.id} day: R ${r} outside 255+-${TOL}`).toBeLessThanOrEqual(TOL);
-        expect(Math.abs(g - 255), `${c.id} day: G ${g} outside 255+-${TOL}`).toBeLessThanOrEqual(TOL);
-        expect(b, `${c.id} day: B ${b} outside 185+-${TOL}`).toBeGreaterThanOrEqual(185 - TOL);
-        expect(b, `${c.id} day: B ${b} outside 185+-${TOL}`).toBeLessThanOrEqual(185 + TOL);
-      } else {
-        expect(r, `${c.id} night: R ${r} outside 240..255+-${TOL}`).toBeGreaterThanOrEqual(240 - TOL);
-        expect(g, `${c.id} night: G ${g} outside 238..255+-${TOL}`).toBeGreaterThanOrEqual(238 - TOL);
-        expect(b, `${c.id} night: B ${b} outside 182+-${TOL}`).toBeGreaterThanOrEqual(182 - TOL);
-        expect(b, `${c.id} night: B ${b} outside 182+-${TOL}`).toBeLessThanOrEqual(182 + TOL);
-      }
+        g.P3,
+        `${r.id}@${r.az} P3: median saturation ${s2.medianSaturation.toFixed(3)} < 0.15 ` +
+          `(core has lost its amber tint; med=(${s2.median.join(',')}))`,
+      ).toBe(true);
+      expect(
+        g.P4,
+        `${r.id}@${r.az} P4: median (${s2.median.join(',')}) breaks R>=240 / G>=200 / B<=G`,
+      ).toBe(true);
     }
   });
 

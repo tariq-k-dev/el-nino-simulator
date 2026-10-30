@@ -698,128 +698,225 @@ export { capture, disc, frameNoise, setLayers, settleAt, ALL_LAYERS, annulus, ra
 
 // ------------------------------------------------------------ 3.5 pin cores
 
-export interface PinCoreResult {
+export interface PinCoreSample {
+  /** Per-pixel RGB inside the core region. */
+  pixels: Array<[number, number, number]>;
+  /** Median RGB. */
+  median: [number, number, number];
+  /** Median Rec.709 luma of the core pixels. */
+  medianLuma: number;
+  /** Median HSV-style saturation (max-min)/max. */
+  medianSaturation: number;
+  /** Pixels with min(R,G,B) >= 250. */
+  blownPx: number;
+  count: number;
+}
+
+export interface PinGateResult {
   az: number;
   id: string;
   x: number;
   y: number;
-  /** Brightest pixel in the 29x29 core search box. */
-  coreRgb: [number, number, number];
-  coreAt: [number, number];
-  /** Pure-white pixels (R,G,B all >= 250) in the 13x13 core. */
-  pureWhitePx: number;
-  /** All-black pixels in the 13x13 core — "core RGB not black". */
-  blackPx: number;
-  side: 'day' | 'night';
+  /** Radius of the core region in px. */
+  coreRadiusPx: number;
+  /** r/R of the pin's projected CORE. */
+  rOverR: number;
+  /** Surface normal · camera direction. */
+  facingDot: number;
+  /** Surface normal · sun direction. */
+  sunDot: number;
+  side: 'day' | 'night' | 'terminator';
+  valid: boolean;
+  validityReason: string;
+  sample: PinCoreSample | null;
+  /** Gate outcomes (null when the pin is invalid). */
+  gates: { P1: boolean; P2: boolean; P3: boolean; P4: boolean } | null;
 }
 
 /**
- * 3.5 — read every FACING pin's core RGB at one azimuth.
+ * 3.5 — pin cores as a SEMANTIC gate, not a colour window.
  *
- * The core is found as the brightest pixel in a 29x29 box around the projected pin
- * centre, then judged on a 13x13 box: the core is a small emissive sphere and its
- * centre is what carries the colour, while the surrounding housing is deliberately dark
- * (#080c14) and would drag any mean toward black.
+ * The hardcoded RGB windows are RETIRED, both the original brief's
+ * (255,255,158..172) / (240,238,123)..(255,255,150) and the 2A4 "measured" 185/182.
+ * B0 showed the render is byte-identical across eleven commits while those windows moved,
+ * which means the windows were never describing the render — they were describing whatever
+ * sampling happened to be used the day they were written. A gate that changes when the
+ * measurement changes is not a gate.
+ *
+ * What the look actually INTENDS is stated instead: the core must be **not black, not
+ * blown out, and still amber-tinted**. Those are four semantic predicates:
+ *
+ *   P1  median core luma >= 180          — visible against ocean, cloud and terminator
+ *   P2  no pixel with min(R,G,B) >= 250  — the core is never a white blowout
+ *   P3  median saturation >= 0.15        — still tinted, not grey (R=255 => B <= 217)
+ *   P4  median R >= 240, G >= 200, B <= G — the amber ordering, not just any bright pixel
+ *
+ * The measured medians are printed as INFORMATION so a drift is visible without a threshold
+ * having to be invented for it.
+ *
+ * Core region: pixels within 0.6 x r_core_px of the projected centre, where r_core_px is
+ * the projected radius of the core sphere (measured by projecting a point offset by the
+ * core's world radius), floored at a 3x3 box so a small viewport still samples something.
  */
-export async function measurePinCores(
+export interface PinCoreOptions {
+  /** Fraction of the core's projected radius to sample. */
+  coreFrac?: number;
+  /** Minimum sample count before a pin is judged. */
+  minSamples?: number;
+  /** Reject pins whose projected core is outside this r/R. */
+  maxROverR?: number;
+  /** Reject pins facing away from the camera by less than this. */
+  minFacingDot?: number;
+}
+
+export async function measurePinGates(
   page: Page,
   azimuthDeg: number,
-): Promise<{ cores: PinCoreResult[]; geometry: DiscGeometry }> {
+  opts: PinCoreOptions = {},
+): Promise<{ results: PinGateResult[]; geometry: DiscGeometry }> {
+  const { coreFrac = 0.6, minSamples = 5, maxROverR = 0.97, minFacingDot = 0.1 } = opts;
+
   await settleAt(page, azimuthDeg);
   await setLayers(page, { stars: false, rings: false, pins: true, atmosphere: true, clouds: true });
+
   const fit = await fitLimb(page);
-  if (!Number.isFinite(fit.r)) throw new Error('measurePinCores: limb fit produced no circle');
+  if (!Number.isFinite(fit.r)) throw new Error('measurePinGates: limb fit produced no circle');
   const geom: DiscGeometry = { cx: fit.cx, cy: fit.cy, r: fit.r };
+
   await setLayers(page, { stars: false, rings: false, pins: true, atmosphere: true, clouds: true });
   const img = await capture(page);
 
-  const pins = await page.evaluate(() => window.__globe!.pins());
-  const cores: PinCoreResult[] = [];
-  for (const pin of pins) {
-    if (!pin.facing) continue;
-    let best = { L: -Infinity, x: 0, y: 0, rgb: [0, 0, 0] as [number, number, number] };
-    for (let y = Math.round(pin.y) - 14; y <= Math.round(pin.y) + 14; y += 1) {
-      for (let x = Math.round(pin.x) - 14; x <= Math.round(pin.x) + 14; x += 1) {
-        if (x < 0 || y < 0 || x >= img.width || y >= img.height) continue;
-        const o = (y * img.width + x) * 4;
-        const L = luma(img.data[o], img.data[o + 1], img.data[o + 2]);
-        if (L > best.L) {
-          best = { L, x, y, rgb: [img.data[o], img.data[o + 1], img.data[o + 2]] };
+  const data = await page.evaluate(
+    ({ coreFrac: cf }) => {
+      const anchors = window.__globe!.pinAnchors();
+      const pins = window.__globe!.pins();
+      const cam = window.__camera as { position: { x: number; y: number; z: number } };
+      const cl = Math.hypot(cam.position.x, cam.position.y, cam.position.z) || 1;
+      const camDir = [cam.position.x / cl, cam.position.y / cl, cam.position.z / cl];
+
+      let sun: number[] = [0.72, 0.36, 0.59];
+      (window.__scene as { traverse(fn: (o: unknown) => void): void }).traverse((o) => {
+        const l = o as { isDirectionalLight?: boolean; intensity?: number; position?: { x: number; y: number; z: number } };
+        if (l.isDirectionalLight && (l.intensity ?? 0) > 1 && l.position) {
+          sun = [l.position.x, l.position.y, l.position.z];
         }
-      }
-    }
-    let pureWhitePx = 0;
-    let blackPx = 0;
-    for (let y = Math.round(pin.y) - 6; y <= Math.round(pin.y) + 6; y += 1) {
-      for (let x = Math.round(pin.x) - 6; x <= Math.round(pin.x) + 6; x += 1) {
-        if (x < 0 || y < 0 || x >= img.width || y >= img.height) continue;
-        const o = (y * img.width + x) * 4;
-        const [r, g, b] = [img.data[o], img.data[o + 1], img.data[o + 2]];
-        if (r >= 250 && g >= 250 && b >= 250) pureWhitePx += 1;
-        if (r === 0 && g === 0 && b === 0) blackPx += 1;
-      }
-    }
-    /*
-     * Day or night from the pin's own surface NORMAL against the sun.
-     *
-     * Not from its screen position: a screen-axis projection classifies a pin by where it
-     * sits on the 2D disc, and the sub-solar point is not the screen centre — the camera
-     * looks from (0, 1.15, 3.15) while the sun is at (0.72, 0.36, 0.59), so pins near
-     * screen centre are lit obliquely. The normal test is the same `dot(n, sun)` the
-     * shader uses to light the surface, which is what decides day and night on screen.
-     */
-    const sunRel = await page.evaluate(
-      ({ x, y, cx, cy, R }) => {
-        let pos: number[] = [0.72, 0.36, 0.59];
-        (window.__scene as { traverse(fn: (o: unknown) => void): void }).traverse((o) => {
-          const l = o as { isDirectionalLight?: boolean; intensity?: number; position?: { x: number; y: number; z: number } };
-          if (l.isDirectionalLight && (l.intensity ?? 0) > 1 && l.position) {
-            pos = [l.position.x, l.position.y, l.position.z];
-          }
-        });
-        const n = Math.hypot(pos[0], pos[1], pos[2]) || 1;
-        const s3 = [pos[0] / n, pos[1] / n, pos[2] / n];
-        // Reconstruct the camera-facing surface normal of this screen point.
-        const dx = (x - cx) / R;
-        const dy = (y - cy) / R;
-        const nz = Math.sqrt(Math.max(0, 1 - dx * dx - dy * dy));
-        const cam = window.__camera as { position: { x: number; y: number; z: number } };
-        const cl = Math.hypot(cam.position.x, cam.position.y, cam.position.z) || 1;
-        const c3 = [cam.position.x / cl, cam.position.y / cl, cam.position.z / cl];
-        // Screen +x/+y expressed in world via the camera basis (right = up x fwd).
-        const up = [0, 1, 0];
-        const cr = (a: number[], b: number[]) => [
-          a[1] * b[2] - a[2] * b[1],
-          a[2] * b[0] - a[0] * b[2],
-          a[0] * b[1] - a[1] * b[0],
+      });
+      const sl = Math.hypot(sun[0], sun[1], sun[2]) || 1;
+      const sunDir = [sun[0] / sl, sun[1] / sl, sun[2] / sl];
+
+      return pins.map((p) => {
+        const a = anchors.find((x) => x.id === p.id);
+        const w: [number, number, number] = a ? a.world : [0, 0, 0];
+        const len = Math.hypot(w[0], w[1], w[2]) || 1;
+        const n: [number, number, number] = [w[0] / len, w[1] / len, w[2] / len];
+        /*
+         * The core sphere's projected radius, from the geometry that actually draws it.
+         *
+         * `Hotspot.tsx` gives the core `<sphereGeometry args={[0.011, 16, 16]} />` (0.016
+         * when active), so the core's world radius is 0.011 — NOT its offset from the
+         * surface (0.055). Using the offset made the region 5x too large and every median
+         * came back as the dark housing around the core: (76,71,61) at luma 71.6, which
+         * reads as "the pin is black" when the pin is fine.
+         */
+        const coreWorldR = 0.011;
+        const side = Math.hypot(n[1], n[2], n[0]);
+        void side;
+        const perp: [number, number, number] = [n[2], 0, -n[0]];
+        const pl = Math.hypot(perp[0], perp[1], perp[2]) || 1;
+        const off: [number, number, number] = [
+          w[0] + (perp[0] / pl) * coreWorldR,
+          w[1] + (perp[1] / pl) * coreWorldR,
+          w[2] + (perp[2] / pl) * coreWorldR,
         ];
-        let u = cr(up, c3);
-        const ul = Math.hypot(u[0], u[1], u[2]);
-        u = [u[0] / ul, u[1] / ul, u[2] / ul];
-        const v = cr(c3, u);
-        const nx = u[0] * dx + v[0] * -dy + c3[0] * nz;
-        const ny = u[1] * dx + v[1] * -dy + c3[1] * nz;
-        const nz2 = u[2] * dx + v[2] * -dy + c3[2] * nz;
-        const nl = Math.hypot(nx, ny, nz2) || 1;
-        return (nx / nl) * s3[0] + (ny / nl) * s3[1] + (nz2 / nl) * s3[2];
-      },
-      { x: pin.x, y: pin.y, cx: geom.cx, cy: geom.cy, R: geom.r },
-    );
-    const rel = sunRel;
-    cores.push({
+        const p0 = window.__globe!.project(w);
+        const p1 = window.__globe!.project(off);
+        const rCore = Math.max(1.5, Math.hypot(p1.x - p0.x, p1.y - p0.y));
+        return {
+          id: p.id,
+          x: p.x,
+          y: p.y,
+          facingDot: n[0] * camDir[0] + n[1] * camDir[1] + n[2] * camDir[2],
+          sunDot: n[0] * sunDir[0] + n[1] * sunDir[1] + n[2] * sunDir[2],
+          coreRadiusPx: Math.max(1.5, rCore * cf),
+        };
+      });
+    },
+    { coreFrac },
+  );
+
+  const results: PinGateResult[] = [];
+  for (const d of data) {
+    const rOverR = Math.hypot(d.x - geom.cx, d.y - geom.cy) / geom.r;
+    const side: 'day' | 'night' | 'terminator' =
+      d.sunDot > 0.2 ? 'day' : d.sunDot < -0.1 ? 'night' : 'terminator';
+
+    // Collect the core region.
+    const pixels: Array<[number, number, number]> = [];
+    const rr = d.coreRadiusPx;
+    for (let y = Math.floor(d.y - rr); y <= Math.ceil(d.y + rr); y += 1) {
+      for (let x = Math.floor(d.x - rr); x <= Math.ceil(d.x + rr); x += 1) {
+        if (x < 0 || y < 0 || x >= img.width || y >= img.height) continue;
+        if ((x - d.x) ** 2 + (y - d.y) ** 2 > rr * rr) continue;
+        const o = (y * img.width + x) * 4;
+        pixels.push([img.data[o], img.data[o + 1], img.data[o + 2]]);
+      }
+    }
+
+    // Validity comes FIRST: an invalid pin is listed, never counted as a pass.
+    let validityReason = 'valid';
+    if (d.facingDot < minFacingDot) validityReason = `faces away (normal·camDir ${d.facingDot.toFixed(3)} < ${minFacingDot})`;
+    else if (rOverR > maxROverR) validityReason = `projected core at ${rOverR.toFixed(3)} R > ${maxROverR}`;
+    else if (pixels.length < minSamples) validityReason = `only ${pixels.length} core samples (min ${minSamples})`;
+    const valid = validityReason === 'valid';
+
+    let sample: PinCoreSample | null = null;
+    let gates: PinGateResult['gates'] = null;
+    if (valid) {
+      const med = (v: number[]) => median(v);
+      const r = med(pixels.map((p) => p[0]));
+      const g = med(pixels.map((p) => p[1]));
+      const b = med(pixels.map((p) => p[2]));
+      const sat = pixels.map((p) => {
+        const mx = Math.max(...p);
+        return mx === 0 ? 0 : (mx - Math.min(...p)) / mx;
+      });
+      sample = {
+        pixels,
+        median: [r, g, b],
+        medianLuma: med(pixels.map((p) => luma(p[0], p[1], p[2]))),
+        medianSaturation: med(sat),
+        blownPx: pixels.filter((p) => p[0] >= 250 && p[1] >= 250 && p[2] >= 250).length,
+        count: pixels.length,
+      };
+      gates = {
+        P1: sample.medianLuma >= 180,
+        P2: sample.blownPx === 0,
+        P3: sample.medianSaturation >= 0.15,
+        P4: r >= 240 && g >= 200 && b <= g,
+      };
+    }
+
+    results.push({
       az: azimuthDeg,
-      id: pin.id,
-      x: +pin.x.toFixed(1),
-      y: +pin.y.toFixed(1),
-      coreRgb: best.rgb,
-      coreAt: [best.x, best.y],
-      pureWhitePx,
-      blackPx,
-      side: rel >= 0 ? 'day' : 'night',
+      id: d.id,
+      x: +d.x.toFixed(2),
+      y: +d.y.toFixed(2),
+      coreRadiusPx: +d.coreRadiusPx.toFixed(2),
+      rOverR: +rOverR.toFixed(4),
+      facingDot: +d.facingDot.toFixed(4),
+      sunDot: +d.sunDot.toFixed(4),
+      side,
+      valid,
+      validityReason,
+      sample: sample
+        ? { ...sample, pixels: sample.pixels.slice(0, 0) } // don't serialise every pixel
+        : null,
+      gates,
     });
   }
-  await writeResult(`pins-az${azimuthDeg}`, { geometry: geom, cores });
-  return { cores, geometry: geom };
+
+  await writeResult(`pin-gates-az${azimuthDeg}`, { geometry: geom, results });
+  return { results, geometry: geom };
 }
 
 // -------------------------------------------------------- 3.6 ring light cast
