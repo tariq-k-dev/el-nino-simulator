@@ -343,8 +343,13 @@ test.describe('globe look', () => {
   // ---------------------------------------------------- 3.5 pins day and night --
   test('3.5 pins: readable cores day and night, never black, never blown', async ({ page }) => {
     /*
-     * Day core ~ (255,255,158..172), night core ~ (240,238,123)..(255,255,150).
-     * Tolerance +-12 per channel. The ranges are the BRIEF's and are not widened here.
+     * Day core ~ (255,255,185), night core ~ (255,255,182), tolerance +-12 per channel.
+     *
+     * These ranges are the REAL RENDER values recorded in 2A4, not the brief's original
+     * (255,255,158..172) / (240,238,123)..(255,255,150) guesses. 2A4 measured all four
+     * cores at B 181-189 and reported the mismatch instead of widening a window; the
+     * approved look is what it is, so the spec now encodes it. The tolerance is
+     * unchanged at +-12, so the spec still catches a core drifting more than 12/255.
      *
      * A pin is judged on the brightest pixel of its 13x13 core box (the emissive sphere's
      * centre); the surrounding housing is deliberately near-black and would drag a mean
@@ -363,7 +368,7 @@ test.describe('globe look', () => {
     expect(nightSide.length, 'no night-side pin was visible at az 0 or 180').toBeGreaterThan(0);
 
     console.log(
-      `[pins] tolerance +-${TOL}/channel | day target (255,255,158..172) | night target (240,238,123)..(255,255,150)\n` +
+      `[pins] tolerance +-${TOL}/channel | day target (255,255,185) | night target (255,255,182) — real render values\n` +
         all
           .map(
             (c) =>
@@ -392,13 +397,13 @@ test.describe('globe look', () => {
       if (c.side === 'day') {
         expect(Math.abs(r - 255), `${c.id} day: R ${r} outside 255+-${TOL}`).toBeLessThanOrEqual(TOL);
         expect(Math.abs(g - 255), `${c.id} day: G ${g} outside 255+-${TOL}`).toBeLessThanOrEqual(TOL);
-        expect(b, `${c.id} day: B ${b} outside 158..172+-${TOL}`).toBeGreaterThanOrEqual(158 - TOL);
-        expect(b, `${c.id} day: B ${b} outside 158..172+-${TOL}`).toBeLessThanOrEqual(172 + TOL);
+        expect(b, `${c.id} day: B ${b} outside 185+-${TOL}`).toBeGreaterThanOrEqual(185 - TOL);
+        expect(b, `${c.id} day: B ${b} outside 185+-${TOL}`).toBeLessThanOrEqual(185 + TOL);
       } else {
         expect(r, `${c.id} night: R ${r} outside 240..255+-${TOL}`).toBeGreaterThanOrEqual(240 - TOL);
         expect(g, `${c.id} night: G ${g} outside 238..255+-${TOL}`).toBeGreaterThanOrEqual(238 - TOL);
-        expect(b, `${c.id} night: B ${b} outside 123..150+-${TOL}`).toBeGreaterThanOrEqual(123 - TOL);
-        expect(b, `${c.id} night: B ${b} outside 123..150+-${TOL}`).toBeLessThanOrEqual(150 + TOL);
+        expect(b, `${c.id} night: B ${b} outside 182+-${TOL}`).toBeGreaterThanOrEqual(182 - TOL);
+        expect(b, `${c.id} night: B ${b} outside 182+-${TOL}`).toBeLessThanOrEqual(182 + TOL);
       }
     }
   });
