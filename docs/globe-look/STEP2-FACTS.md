@@ -67,10 +67,26 @@ palette (`[0.62, 0.74, 1.0]` etc.). A scene object would not be pure white at it
 centre with blue only in the halo.
 
 Supporting measurement: at the same coordinate in the current build the brightest
-pixel is **(53, 123, 204), luminance 114** — the atmosphere rim at 0.91 R, not a
-sprite. And the old shot contains **146 separate bright clusters** inside the
-disc, the largest of which is a 118×110 px cloud mass; a one-off artifact it is
-not.
+pixel is **(53, 123, 204), luminance 114**, and nothing sprite-like is there. And
+the old shot contains **146 separate bright clusters** inside the disc, the largest
+of which is a 118×110 px cloud mass; a one-off artifact it is not.
+
+> **Correction (added in LOOK2).** This document originally attributed that
+> `(53, 123, 204)` pixel to "the atmosphere rim at 0.91 R". That attribution was
+> **wrong**. LOOK2's per-light ablation showed the pixel was the specular lobe of
+> the **cool fill `DirectionalLight` (`#2f6fb8`, 0.32, at (−5.2, −2.2, −4.6))**:
+> switching the fill off drops that patch from 91.1 to 4.1 mean luminance
+> (peak 114.0 → 12.4), while the atmosphere, bloom, clouds, the glint overlay and
+> even the sun leave it bit-identical. It was also **not** the artifice described
+> below: it is a real, reproducible rendering defect that Tariq then saw as a
+> "soft light-blue circle" on his desktop GPU.
+>
+> The **conclusion below about the old `shot-a-default.png` blue dot still stands** —
+> that one is a `Starfield` sprite, evidenced by its pure-white core with a blue
+> fringe. But the two were conflated here: "the dot is gone" was true of the
+> sprite, while a genuine third defect (the fill's specular circle) was live in the
+> same pixels and was misread as the atmosphere. Fixed in `2e27939`. See
+> `docs/globe-look/LOOK2.md`.
 
 **Conclusion:** it is a single star, i.e. part of the `Starfield` `Points` object
 (14 000 sprites across three depth shells), and its position there is
