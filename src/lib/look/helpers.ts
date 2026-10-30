@@ -646,6 +646,114 @@ export function fitCircle(points: Array<[number, number]>): CircleFit | null {
   return { cx, cy, r, rms: Math.sqrt(sq / n), n };
 }
 
+// ------------------------------------------------------------ probe windows (A3)
+
+export interface PolarWindow {
+  id: string;
+  /** Radius as a fraction of R_fit. */
+  rFrac: number;
+  /** Angle in degrees, measured from +x, CLOCKWISE on screen (screen y runs down). */
+  angleDeg: number;
+  /** Edge length of the square window, in px. */
+  size: number;
+}
+
+/**
+ * The A3 probe windows, in disc-relative polar coordinates.
+ *
+ * Polar rather than absolute pixels because the disc moves: at 1024x768 R_fit is 312.6
+ * px instead of 325.7, so an absolute coordinate that sits at 0.91 R in one viewport
+ * lands somewhere else entirely in another. The old list was absolute and included
+ * `(300, 392)`, which is at 1.045 R — outside the disc, sampling pure atmosphere halo,
+ * and it is what made 3.3 report a 3.7x "local peak".
+ *
+ * W1 is the `(344, 392)` regression window: it is where the removed fill light drew a
+ * blue circle, so it must stay in the set or the regression it guards is untested.
+ *
+ * Clockwise from +x on screen: angle 90 is DOWN, 270 is UP. A3's W7/W8 are "90"/"270"
+ * and follow that convention.
+ */
+export const PROBE_WINDOWS: readonly PolarWindow[] = [
+  { id: 'W1', rFrac: 0.91, angleDeg: 180, size: 40 },
+  { id: 'W2', rFrac: 0.8, angleDeg: 135, size: 40 },
+  { id: 'W3', rFrac: 0.8, angleDeg: 225, size: 40 },
+  { id: 'W4', rFrac: 0.5, angleDeg: 180, size: 40 },
+  { id: 'W5', rFrac: 0.0, angleDeg: 0, size: 40 },
+  { id: 'W6', rFrac: 0.8, angleDeg: 0, size: 40 },
+  { id: 'W7', rFrac: 0.8, angleDeg: 90, size: 40 },
+  { id: 'W8', rFrac: 0.8, angleDeg: 270, size: 40 },
+] as const;
+
+export interface ResolvedWindow extends PolarWindow {
+  /** Pixel centre. */
+  x: number;
+  y: number;
+  /** Radius in px (= rFrac * R_fit). */
+  rPx: number;
+}
+
+/**
+ * Convert a polar window to pixel coordinates on a given fitted disc.
+ *
+ * Screen y grows downward, so the sine term ADDS to `cy` — this is the "clockwise on
+ * screen" convention, not the mathematical one.
+ */
+export function resolveWindow(w: PolarWindow, geom: DiscGeometry): ResolvedWindow {
+  const th = (w.angleDeg * Math.PI) / 180;
+  const rPx = w.rFrac * geom.r;
+  return {
+    ...w,
+    rPx,
+    x: geom.cx + Math.cos(th) * rPx,
+    y: geom.cy + Math.sin(th) * rPx,
+  };
+}
+
+export interface WindowValidity {
+  ok: boolean;
+  /** Centre radius in px and as a fraction of R_fit. */
+  rPx: number;
+  rFrac: number;
+  /** Fraction of the window's pixels that lie inside the disc. */
+  insideFraction: number;
+  reason: string;
+}
+
+/**
+ * A3's validity rule for a probe window.
+ *
+ * Two conditions, both asserted rather than hoped for:
+ *
+ *  1. the CENTRE must be at least 28 px inside the limb. The window's own half-diagonal
+ *     is ~28 px (40 px square), so anything closer samples across the edge, where a
+ *     local maximum in the halo is guaranteed and means nothing;
+ *  2. at least 70% of the window's pixels must land inside the disc, which catches a
+ *     small-R viewport even when the centre passes.
+ *
+ * Returns the measured fractions so a failure message can quote them.
+ */
+export function windowValidity(w: ResolvedWindow, geom: DiscGeometry): WindowValidity {
+  const rPx = Math.hypot(w.x - geom.cx, w.y - geom.cy);
+  const half = w.size / 2;
+  let inside = 0;
+  let total = 0;
+  for (let y = Math.round(w.y - half); y <= Math.round(w.y + half); y += 1) {
+    for (let x = Math.round(w.x - half); x <= Math.round(w.x + half); x += 1) {
+      total += 1;
+      if (insideDisc(geom, x, y)) inside += 1;
+    }
+  }
+  const insideFraction = total ? inside / total : 0;
+  const centreOk = rPx <= geom.r - 28;
+  const coverOk = insideFraction >= 0.7;
+  const reason = centreOk
+    ? coverOk
+      ? 'valid'
+      : `only ${(insideFraction * 100).toFixed(1)}% of the window is inside the disc (min 70%)`
+    : `centre is at ${rPx.toFixed(1)}px = ${(rPx / geom.r).toFixed(3)} R, needs <= R - 28px (${(geom.r - 28).toFixed(1)}px)`;
+  return { ok: centreOk && coverOk, rPx, rFrac: rPx / geom.r, insideFraction, reason };
+}
+
 // ------------------------------------------------------------- rim monotonicity
 
 /**

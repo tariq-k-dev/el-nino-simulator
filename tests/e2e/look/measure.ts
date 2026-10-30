@@ -26,12 +26,16 @@ import {
   labelBlobs,
   lumaAt,
   median,
+  PROBE_WINDOWS,
+  resolveWindow,
+  windowValidity,
   specularMask,
   raySamples,
   sunScreenAxis,
   transitionWidth,
   focalPxFromFov,
   type Blob,
+  type PolarWindow,
   type DiscGeometry,
 } from '../../../src/lib/look/helpers';
 import {
@@ -351,8 +355,16 @@ export async function measureSpecularMask(
 
 export interface BlueCircleResult {
   windows: Array<{
+    id: string;
+    rFrac: number;
+    angleDeg: number;
     x: number;
     y: number;
+    rPx: number;
+    rOverR: number;
+    insideFraction: number;
+    valid: boolean;
+    validityReason: string;
     size: number;
     peak: number;
     annulusMedian: number;
@@ -360,65 +372,61 @@ export interface BlueCircleResult {
     excluded: boolean;
     pass: boolean;
   }>;
-  /** Ocean-wide sweep (only when the mask is available). */
-  oceanSweep?: { sampled: number; failures: number; worstRatio: number };
+  glintMask: { pixels: number; threshold: string; dilationPx: number; bbox: [number, number, number, number] | null };
 }
-
-/**
- * Fixed probe windows for the blue-circle guard, including the required 40x40
- * window at (344, 392) — the coordinate the fill light's specular lobe occupied
- * before it was removed.
- */
-export const BLUE_CIRCLE_WINDOWS: Array<{ x: number; y: number; size: number }> = [
-  { x: 344, y: 392, size: 40 },
-  { x: 300, y: 392, size: 40 },
-  { x: 400, y: 300, size: 40 },
-  { x: 400, y: 500, size: 40 },
-  { x: 520, y: 250, size: 40 },
-  { x: 520, y: 540, size: 40 },
-];
 
 /**
  * 3.3 — the local-peak detector, on a blurred luma channel.
  *
- * Clouds/pins/rings/stars OFF so the surface is the only thing in frame, and the
- * scene clock pinned so the sun's glint does not drift between the measurement and
- * the exclusion point.
+ * Windows are POLAR (fraction of R_fit, degrees clockwise from +x on screen) and are
+ * resolved against the FITTED limb, so they follow the disc between viewports. The old
+ * absolute list included `(300, 392)`, which sits at 1.045 R — outside the disc, in pure
+ * atmosphere halo — and produced a 3.7x "local peak" that was the halo doing its job.
+ *
+ * Clouds/pins/rings/stars OFF so the surface is the only thing in frame, and the scene
+ * clock pinned so the glint does not drift between the measurement and its exclusion.
+ * The glint is excluded via `specularMask` (measured), not a 0.15 R circle around a
+ * predicted point.
  */
 export async function measureBlueCircle(
   page: Page,
-  windows = BLUE_CIRCLE_WINDOWS,
+  windows: readonly PolarWindow[] = PROBE_WINDOWS,
 ): Promise<{ result: BlueCircleResult; geometry: DiscGeometry }> {
   await settleAt(page, 0);
   await setLayers(page, { stars: false, pins: false, rings: false, clouds: false });
-  const geom = await disc(page);
-  const img = await capture(page);
-  /*
-   * The sun glint is excluded from the local-peak rule because it is SUPPOSED to be
-   * bright. It used to be excluded at the analytically predicted half-vector point,
-   * which `sunGlintPoint` projected orthographically — measured 89 px away from where
-   * the lobe actually peaks, so the exclusion window was missing the thing it meant to
-   * excuse. The mask is now empirical: two captures, every specular source on vs off,
-   * differenced and dilated.
-   */
-  const glintMask = await measureSpecularMask(page, geom);
 
-  const blurred = blurLuma(img, 3);
+  const fit = await fitLimb(page);
+  if (!Number.isFinite(fit.r)) throw new Error('measureBlueCircle: limb fit produced no circle');
+  const geom: DiscGeometry = { cx: fit.cx, cy: fit.cy, r: fit.r };
+
+  // fitLimb restores every layer on the way out, so re-establish the 3.3 view.
+  await setLayers(page, { stars: false, pins: false, rings: false, clouds: false });
+  const img = await capture(page);
+  const glintMask = await measureSpecularMask(page, geom);
+  await setLayers(page, { stars: false, pins: false, rings: false, clouds: false });
+  await twoFrames(page);
+  const img2 = await capture(page);
+  const blurred = blurLuma(img2, 3);
+  void img;
+
   const blurAt = (x: number, y: number) => {
-    const ix = Math.min(img.width - 1, Math.max(0, Math.round(x)));
-    const iy = Math.min(img.height - 1, Math.max(0, Math.round(y)));
-    return blurred[iy * img.width + ix];
+    const ix = Math.min(blurred.length ? img2.width - 1 : 0, Math.max(0, Math.round(x)));
+    const iy = Math.min(img2.height - 1, Math.max(0, Math.round(y)));
+    return blurred[iy * img2.width + ix];
   };
 
   const rows: BlueCircleResult['windows'] = [];
   for (const w of windows) {
+    const resolved = resolveWindow(w, geom);
+    const validity = windowValidity(resolved, geom);
+
     // Peak inside the window.
     let peak = -Infinity;
-    let px = w.x;
-    let py = w.y;
+    let px = resolved.x;
+    let py = resolved.y;
     const half = w.size / 2;
-    for (let y = Math.round(w.y - half); y <= Math.round(w.y + half); y += 1) {
-      for (let x = Math.round(w.x - half); x <= Math.round(w.x + half); x += 1) {
+    for (let y = Math.round(resolved.y - half); y <= Math.round(resolved.y + half); y += 1) {
+      for (let x = Math.round(resolved.x - half); x <= Math.round(resolved.x + half); x += 1) {
         const v = blurAt(x, y);
         if (v > peak) {
           peak = v;
@@ -431,15 +439,25 @@ export async function measureBlueCircle(
     const ring: number[] = [];
     for (let a = 0; a < 32; a += 1) {
       const th = (a / 32) * Math.PI * 2;
-      for (const r of [8, 11, 14, 17, 20]) ring.push(blurAt(px + Math.cos(th) * r, py + Math.sin(th) * r));
+      for (const r of [8, 11, 14, 17, 20]) {
+        ring.push(blurAt(px + Math.cos(th) * r, py + Math.sin(th) * r));
+      }
     }
     const med = median(ring);
     const ratio = med > 1e-6 ? peak / med : NaN;
-    // Excluded where the specular mask says a specular source is lighting the surface.
+    // Excluded where a specular source is actually lighting the surface.
     const excluded = glintMask.lookup(px, py);
     rows.push({
-      x: w.x,
-      y: w.y,
+      id: w.id,
+      rFrac: w.rFrac,
+      angleDeg: w.angleDeg,
+      x: +resolved.x.toFixed(2),
+      y: +resolved.y.toFixed(2),
+      rPx: +validity.rPx.toFixed(2),
+      rOverR: +validity.rFrac.toFixed(4),
+      insideFraction: +validity.insideFraction.toFixed(4),
+      valid: validity.ok,
+      validityReason: validity.reason,
       size: w.size,
       peak: +peak.toFixed(2),
       annulusMedian: +med.toFixed(2),
@@ -449,8 +467,8 @@ export async function measureBlueCircle(
     });
   }
 
-  const result: BlueCircleResult = { windows: rows };
-  await writeResult('blue-circle', { geometry: geom, glintMask: glintMask.summary, ...result });
+  const result: BlueCircleResult = { windows: rows, glintMask: glintMask.summary };
+  await writeResult('blue-circle', { geometry: geom, ...result });
   return { result, geometry: geom };
 }
 

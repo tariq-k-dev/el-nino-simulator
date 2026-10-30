@@ -30,13 +30,16 @@ import {
   lumaAt,
   meanAbsDiff,
   median,
+  PROBE_WINDOWS,
   monotonicStartOffset,
   percentile,
   pixelAt,
   radialProfile,
   raySamples,
   shellSilhouetteOffsetPx,
+  resolveWindow,
   specularMask,
+  windowValidity,
   sunScreenAxis,
   transitionWidth,
 } from '@/lib/look/helpers';
@@ -700,5 +703,77 @@ describe('monotonicStartOffset', () => {
   it('takes outermost silhouette + 1 when that is further out than the peak', () => {
     expect(monotonicStartOffset(0, 1.430)).toBe(3);
     expect(monotonicStartOffset(1, 3.7)).toBe(5);
+  });
+});
+
+describe('PROBE_WINDOWS / resolveWindow / windowValidity', () => {
+  const geom = { cx: 640, cy: 400, r: 325.66 };
+
+  it('defines eight windows and no absolute (300,392) entry', () => {
+    expect(PROBE_WINDOWS).toHaveLength(8);
+    expect(PROBE_WINDOWS.map((w) => w.id)).toEqual(['W1', 'W2', 'W3', 'W4', 'W5', 'W6', 'W7', 'W8']);
+    // The deleted window was at 1.045 R. Nothing may sit outside 0.95 R again.
+    for (const w of PROBE_WINDOWS) expect(w.rFrac).toBeLessThanOrEqual(0.94);
+  });
+
+  it('puts W1 (0.91, 180deg) on the (344,392) regression point', () => {
+    const w = resolveWindow(PROBE_WINDOWS[0], geom);
+    expect(w.x).toBeCloseTo(640 - 0.91 * 325.66, 6); // 343.6
+    expect(w.y).toBeCloseTo(400, 6);
+    // Horizontal window: y is the centre's y. The (344,392) figure came from a frame
+    // whose disc centre was at y=392; the default viewport's centre is y=400, so the
+    // regression point follows the disc, which is the whole reason it is polar.
+    expect(Math.round(w.x)).toBe(344);
+  });
+
+  it('measures angles CLOCKWISE on screen: 90deg is below centre', () => {
+    const w7 = resolveWindow(PROBE_WINDOWS.find((w) => w.id === 'W7')!, geom);
+    expect(w7.x).toBeCloseTo(geom.cx, 6);
+    expect(w7.y).toBeGreaterThan(geom.cy); // screen y grows down
+    const w8 = resolveWindow(PROBE_WINDOWS.find((w) => w.id === 'W8')!, geom);
+    expect(w8.y).toBeLessThan(geom.cy);
+  });
+
+  it('accepts every shipped window on the default disc', () => {
+    for (const w of PROBE_WINDOWS) {
+      const v = windowValidity(resolveWindow(w, geom), geom);
+      expect(v.ok, `${w.id}: ${v.reason}`).toBe(true);
+    }
+  });
+
+  it('rejects a window at 1.045 R, which is what (300,392) was', () => {
+    const bad = { id: 'OLD', rFrac: 1.045, angleDeg: 180, size: 40 };
+    const v = windowValidity(resolveWindow(bad, geom), geom);
+    expect(v.ok).toBe(false);
+    expect(v.reason).toContain('needs <= R - 28px');
+  });
+
+  it('rejects a big window whose centre passes the distance rule but spills outside', () => {
+    /*
+     * For a 40 px box the centre rule (r <= R-28) already implies ~full coverage, since
+     * its half-diagonal is 28.3 px. The coverage rule is therefore a guard for LARGER
+     * windows, and that is what this exercises: a 140 px box at 0.91 R keeps the centre
+     * legal but its corners reach well past the limb.
+     */
+    const big = { id: 'BIG', rFrac: 0.91, angleDeg: 180, size: 140 };
+    const v = windowValidity(resolveWindow(big, geom), geom);
+    expect(v.rPx).toBeCloseTo(0.91 * geom.r, 6);
+    expect(v.rPx).toBeLessThanOrEqual(geom.r - 28 + 1e-9); // centre rule passes
+    expect(v.insideFraction).toBeLessThan(0.7);
+    expect(v.ok).toBe(false);
+    expect(v.reason).toContain('inside the disc');
+  });
+
+  it('rejects W1 at R=100 on the centre rule, with the measured radius in the reason', () => {
+    const small = { cx: 512, cy: 384, r: 100 };
+    const v = windowValidity(resolveWindow(PROBE_WINDOWS[0], small), small);
+    expect(v.ok).toBe(false);
+    expect(v.reason).toContain('needs <= R - 28px');
+  });
+
+  it('reports the inside fraction as a real number, not 0 on an empty window', () => {
+    const v = windowValidity(resolveWindow(PROBE_WINDOWS[4], geom), geom); // W5 at the centre
+    expect(v.insideFraction).toBe(1);
+    expect(Number.isFinite(v.rPx)).toBe(true);
   });
 });

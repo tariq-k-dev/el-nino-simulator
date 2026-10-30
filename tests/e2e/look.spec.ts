@@ -182,33 +182,53 @@ test.describe('globe look', () => {
     await requireValidDisc(page);
     const { result } = await measureBlueCircle(page);
 
-    expect(result.windows.length, 'no probe windows were measured').toBeGreaterThan(0);
+    // Inputs: eight polar windows, all valid, none NaN.
+    expect(result.windows.length, 'no probe windows were measured').toBe(8);
+    expect(result.glintMask.pixels, 'the specular mask is empty, so nothing is excluded')
+      .toBeGreaterThan(0);
 
     console.log(
-      `[blue-circle]\n${result.windows
-        .map(
-          (w) =>
-            `  window ${w.size}x${w.size}@(${w.x},${w.y})  peak=${w.peak}  annulusMed=${w.annulusMedian}  ` +
-            `ratio=${w.ratio}  ${w.excluded ? 'EXCLUDED (sun glint)' : w.pass ? 'pass' : 'FAIL'}`,
-        )
-        .join('\n')}`,
+      `[blue-circle] glintMask=${result.glintMask.pixels}px (${result.glintMask.threshold}, dilated ${result.glintMask.dilationPx}px) bbox=${JSON.stringify(result.glintMask.bbox)}\n` +
+        result.windows
+          .map(
+            (w) =>
+              `  ${w.id} (${w.rFrac.toFixed(2)}R, ${String(w.angleDeg).padStart(3)}deg) -> ` +
+              `(${w.x},${w.y}) r=${w.rPx}px=${w.rOverR}R inside=${(w.insideFraction * 100).toFixed(1)}%  ` +
+              `peak=${w.peak} annulusMed=${w.annulusMedian} ratio=${w.ratio}  ` +
+              `${w.excluded ? 'EXCLUDED (specular mask)' : w.pass ? 'pass' : 'FAIL'}`,
+          )
+          .join('\n'),
     );
 
     for (const w of result.windows) {
-      expect(Number.isFinite(w.peak), `window (${w.x},${w.y}): peak is NaN`).toBe(true);
-      expect(Number.isFinite(w.ratio), `window (${w.x},${w.y}): ratio is NaN`).toBe(true);
-      expect(w.ratio, `window (${w.x},${w.y}) annulus median is a null signal`).not.toBe(0);
+      // The validity rule is asserted, not assumed: a window outside the disc would
+      // sample halo and "fail" for a reason that has nothing to do with the surface.
+      expect(w.valid, `${w.id} @ (${w.x},${w.y}) is invalid: ${w.validityReason}`).toBe(true);
+      expect(Number.isFinite(w.peak), `${w.id}: peak is NaN`).toBe(true);
+      expect(Number.isFinite(w.ratio), `${w.id}: ratio is NaN`).toBe(true);
+      expect(w.ratio, `${w.id} annulus median is a null signal`).not.toBe(0);
       expect(
         w.pass,
-        `window ${w.size}px @ (${w.x},${w.y}): blurred peak ${w.peak} is ${w.ratio}x the ` +
-          `surrounding annulus median ${w.annulusMedian} (max 1.15x)`,
+        `${w.id} ${w.size}px @ (${w.x},${w.y}) r=${w.rOverR}R: blurred peak ${w.peak} is ` +
+          `${w.ratio}x the surrounding annulus median ${w.annulusMedian} (max 1.15x)`,
       ).toBe(true);
     }
 
-    // The required window must be present and must not be excluded.
-    const required = result.windows.find((w) => w.x === 344 && w.y === 392);
-    expect(required, 'the required 40x40 window at (344,392) was not measured').toBeDefined();
-    expect(required!.excluded, 'the (344,392) window must not be excused as sun glint').toBe(false);
+    // The regression window must be present, at the right polar position, and must not
+    // be excused: the fill light's blue circle was drawn exactly here.
+    const w1 = result.windows.find((w) => w.id === 'W1');
+    expect(w1, 'the W1 (0.91R, 180deg) regression window was not measured').toBeDefined();
+    expect(w1!.rFrac).toBe(0.91);
+    expect(w1!.angleDeg).toBe(180);
+    expect(w1!.excluded, 'W1 must not be excused as sun glint').toBe(false);
+
+    // No absolute (300,392) window survives.
+    expect(result.windows.some((w) => Math.abs(w.x - 300) < 1 && Math.abs(w.y - 392) < 1)).toBe(
+      false,
+    );
+
+    // Coverage statement: W1..W8 only, no whole-ocean sweep.
+    console.log('[blue-circle] coverage: W1..W8 only (no ocean-mask sweep)');
   });
 
   // ------------------------------------------------------- 3.4 terminator -----
