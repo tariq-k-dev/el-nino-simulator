@@ -16,6 +16,7 @@ import {
   disc,
   frameNoise,
   measureBlueCircle,
+  measurePinCores,
   measureGlare,
   measureRim,
   measureTerminator,
@@ -338,4 +339,67 @@ test.describe('globe look', () => {
       ).toBeLessThanOrEqual(threshold);
     }
   });
+  // ---------------------------------------------------- 3.5 pins day and night --
+  test('3.5 pins: readable cores day and night, never black, never blown', async ({ page }) => {
+    /*
+     * Day core ~ (255,255,158..172), night core ~ (240,238,123)..(255,255,150).
+     * Tolerance +-12 per channel. The ranges are the BRIEF's and are not widened here.
+     *
+     * A pin is judged on the brightest pixel of its 13x13 core box (the emissive sphere's
+     * centre); the surrounding housing is deliberately near-black and would drag a mean
+     * toward 0.
+     */
+    const TOL = 12;
+
+    const day = await measurePinCores(page, 0);
+    const night = await measurePinCores(page, 180);
+    const all = [...day.cores, ...night.cores];
+
+    expect(all.length, 'no facing pins were found at az 0 or az 180').toBeGreaterThan(0);
+
+    // At least one night-side pin must be visible, per the brief.
+    const nightSide = all.filter((c) => c.side === 'night');
+    expect(nightSide.length, 'no night-side pin was visible at az 0 or 180').toBeGreaterThan(0);
+
+    console.log(
+      `[pins] tolerance +-${TOL}/channel | day target (255,255,158..172) | night target (240,238,123)..(255,255,150)\n` +
+        all
+          .map(
+            (c) =>
+              `  az=${String(c.az).padStart(3)} ${c.id.padEnd(12)} ${c.side.padEnd(5)} ` +
+              `core=(${c.coreRgb.join(',')}) at (${c.coreAt.join(',')}) ` +
+              `pureWhite=${c.pureWhitePx} black=${c.blackPx}`,
+          )
+          .join('\n'),
+    );
+
+    await writeResult('pin-cores', { tolerance: TOL, rows: all });
+
+    for (const c of all) {
+      expect(Number.isFinite(c.coreRgb[0]), `${c.id}: core R is not finite`).toBe(true);
+
+      // Core is not black.
+      expect(
+        c.coreRgb[0] + c.coreRgb[1] + c.coreRgb[2],
+        `${c.id} @ az ${c.az}: core is black`,
+      ).toBeGreaterThan(0);
+
+      // No blown pixels inside the core.
+      expect(c.pureWhitePx, `${c.id} @ az ${c.az}: ${c.pureWhitePx} pure-white px in the core`).toBe(0);
+
+      const [r, g, b] = c.coreRgb;
+      if (c.side === 'day') {
+        expect(Math.abs(r - 255), `${c.id} day: R ${r} outside 255+-${TOL}`).toBeLessThanOrEqual(TOL);
+        expect(Math.abs(g - 255), `${c.id} day: G ${g} outside 255+-${TOL}`).toBeLessThanOrEqual(TOL);
+        expect(b, `${c.id} day: B ${b} outside 158..172+-${TOL}`).toBeGreaterThanOrEqual(158 - TOL);
+        expect(b, `${c.id} day: B ${b} outside 158..172+-${TOL}`).toBeLessThanOrEqual(172 + TOL);
+      } else {
+        expect(r, `${c.id} night: R ${r} outside 240..255+-${TOL}`).toBeGreaterThanOrEqual(240 - TOL);
+        expect(g, `${c.id} night: G ${g} outside 238..255+-${TOL}`).toBeGreaterThanOrEqual(238 - TOL);
+        expect(b, `${c.id} night: B ${b} outside 123..150+-${TOL}`).toBeGreaterThanOrEqual(123 - TOL);
+        expect(b, `${c.id} night: B ${b} outside 123..150+-${TOL}`).toBeLessThanOrEqual(150 + TOL);
+      }
+    }
+  });
+
 });

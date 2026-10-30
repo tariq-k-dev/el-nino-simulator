@@ -24,6 +24,7 @@ import {
   insideDisc,
   isClipped,
   labelBlobs,
+  luma,
   lumaAt,
   median,
   PROBE_WINDOWS,
@@ -647,3 +648,129 @@ export async function measureTerminator(
 }
 
 export { capture, disc, frameNoise, setLayers, settleAt, ALL_LAYERS, annulus, raySamples };
+
+// ------------------------------------------------------------ 3.5 pin cores
+
+export interface PinCoreResult {
+  az: number;
+  id: string;
+  x: number;
+  y: number;
+  /** Brightest pixel in the 29x29 core search box. */
+  coreRgb: [number, number, number];
+  coreAt: [number, number];
+  /** Pure-white pixels (R,G,B all >= 250) in the 13x13 core. */
+  pureWhitePx: number;
+  /** All-black pixels in the 13x13 core — "core RGB not black". */
+  blackPx: number;
+  side: 'day' | 'night';
+}
+
+/**
+ * 3.5 — read every FACING pin's core RGB at one azimuth.
+ *
+ * The core is found as the brightest pixel in a 29x29 box around the projected pin
+ * centre, then judged on a 13x13 box: the core is a small emissive sphere and its
+ * centre is what carries the colour, while the surrounding housing is deliberately dark
+ * (#080c14) and would drag any mean toward black.
+ */
+export async function measurePinCores(
+  page: Page,
+  azimuthDeg: number,
+): Promise<{ cores: PinCoreResult[]; geometry: DiscGeometry }> {
+  await settleAt(page, azimuthDeg);
+  await setLayers(page, { stars: false, rings: false, pins: true, atmosphere: true, clouds: true });
+  const fit = await fitLimb(page);
+  if (!Number.isFinite(fit.r)) throw new Error('measurePinCores: limb fit produced no circle');
+  const geom: DiscGeometry = { cx: fit.cx, cy: fit.cy, r: fit.r };
+  await setLayers(page, { stars: false, rings: false, pins: true, atmosphere: true, clouds: true });
+  const img = await capture(page);
+
+  const pins = await page.evaluate(() => window.__globe!.pins());
+  const cores: PinCoreResult[] = [];
+  for (const pin of pins) {
+    if (!pin.facing) continue;
+    let best = { L: -Infinity, x: 0, y: 0, rgb: [0, 0, 0] as [number, number, number] };
+    for (let y = Math.round(pin.y) - 14; y <= Math.round(pin.y) + 14; y += 1) {
+      for (let x = Math.round(pin.x) - 14; x <= Math.round(pin.x) + 14; x += 1) {
+        if (x < 0 || y < 0 || x >= img.width || y >= img.height) continue;
+        const o = (y * img.width + x) * 4;
+        const L = luma(img.data[o], img.data[o + 1], img.data[o + 2]);
+        if (L > best.L) {
+          best = { L, x, y, rgb: [img.data[o], img.data[o + 1], img.data[o + 2]] };
+        }
+      }
+    }
+    let pureWhitePx = 0;
+    let blackPx = 0;
+    for (let y = Math.round(pin.y) - 6; y <= Math.round(pin.y) + 6; y += 1) {
+      for (let x = Math.round(pin.x) - 6; x <= Math.round(pin.x) + 6; x += 1) {
+        if (x < 0 || y < 0 || x >= img.width || y >= img.height) continue;
+        const o = (y * img.width + x) * 4;
+        const [r, g, b] = [img.data[o], img.data[o + 1], img.data[o + 2]];
+        if (r >= 250 && g >= 250 && b >= 250) pureWhitePx += 1;
+        if (r === 0 && g === 0 && b === 0) blackPx += 1;
+      }
+    }
+    /*
+     * Day or night from the pin's own surface NORMAL against the sun.
+     *
+     * Not from its screen position: a screen-axis projection classifies a pin by where it
+     * sits on the 2D disc, and the sub-solar point is not the screen centre — the camera
+     * looks from (0, 1.15, 3.15) while the sun is at (0.72, 0.36, 0.59), so pins near
+     * screen centre are lit obliquely. The normal test is the same `dot(n, sun)` the
+     * shader uses to light the surface, which is what decides day and night on screen.
+     */
+    const sunRel = await page.evaluate(
+      ({ x, y, cx, cy, R }) => {
+        let pos: number[] = [0.72, 0.36, 0.59];
+        (window.__scene as { traverse(fn: (o: unknown) => void): void }).traverse((o) => {
+          const l = o as { isDirectionalLight?: boolean; intensity?: number; position?: { x: number; y: number; z: number } };
+          if (l.isDirectionalLight && (l.intensity ?? 0) > 1 && l.position) {
+            pos = [l.position.x, l.position.y, l.position.z];
+          }
+        });
+        const n = Math.hypot(pos[0], pos[1], pos[2]) || 1;
+        const s3 = [pos[0] / n, pos[1] / n, pos[2] / n];
+        // Reconstruct the camera-facing surface normal of this screen point.
+        const dx = (x - cx) / R;
+        const dy = (y - cy) / R;
+        const nz = Math.sqrt(Math.max(0, 1 - dx * dx - dy * dy));
+        const cam = window.__camera as { position: { x: number; y: number; z: number } };
+        const cl = Math.hypot(cam.position.x, cam.position.y, cam.position.z) || 1;
+        const c3 = [cam.position.x / cl, cam.position.y / cl, cam.position.z / cl];
+        // Screen +x/+y expressed in world via the camera basis (right = up x fwd).
+        const up = [0, 1, 0];
+        const cr = (a: number[], b: number[]) => [
+          a[1] * b[2] - a[2] * b[1],
+          a[2] * b[0] - a[0] * b[2],
+          a[0] * b[1] - a[1] * b[0],
+        ];
+        let u = cr(up, c3);
+        const ul = Math.hypot(u[0], u[1], u[2]);
+        u = [u[0] / ul, u[1] / ul, u[2] / ul];
+        const v = cr(c3, u);
+        const nx = u[0] * dx + v[0] * -dy + c3[0] * nz;
+        const ny = u[1] * dx + v[1] * -dy + c3[1] * nz;
+        const nz2 = u[2] * dx + v[2] * -dy + c3[2] * nz;
+        const nl = Math.hypot(nx, ny, nz2) || 1;
+        return (nx / nl) * s3[0] + (ny / nl) * s3[1] + (nz2 / nl) * s3[2];
+      },
+      { x: pin.x, y: pin.y, cx: geom.cx, cy: geom.cy, R: geom.r },
+    );
+    const rel = sunRel;
+    cores.push({
+      az: azimuthDeg,
+      id: pin.id,
+      x: +pin.x.toFixed(1),
+      y: +pin.y.toFixed(1),
+      coreRgb: best.rgb,
+      coreAt: [best.x, best.y],
+      pureWhitePx,
+      blackPx,
+      side: rel >= 0 ? 'day' : 'night',
+    });
+  }
+  await writeResult(`pins-az${azimuthDeg}`, { geometry: geom, cores });
+  return { cores, geometry: geom };
+}
