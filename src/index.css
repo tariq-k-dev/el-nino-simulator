@@ -24,6 +24,23 @@
     font-family: 'Inter', system-ui, sans-serif;
     overflow: hidden;
     text-rendering: optimizeLegibility;
+    /* No rubber-banding / pull-to-refresh over the full-screen canvas. */
+    overscroll-behavior: none;
+  }
+
+  /*
+   * The WebGL surface must claim its gestures.
+   *
+   * `touch-action: auto` (the default) lets the browser treat a two-finger drag as
+   * page zoom and a one-finger drag as a pan candidate; it then cancels the pointer
+   * events OrbitControls is listening for, so PINCH DID NOTHING. `none` hands the
+   * whole gesture to the app. Set on the canvas as well as the wrapper because R3F
+   * owns the <canvas> element and can re-parent it.
+   */
+  #globe-canvas,
+  #globe-canvas canvas {
+    touch-action: none;
+    overscroll-behavior: contain;
   }
 
   ::selection {

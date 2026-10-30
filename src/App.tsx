@@ -80,8 +80,18 @@ export default function App() {
         />
       </div>
 
-      {/* WebGL globe */}
-      <div id="globe-canvas" className="absolute inset-0 z-10">
+      {/* WebGL globe.
+          `touch-action: none` is what lets OrbitControls receive a two-finger
+          pinch: with the default `auto` the browser claims the gesture for
+          page zoom/scroll and cancels the pointer stream, so pinch did nothing
+          even once the camera was no longer being overwritten every frame.
+          `overscroll-behavior: contain` stops a drag at the viewport edge from
+          triggering pull-to-refresh / rubber-band over the canvas. */}
+      <div
+        id="globe-canvas"
+        className="absolute inset-0 z-10"
+        style={{ touchAction: 'none', overscrollBehavior: 'contain' }}
+      >
         <GlobeScene
           sst={scenario.sstAnomaly}
           metrics={analytics.metrics}

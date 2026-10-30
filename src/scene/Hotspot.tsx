@@ -1,4 +1,4 @@
-import { useMemo, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { useFrame } from '@react-three/fiber';
 import { Html } from '@react-three/drei';
 import * as THREE from 'three';
@@ -88,6 +88,45 @@ export function Hotspot({ region, sst, active, headline, onSelect }: HotspotProp
       el.style.visibility = facingRef.current < 0.03 ? 'hidden' : 'visible';
     }
   });
+
+  /**
+   * Forward wheel over the label to the canvas.
+   *
+   * OrbitControls attaches its `wheel` listener to the renderer's `domElement`.
+   * The drei `<Html>` label is a SIBLING of the canvas, not a descendant, and it
+   * is `pointer-events: auto`, so a wheel aimed at a pin reaches neither the
+   * canvas listener nor open space. Pointing straight at a hotspot and scrolling
+   * therefore did nothing — the most likely place a user tries to zoom.
+   *
+   * A NATIVE listener, not React's `onWheel`: drei renders `<Html>` into a DOM
+   * portal outside the React root that owns this component, so React's synthetic
+   * delegation never sees the event and an `onWheel` prop here is silently dead.
+   * Verified — the canvas received no re-dispatched event.
+   *
+   * Re-dispatching carries the real `deltaY`, so OrbitControls' zoomSpeed and
+   * damping apply exactly as over open space. `bubbles: false` keeps the
+   * re-dispatched event from looping back into this handler.
+   */
+  useEffect(() => {
+    const el = labelWrapRef.current;
+    if (!el) return;
+    const onWheel = (e: WheelEvent) => {
+      const canvas = document.querySelector('#globe-canvas canvas');
+      if (!canvas) return;
+      canvas.dispatchEvent(
+        new WheelEvent('wheel', {
+          deltaY: e.deltaY,
+          deltaMode: e.deltaMode,
+          clientX: e.clientX,
+          clientY: e.clientY,
+          bubbles: false,
+          cancelable: true,
+        }),
+      );
+    };
+    el.addEventListener('wheel', onWheel, { passive: true });
+    return () => el.removeEventListener('wheel', onWheel);
+  }, []);
 
   // Two forms of the same ramp: a THREE.Color for materials/lights (three would
   // ignore an rgba alpha and warn), and a CSS rgba for the DOM label.

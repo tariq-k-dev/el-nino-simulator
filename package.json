@@ -21,7 +21,9 @@
     "e2e:report": "playwright show-report .cache/e2e-report",
     "parity:full": "node scripts/parity-driver.mjs",
     "//build:e2e": "Node wrapper, not `VITE_E2E=1 vite build`: pnpm runs scripts through cmd.exe on Windows, where that POSIX assignment is parsed as a command name and fails, so the E2E bundle was never actually built there.",
-    "build:e2e": "node scripts/copy-duckdb.mjs && tsc -b && node scripts/build-e2e.mjs && node scripts/check-assets.mjs --allow-e2e"
+    "build:e2e": "node scripts/copy-duckdb.mjs && tsc -b && node scripts/build-e2e.mjs && node scripts/check-assets.mjs --allow-e2e",
+    "//e2e": "Targeted subset: `pnpm e2e -- --grep globe`. PLAYWRIGHT_HTML_OPEN=never keeps CI from blocking on the report.",
+    "e2e:globe": "cross-env PLAYWRIGHT_HTML_OPEN=never playwright test tests/e2e/globe.spec.ts"
   },
   "dependencies": {
     "@duckdb/duckdb-wasm": "^1.29.0",
@@ -40,11 +42,13 @@
     "@testing-library/dom": "^10.4.2",
     "@testing-library/react": "^16.3.3",
     "@types/node": "^22.7.5",
+    "@types/pngjs": "^6.0.5",
     "@types/react": "^18.3.11",
     "@types/react-dom": "^18.3.1",
     "@types/three": "^0.169.0",
     "@vitejs/plugin-react": "^4.3.2",
     "autoprefixer": "^10.4.20",
+    "cross-env": "^10.1.0",
     "eslint": "^9.12.0",
     "eslint-plugin-react-hooks": "^5.0.0",
     "eslint-plugin-react-refresh": "^0.4.12",
@@ -52,6 +56,7 @@
     "hyparquet": "^1.31.5",
     "jsdom": "^25.0.1",
     "playwright": "1.64.1",
+    "pngjs": "^7.0.0",
     "postcss": "^8.4.47",
     "tailwindcss": "^3.4.13",
     "typescript": "~5.6.2",

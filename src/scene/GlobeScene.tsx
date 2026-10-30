@@ -6,20 +6,22 @@ import {
   useSyncExternalStore,
   type ReactNode,
 } from 'react';
-import { Canvas, useFrame } from '@react-three/fiber';
+import { Canvas, useFrame, useThree } from '@react-three/fiber';
 import { AdaptiveDpr, OrbitControls, Preload, useProgress } from '@react-three/drei';
 import { Bloom, EffectComposer, Vignette } from '@react-three/postprocessing';
 import type { OrbitControls as OrbitControlsImpl } from 'three-stdlib';
 import * as THREE from 'three';
 import type { RegionId, ScenarioMetrics } from '@/types/enso';
 import { Starfield } from '@/scene/Starfield';
-import { SUN_POSITION } from '@/scene/constants';
+import { EARTH_RADIUS, SUN_POSITION } from '@/scene/constants';
 import { CameraRig } from '@/scene/CameraRig';
 import { EarthSystem } from '@/scene/EarthSystem';
 import type { SpinState } from '@/scene/EarthSystem';
 import { REGIONS } from '@/lib/regions';
 import { regionHeadline } from '@/lib/model';
 import { registerRenderer } from '@/lib/canvasCapture';
+import { createGlobeProbe } from '@/lib/globeProbe';
+import { getInsets } from '@/lib/viewport/insets';
 import { markSceneFailed, signalSceneCondition } from '@/lib/engine/sceneGate';
 import {
   allTexturesSettled,
@@ -207,6 +209,32 @@ export function GlobeScene({
         // from a production bundle.
         if (import.meta.env.VITE_E2E === '1' && new URLSearchParams(window.location.search).has('debug')) {
           Object.assign(window, { __scene: scene, __camera: camera, __gl: gl });
+
+          /*
+           * `__globe` — the screen-space probe the globe specs assert against.
+           *
+           * `size` is read from the renderer at call time (not captured) because a
+           * viewport resize changes it, and `target` is read from the live controls
+           * because the region fly-to moves it. Capturing either would make
+           * `project()` return stale pixel coordinates after a resize or a focus.
+           */
+          Object.assign(window, {
+            __globe: createGlobeProbe({
+              camera,
+              size: {
+                get width() {
+                  return gl.domElement.clientWidth;
+                },
+                get height() {
+                  return gl.domElement.clientHeight;
+                },
+              },
+              // Read the live orbit target: the region fly-to moves it.
+              getTarget: () => controlsRef.current?.target ?? new THREE.Vector3(),
+              globeRadius: EARTH_RADIUS,
+              readInsets: getInsets,
+            }),
+          });
         }
         // A lost context means the globe can never settle. Report it and let the
         // engine boot rather than parking until the timeout.
@@ -249,16 +277,34 @@ export function GlobeScene({
 
       <CameraRig activeRegion={activeRegion} spin={spin} controlsRef={controlsRef} focusNonce={focusNonce} />
 
+      {/*
+        Zoom bounds are expressed against the globe RADIUS, not as magic numbers.
+        EARTH_RADIUS is 1 in scene units, so 1.25 puts the near clip just outside
+        the atmosphere shell (1.028 R) and 5 is far enough to see the whole disc
+        with room for the starfield.
+
+        `enableZoom` and `enablePan` are stated explicitly rather than left to
+        defaults: `enablePan` MUST stay false or a two-finger drag translates the
+        globe and there is no way for the user to get it back (the camera target is
+        driven by the region fly-to, not by the user).
+
+        `touches` is set for two-finger gestures: ONE finger rotates, TWO fingers
+        dolly. Without an explicit mapping OrbitControls' defaults already do this,
+        but naming it documents that pinch is a supported input, which is what the
+        mobile acceptance case exercises.
+      */}
       <OrbitControls
         ref={controlsRef}
+        enableZoom
         enablePan={false}
         enableDamping
         dampingFactor={0.06}
         rotateSpeed={0.45}
         zoomSpeed={0.7}
-        minDistance={1.55}
-        maxDistance={6.5}
+        minDistance={EARTH_RADIUS * 1.25}
+        maxDistance={EARTH_RADIUS * 5}
         autoRotate={false}
+        touches={{ ONE: THREE.TOUCH.ROTATE, TWO: THREE.TOUCH.DOLLY_PAN }}
       />
 
       <EffectComposer multisampling={0}>
@@ -267,9 +313,74 @@ export function GlobeScene({
       </EffectComposer>
 
       <AdaptiveDpr pixelated />
+
+      {/* MUST be last: effects run child-first, so this re-asserts touch-action
+          after OrbitControls' own effect/dispose has finished with it. */}
+      <CanvasTouchAction />
     </Canvas>
     </SceneErrorBoundary>
   );
+}
+
+/**
+ * Re-asserts `touch-action: none` on the canvas AFTER OrbitControls has mounted.
+ *
+ * This is the third attempt, and the first that works, because the first two lost
+ * a fight with the control library:
+ *
+ *  1. A stylesheet rule (`#globe-canvas canvas { touch-action: none }`) — the
+ *     canvas carries an INLINE `touch-action`, and inline beats a stylesheet.
+ *  2. `<Canvas style={{ touchAction: 'none' }}>` — R3F applies `style` to its
+ *     wrapper div, not to the `<canvas>` it creates.
+ *  3. Writing it in `onCreated` — this DOES land, but `three-stdlib`'s
+ *     OrbitControls calls `scope.domElement.style.touchAction = 'auto'` in its own
+ *     `dispose()`, which runs after `onCreated`.
+ *
+ * Verified at the end of attempt 3: `overscroll-behavior: contain` (from the same
+ * assignment) was present while `touch-action` read `auto` — proof that the write
+ * happened and was then undone by the controls, not that it never happened.
+ *
+ * React runs effects child-first, so a sibling placed AFTER <OrbitControls> has
+ * its effect run last and wins. With `auto` the browser claims a two-finger
+ * gesture as page zoom and cancels the pointer stream, so pinch never reached
+ * OrbitControls at all.
+ */
+function CanvasTouchAction() {
+  const gl = useThree((state) => state.gl);
+
+  useEffect(() => {
+    const el = gl.domElement;
+    el.style.touchAction = 'none';
+    el.style.overscrollBehavior = 'contain';
+
+    /*
+     * Then KEEP it that way.
+     *
+     * A single assignment is not enough: something rewrites the canvas's
+     * `touch-action` back to `auto` after every effect here has run. Rather than
+     * chase which writer it is (R3F re-rendering the style, a StrictMode remount,
+     * OrbitControls' dispose, a `cssText` assignment that bypasses a property
+     * trap — a property setter trap recorded zero canvas writes, so it is almost
+     * certainly `cssText`), observe the attribute.
+     *
+     * A MutationObserver on `style` is the only mechanism that wins regardless of
+     * WHO writes or HOW: it fires after any mutation, and re-asserting here is
+     * idempotent, so it settles after one round trip and does no steady-state work.
+     * Guarded against a feedback loop by only writing when the value is wrong.
+     */
+    const enforce = () => {
+      if (el.style.touchAction !== 'none') el.style.touchAction = 'none';
+      if (el.style.overscrollBehavior !== 'contain') el.style.overscrollBehavior = 'contain';
+    };
+    enforce();
+
+    const observer = new MutationObserver(enforce);
+    observer.observe(el, { attributes: true, attributeFilter: ['style'] });
+
+    return () => observer.disconnect();
+  }, [gl]);
+
+  return null;
 }
 
 /** Legend chips shared with the HUD so the colour language is documented. */

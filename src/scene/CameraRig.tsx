@@ -17,9 +17,6 @@ interface CameraRigProps {
 const DEFAULT_POSITION = new THREE.Vector3(0, 1.15, 3.15);
 const DEFAULT_TARGET = new THREE.Vector3(0, 0, 0);
 
-/** Extra distance beyond the focus radius, so the limb has breathing room. */
-const FOCUS_PADDING = 0.28;
-
 /** World-space direction of a lat/lon after the earth group's Y rotation. */
 function regionDirection(id: RegionId, spinY: number): THREE.Vector3 {
   const region = REGION_MAP[id];
@@ -49,7 +46,6 @@ export function CameraRig({ activeRegion, spin, controlsRef, focusNonce }: Camer
   const desiredTarget = useRef(new THREE.Vector3().copy(DEFAULT_TARGET));
   const desiredDistance = useRef(DEFAULT_POSITION.length());
   const travelling = useRef(false);
-  const previousMax = useRef<number | null>(null);
 
   useEffect(() => {
     if (activeRegion) {
@@ -65,6 +61,27 @@ export function CameraRig({ activeRegion, spin, controlsRef, focusNonce }: Camer
     travelling.current = true;
   }, [activeRegion, focusNonce, spin]);
 
+  /**
+   * The rig only drives the camera DURING an explicit fly-to.
+   *
+   * The bug this fixes — wheel and pinch did nothing — was that this ran
+   * unconditionally, every frame:
+   *
+   *     const wanted = desiredDistance.current;                       // 3.3534, never changes
+   *     camera.position.copy(target).add(offset.setLength(lerp(cur, wanted, ease)));
+   *
+   * `desiredDistance` is only assigned by the `activeRegion` effect, so between
+   * flights it held `DEFAULT_POSITION.length()` forever. OrbitControls applied the
+   * wheel correctly and this line erased it on the very next frame, ~17 ms later.
+   * Measured: six wheel notches moved the distance 3.3534 -> 3.3235 and twelve
+   * notches out returned it to 3.3764, both drifting back toward 3.3534 — the
+   * signature of a per-frame writer, not of a disabled control.
+   *
+   * It also rewrote `controls.minDistance` / `maxDistance` every frame to a window
+   * derived from `wanted` (max 3.63, min 1.55), so even a surviving zoom had
+   * almost nowhere to go. The clamps are now owned by <OrbitControls> as
+   * configuration and are never touched here.
+   */
   useFrame((_, delta) => {
     const controls = controlsRef.current;
     if (!controls) return;
@@ -72,46 +89,47 @@ export function CameraRig({ activeRegion, spin, controlsRef, focusNonce }: Camer
     // Frame-rate independent damping (the 1 - r^dt formulation), with delta
     // capped so a long frame (tab regaining focus) cannot snap the camera.
     const step = Math.min(delta, 1 / 30);
-    const targetEase = 1 - Math.pow(0.0001, step);
-    const distanceEase = 1 - Math.pow(0.0006, step);
-
-    const wanted = desiredDistance.current;
-
-    // A focus distance can be nearer than the default zoom clamp, so the clamps
-    // have to open before the dolly can happen. Restored once settled.
-    if (previousMax.current === null) previousMax.current = controls.maxDistance;
-    controls.maxDistance = Math.max(previousMax.current, wanted + FOCUS_PADDING);
-    controls.minDistance = Math.min(1.55, wanted);
-    controls.enableDamping = true;
-
-    // Damp the orbit target.
-    controls.target.lerp(desiredTarget.current, targetEase);
-
-    // Ease distance-from-target while preserving the viewing direction. Because
-    // the offset is only scaled (never re-aimed), the camera cannot clip through
-    // the globe and the lighting context never jumps.
-    const offset = camera.position.clone().sub(controls.target);
-    const currentDistance = offset.length();
-    if (currentDistance > 1e-6) {
-      const nextDistance = THREE.MathUtils.lerp(currentDistance, wanted, distanceEase);
-      camera.position.copy(controls.target).add(offset.setLength(nextDistance));
-    }
-
-    // Always call update(): it derives the quaternion from target+offset and
-    // clamps the polar angle, keeping orientation consistent with position.
-    controls.update();
 
     if (travelling.current) {
-      const targetSettled = controls.target.distanceTo(desiredTarget.current) < 0.004;
-      const distanceSettled = Math.abs(currentDistance - wanted) < 0.004;
-      if (targetSettled && distanceSettled) {
-        travelling.current = false;
-        if (previousMax.current !== null) {
-          controls.maxDistance = previousMax.current;
-          previousMax.current = null;
-        }
+      const targetEase = 1 - Math.pow(0.0001, step);
+      const distanceEase = 1 - Math.pow(0.0006, step);
+      const wanted = desiredDistance.current;
+
+      // Damp the orbit target.
+      controls.target.lerp(desiredTarget.current, targetEase);
+
+      // Ease distance-from-target while preserving the viewing direction. Because
+      // the offset is only scaled (never re-aimed), the camera cannot clip through
+      // the globe and the lighting context never jumps. The target distance is
+      // clamped into the control's own limits so a fly-to can never park the camera
+      // outside the range the user is then allowed to zoom within.
+      const offset = camera.position.clone().sub(controls.target);
+      const currentDistance = offset.length();
+      if (currentDistance > 1e-6) {
+        const clamped = THREE.MathUtils.clamp(
+          wanted,
+          controls.minDistance,
+          controls.maxDistance,
+        );
+        const nextDistance = THREE.MathUtils.lerp(currentDistance, clamped, distanceEase);
+        camera.position.copy(controls.target).add(offset.setLength(nextDistance));
       }
+
+      // update() derives the quaternion from target+offset and clamps the polar
+      // angle, keeping orientation consistent with position.
+      controls.update();
+
+      const targetSettled = controls.target.distanceTo(desiredTarget.current) < 0.004;
+      const distanceSettled =
+        Math.abs(camera.position.distanceTo(controls.target) - wanted) < 0.004;
+      if (targetSettled && distanceSettled) travelling.current = false;
+      return;
     }
+
+    // Not travelling: the controls own the camera entirely. `update()` still has
+    // to run every frame because that is what applies OrbitControls' own damping
+    // to the user's wheel/pinch/rotate input.
+    controls.update();
   });
 
   return null;

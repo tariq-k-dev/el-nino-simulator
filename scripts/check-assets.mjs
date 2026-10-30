@@ -43,6 +43,8 @@ const REQUIRED = [
 const FORBIDDEN_HOOKS = [
   '__SCENE_GATE_TIMEOUT_OVERRIDE__',
   '__sceneGate',
+  // Screen-space globe probe: project/discRadiusPx/distance/insets.
+  '__globe',
   // Per-texture timeline: {requestStart, responseEnd, onLoad} per asset, plus the
   // gate-open reconciliation. Diagnostic only — a visitor has no use for it.
   '__textures',
