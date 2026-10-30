@@ -73,6 +73,13 @@ declare global {
     __scene?: unknown;
     __camera?: unknown;
     __gl?: unknown;
+    /** E2E-only: single-purpose ablation seam for the globe look flags. */
+    __lookToggles?: {
+      set(patch: Record<string, boolean>): Record<string, boolean>;
+      get(): Record<string, boolean>;
+      reset(): Record<string, boolean>;
+      look(): unknown;
+    };
   }
 }
 

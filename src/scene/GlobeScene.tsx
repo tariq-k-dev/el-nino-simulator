@@ -17,7 +17,14 @@ import { EARTH_RADIUS, SUN_POSITION } from '@/scene/constants';
 import { CameraRig } from '@/scene/CameraRig';
 import { EarthSystem } from '@/scene/EarthSystem';
 import type { SpinState } from '@/scene/EarthSystem';
-import { GLOBE_LOOK, getLookFlags, setLookFlags, subscribeLookFlags } from '@/scene/globeLook';
+import {
+  DEFAULT_LOOK_FLAGS,
+  GLOBE_LOOK,
+  getLookFlags,
+  setLookFlags,
+  subscribeLookFlags,
+  type GlobeLookFlags,
+} from '@/scene/globeLook';
 import { REGIONS, latLonToVector3 } from '@/lib/regions';
 import { regionHeadline } from '@/lib/model';
 import { registerRenderer } from '@/lib/canvasCapture';
@@ -287,6 +294,23 @@ export function GlobeScene({
                 spin.current.paused = paused;
               },
             }),
+            /*
+             * `__lookToggles` — named, single-purpose toggles for ablation.
+             *
+             * Step 1 of LOOK2 is explicitly an ablation: switch each non-sun
+             * light off IN TURN and name the one that draws the blue circle.
+             * `setLookFlags` already accepts partial patches, so this is a thin
+             * alias with a name that says what it is for. Same compile-time
+             * VITE_E2E gate as `__globe`; check-assets fails the production
+             * build if it leaks.
+             */
+            __lookToggles: {
+              set: (patch: Partial<GlobeLookFlags>) => setLookFlags(patch),
+              get: () => getLookFlags(),
+              reset: () => setLookFlags(DEFAULT_LOOK_FLAGS),
+              /** The values an ablation has to attribute a change to. */
+              look: () => GLOBE_LOOK,
+            },
           });
         }
         // A lost context means the globe can never settle. Report it and let the
@@ -302,16 +326,47 @@ export function GlobeScene({
     >
       <color attach="background" args={['#02040a']} />
 
-      {/* Cinematic three-point key/fill/rim. The key is the sun and is the only
-          strong source — a bright ambient term is what flattens a globe into a
-          sticker. Fill exists solely to keep the night side from crushing to
-          pure black, and the rim light separates the silhouette from space. */}
-      <ambientLight intensity={0.055} color="#7aa7d9" />
-      <directionalLight position={SUN_POSITION} intensity={3.6} color="#fffaf2" />
-      {/* Cool fill from the anti-sun side, very low. */}
-      <directionalLight position={[-5.2, -2.2, -4.6]} intensity={0.32} color="#2f6fb8" />
-      {/* Warm rim from behind-left, tight enough to only catch the limb. */}
-      <directionalLight position={[-3.4, 1.8, -5.0]} intensity={0.38} color="#c9d8ff" />
+      {/* Lighting rig.
+
+          The sun is the ONLY source allowed to produce specular. That is not a
+          style preference — it is the fix for the blue circle:
+
+          A `directionalLight` is a parallel source at infinity. On a glossy
+          sphere it always puts a specular lobe somewhere, and the ocean here is
+          glossy by design (the whole point of the glint). The cool fill at
+          #2f6fb8 / 0.32 therefore drew a soft light-blue circle on the left
+          limb above the equator — measured at (344, 392), peak RGB (53, 123, 204),
+          luminance 114 vs a surrounding ocean of ~18. Ablation was unambiguous:
+          switching the fill off dropped that patch to 4.1/255 while the
+          atmosphere, bloom, clouds, the glint overlay and even the sun left it
+          bit-identical.
+
+          A `HemisphereLight` is irradiance-only: three.js computes no specular
+          term for it at all. So it can tint the shadow side cool without being
+          able to draw a highlight anywhere, which is exactly the behaviour
+          wanted. `ambientLight` (also specular-free) stays as a flat floor.
+
+          Keeping the cool tint on the shadow side was a hard requirement, so the
+          hemisphere's sky colour is the fill's own #2f6fb8. */}
+      {look.lightAmbient && (
+        <ambientLight
+          intensity={GLOBE_LOOK.lights.ambient.intensity}
+          color={GLOBE_LOOK.lights.ambient.color}
+        />
+      )}
+      {look.lightHemisphere && (
+        <hemisphereLight
+          args={[GLOBE_LOOK.lights.hemisphere.skyColor, GLOBE_LOOK.lights.hemisphere.groundColor]}
+          intensity={GLOBE_LOOK.lights.hemisphere.intensity}
+        />
+      )}
+      {look.lightSun && (
+        <directionalLight
+          position={SUN_POSITION}
+          intensity={GLOBE_LOOK.lights.sun.intensity}
+          color={GLOBE_LOOK.lights.sun.color}
+        />
+      )}
 
       <Suspense fallback={null}>
         <TextureProgressSignal />

@@ -158,6 +158,58 @@ export const GLOBE_LOOK = {
     luminanceSmoothing: 0.22,
     radius: 0.55,
   },
+
+  /**
+   * Scene lights, as data rather than JSX literals.
+   *
+   * They live here because Step 1 of 3B-1a-LOOK2 had to ablate them one at a
+   * time to find what drew a soft blue circle on the ocean. A light defined
+   * inline in JSX can be switched off only by editing the component, which is
+   * not an ablation — it is a guess with extra steps. As data, `__lookToggles`
+   * can flip any single light at runtime and the screenshot diff names the
+   * culprit.
+   *
+   * The key light is the sun and is never a suspect: it is the only source
+   * allowed to produce specular, and it points at the day side by definition.
+   */
+  lights: {
+    /** Key = the sun. Position comes from SUN_POSITION so it cannot drift. */
+    sun: { color: '#fffaf2', intensity: 3.6 },
+    /**
+     * RETIRED — the cool fill and the warm rim, kept as data so the ablation
+     * seams still address the same names and so the removal is documented.
+     *
+     * Both were `directionalLight`s, i.e. parallel sources at infinity, and a
+     * directional light always deposits a specular lobe somewhere on a glossy
+     * sphere. The fill at #2f6fb8 / 0.32 was the blue circle on the left limb
+     * (measured at (344,392): luminance 114 vs ~18 surrounding ocean); removing
+     * it dropped the patch to 4.1/255. `lights.hemisphere` replaces both.
+     *
+     * NOT rendered any more — see the lighting rig comment in GlobeScene.tsx.
+     * Kept rather than deleted because `lightFill` / `lightRim` remain in the
+     * flag set for the ablation harness, so a future regression can be re-tested
+     * against the same names instead of re-deriving them.
+     */
+    fill: { color: '#2f6fb8', intensity: 0.32, position: [-5.2, -2.2, -4.6] },
+    rim: { color: '#c9d8ff', intensity: 0.38, position: [-3.4, 1.8, -5.0] },
+    /** Ambient floor so the night side never crushes to pure black. */
+    ambient: { color: '#7aa7d9', intensity: 0.055 },
+    /**
+     * Hemisphere replacement for the fill/rim pair.
+     *
+     * A directional light is a PARALLEL point-at-infinity source: on a sphere it
+     * always produces a specular lobe somewhere, and with a glossy ocean that
+     * lobe is a visible circle that has nothing to do with the sun. A hemisphere
+     * light is *irradiance only* — three.js computes no specular term for it —
+     * so it can tint the shadow side without drawing anything. That is the whole
+     * mechanism of the Step 1 fix.
+     */
+    hemisphere: {
+      skyColor: '#2f6fb8',
+      groundColor: '#0a1220',
+      intensity: 0.55,
+    },
+  },
 } as const;
 
 /**
@@ -190,6 +242,16 @@ export interface GlobeLookFlags {
    */
   hotspotRings: boolean;
   stars: boolean;
+  /*
+   * Individual lights. `__lookToggles` flips exactly one at a time so an
+   * ablation can name the contributor; a screenshot difference is evidence,
+   * a hypothesis is not.
+   */
+  lightSun: boolean;
+  lightFill: boolean;
+  lightRim: boolean;
+  lightAmbient: boolean;
+  lightHemisphere: boolean;
 }
 
 export const DEFAULT_LOOK_FLAGS: GlobeLookFlags = {
@@ -200,6 +262,11 @@ export const DEFAULT_LOOK_FLAGS: GlobeLookFlags = {
   pins: true,
   hotspotRings: true,
   stars: true,
+  lightSun: true,
+  lightFill: true,
+  lightRim: true,
+  lightAmbient: true,
+  lightHemisphere: true,
 };
 
 let current: GlobeLookFlags = DEFAULT_LOOK_FLAGS;

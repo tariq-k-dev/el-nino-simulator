@@ -52,6 +52,8 @@ const FORBIDDEN_HOOKS = [
   '__bootErrors',
   '__camera',
   '__globe',
+  // Per-light / per-layer ablation seam (3B-1a-LOOK2 Step 1).
+  '__lookToggles',
 ];
 
 /**
