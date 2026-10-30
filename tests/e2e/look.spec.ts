@@ -17,6 +17,7 @@ import {
   frameNoise,
   measureBlueCircle,
   measurePinCores,
+  measureRingCast,
   measureGlare,
   measureRim,
   measureTerminator,
@@ -399,6 +400,49 @@ test.describe('globe look', () => {
         expect(b, `${c.id} night: B ${b} outside 123..150+-${TOL}`).toBeGreaterThanOrEqual(123 - TOL);
         expect(b, `${c.id} night: B ${b} outside 123..150+-${TOL}`).toBeLessThanOrEqual(150 + TOL);
       }
+    }
+  });
+
+  // -------------------------------------------------- 3.6 ring light cast -----
+  test('3.6 rings: no light cast on the surface around a pin', async ({ page }) => {
+    const { results } = await measureRingCast(page);
+
+    expect(results.length, 'no pins were measured for ring cast').toBe(4);
+
+    console.log(
+      `[ring-cast] annulus r 30..60px, rings/atmosphere/stars/clouds OFF, clock frozen\n` +
+        results
+          .map(
+            (r) =>
+              `  ${r.id.padEnd(12)} (${r.x},${r.y}) n=${String(r.annulusPixels).padStart(5)}  ` +
+              `on=${r.onMean.toFixed(2)} off=${r.offMean.toFixed(2)} off2=${r.offMean2.toFixed(2)}  ` +
+              `delta=${r.deltaPct.toFixed(3)}%  noise=${r.noisePct.toFixed(3)}%  ` +
+              `inside=${(r.annulusInsideFraction * 100).toFixed(1)}%  allowed=${r.allowedPct.toFixed(3)}%  ` +
+              `${r.valid ? (r.pass ? 'pass' : 'FAIL') : 'INVALID: ' + r.validityReason}`,
+          )
+          .join('\n'),
+    );
+
+    // Inputs must be real before any comparison.
+    for (const r of results) {
+      expect(r.annulusPixels, `${r.id}: the annulus is empty`).toBeGreaterThan(0);
+      expect(Number.isFinite(r.onMean), `${r.id}: pins-ON mean is NaN`).toBe(true);
+      expect(Number.isFinite(r.offMean), `${r.id}: pins-OFF mean is NaN`).toBe(true);
+      expect(r.offMean, `${r.id}: pins-OFF mean is a null signal`).toBeGreaterThan(0);
+    }
+
+    // The gate applies only to pins whose annulus is actually surface. A pin that projects
+    // outside the disc cannot have cast light measured on it, and reporting the sky's own
+    // variation as a pin's delta is exactly the (300,392) mistake in another costume.
+    const measurable = results.filter((r) => r.valid);
+    expect(measurable.length, 'no pin had a valid surface annulus').toBeGreaterThan(0);
+
+    for (const r of measurable) {
+      expect(
+        r.pass,
+        `${r.id}: |delta| ${r.deltaPct}% exceeds allowed ${r.allowedPct}% ` +
+          `(max(3%, 1.5 x noise ${r.noisePct}%)) — the pin is casting light on the surface`,
+      ).toBe(true);
     }
   });
 

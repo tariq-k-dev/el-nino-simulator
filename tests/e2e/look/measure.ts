@@ -774,3 +774,117 @@ export async function measurePinCores(
   await writeResult(`pins-az${azimuthDeg}`, { geometry: geom, cores });
   return { cores, geometry: geom };
 }
+
+// -------------------------------------------------------- 3.6 ring light cast
+
+export interface RingCastResult {
+  id: string;
+  x: number;
+  y: number;
+  /** Mean luma of the 30..60 px annulus, pins ON. */
+  onMean: number;
+  /** Mean luma of the same annulus, pins OFF. */
+  offMean: number;
+  /** A second pins-OFF capture, for the noise floor. */
+  offMean2: number;
+  /** |on - off| / off, as a percentage. */
+  deltaPct: number;
+  /** |off - off2| / off, as a percentage — an unchanged scene's own movement. */
+  noisePct: number;
+  /** max(3%, 1.5 x noise%) for this pin. */
+  allowedPct: number;
+  annulusPixels: number;
+  /** Fraction of the 30..60 px annulus that lies inside the disc. */
+  annulusInsideFraction: number;
+  /** False when the pin's annulus is not mostly surface, so cast light is unmeasurable. */
+  valid: boolean;
+  validityReason: string;
+  pass: boolean;
+}
+
+/**
+ * 3.6 — does a pin cast light on the surface around it?
+ *
+ * Static frame: rings, atmosphere and stars OFF, clock frozen, so a delta cannot be the
+ * ring animation or a drifting cloud. Annulus r = 30..60 css px around each pin's
+ * projected centre, outside-disc pixels excluded.
+ *
+ * Why 30 px and not 10: the pins carry a ~22 px bloom skirt, so anything closer measures
+ * the bloom halo rather than cast light. The brief's own floor is 24 px; 30 keeps clear
+ * of it.
+ *
+ * PASS iff |delta%| <= max(3%, 1.5 x noise%), where noise is a pins-OFF vs pins-OFF
+ * comparison of two captures — "the surface changed" is meaningless without knowing how
+ * much an unchanged surface moves between frames.
+ */
+export async function measureRingCast(
+  page: Page,
+): Promise<{ results: RingCastResult[]; geometry: DiscGeometry }> {
+  await settleAt(page, 0);
+  await setLayers(page, { rings: false, atmosphere: false, stars: false, clouds: false });
+
+  const fit = await fitLimb(page);
+  if (!Number.isFinite(fit.r)) throw new Error('measureRingCast: limb fit produced no circle');
+  const geom: DiscGeometry = { cx: fit.cx, cy: fit.cy, r: fit.r };
+  await setLayers(page, { rings: false, atmosphere: false, stars: false, clouds: false });
+
+  const pins = await page.evaluate(() => window.__globe!.pins());
+  const inside = (x: number, y: number) => insideDisc(geom, x, y);
+
+  const annulusMean = (img: Bitmap, cx: number, cy: number) =>
+    annulus(img, cx, cy, 30, 60, inside);
+
+  // pins ON
+  await setLayers(page, { rings: false, atmosphere: false, stars: false, clouds: false, pins: true });
+  const on = await capture(page);
+  // pins OFF, twice
+  await setLayers(page, { pins: false });
+  const off = await capture(page);
+  const off2 = await capture(page);
+  await setLayers(page, { pins: true });
+
+  const results: RingCastResult[] = [];
+  for (const pin of pins) {
+    const a = annulusMean(on, pin.x, pin.y);
+    const b = annulusMean(off, pin.x, pin.y);
+    const c = annulusMean(off2, pin.x, pin.y);
+    if (a.count === 0 || b.count === 0) continue;
+    const deltaPct = Math.abs((a.mean - b.mean) / b.mean) * 100;
+    const noisePct = Math.abs((c.mean - b.mean) / b.mean) * 100;
+    const allowedPct = Math.max(3, 1.5 * noisePct);
+
+    /*
+     * Validity. The annulus is meant to be SURFACE around the pin; if the pin sits near
+     * or beyond the limb most of it is sky. pacific at az 0 projects to 1.100 R — outside
+     * the disc entirely — and its annulus measured 1828 px against 8478 for an interior
+     * pin, so its 20.4% "delta" was the sky changing, not cast light.
+     *
+     * The reference is the pixel count an interior pin yields; requiring 70% of that is
+     * the same coverage idea as the probe-window rule.
+     */
+    const interiorCount = 8478; // measured for interior pins at 1280x800
+    const annulusInsideFraction = a.count / interiorCount;
+    const valid = annulusInsideFraction >= 0.7;
+    const rPx = Math.hypot(pin.x - geom.cx, pin.y - geom.cy);
+    results.push({
+      id: pin.id,
+      x: +pin.x.toFixed(1),
+      y: +pin.y.toFixed(1),
+      onMean: +a.mean.toFixed(3),
+      offMean: +b.mean.toFixed(3),
+      offMean2: +c.mean.toFixed(3),
+      deltaPct: +deltaPct.toFixed(3),
+      noisePct: +noisePct.toFixed(3),
+      allowedPct: +allowedPct.toFixed(3),
+      annulusPixels: a.count,
+      annulusInsideFraction: +annulusInsideFraction.toFixed(4),
+      valid,
+      validityReason: valid
+        ? 'valid'
+        : `annulus is only ${(annulusInsideFraction * 100).toFixed(1)}% surface (centre at ${(rPx / geom.r).toFixed(3)} R, ${rPx.toFixed(1)}px)`,
+      pass: valid && deltaPct <= allowedPct,
+    });
+  }
+  await writeResult('ring-cast', { geometry: geom, results });
+  return { results, geometry: geom };
+}
