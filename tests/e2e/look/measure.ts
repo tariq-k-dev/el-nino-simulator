@@ -36,6 +36,7 @@ import {
   focalPxFromFov,
   type Blob,
   type PolarWindow,
+  type Bitmap,
   type DiscGeometry,
 } from '../../../src/lib/look/helpers';
 import {
@@ -482,30 +483,78 @@ export interface TerminatorResult {
   widthPx: number | null;
   widthPctR: number | null;
   axis: { ax: number; ay: number };
+  /** Night fraction by luma: share of disc pixels below 25% of the day mean. */
+  nightFractionLuma: number;
+  nightMeanLuma: number;
+  dayMeanLuma: number;
+  /** Max adjacent 1 px step across the terminator on the median profile. */
+  crossTerminatorStep: number;
+  /** Radius the profile is registered against. */
+  rFit: number;
+  rms: number;
 }
 
 /**
- * 3.4 — terminator softness measured FROM PIXELS.
+ * Night fraction by luma — the definition that produced the 14.1% default-view figure.
  *
- * The crossing is located analytically only to decide where to sample; the
- * measurement itself is the median of five parallel luminance lines, which is what
- * makes it immune to cloud texture. Luma is sampled along the sun's screen axis and
- * then smoothed, and the 90%->10% width is taken with the direction-aware
+ * From LOOK2.md: "share of disc pixels with luminance < 25% of the day mean". That is
+ * NOT the 10-30% / 70-90% bands used for relative before/after comparisons; those are
+ * reported elsewhere and are not gated. Stated here because "night fraction" means
+ * something different in each of the two harnesses and the numbers are not comparable.
+ */
+export function nightFractionByLuma(
+  img: Bitmap,
+  geom: DiscGeometry,
+): { fraction: number; dayMean: number; nightMean: number; below: number; total: number } {
+  const vals: number[] = [];
+  for (let y = Math.max(0, Math.floor(geom.cy - geom.r)); y <= Math.min(img.height - 1, Math.ceil(geom.cy + geom.r)); y += 1) {
+    for (let x = Math.max(0, Math.floor(geom.cx - geom.r)); x <= Math.min(img.width - 1, Math.ceil(geom.cx + geom.r)); x += 1) {
+      if (!insideDisc(geom, x, y)) continue;
+      vals.push(lumaAt(img, x, y));
+    }
+  }
+  if (!vals.length) return { fraction: NaN, dayMean: NaN, nightMean: NaN, below: 0, total: 0 };
+  const sorted = [...vals].sort((a, b) => a - b);
+  // Day mean = mean of the upper half, which is a stable "lit" plateau reference.
+  const dayVals = sorted.slice(Math.floor(sorted.length / 2));
+  const dayMean = dayVals.reduce((a, b) => a + b, 0) / dayVals.length;
+  const threshold = 0.25 * dayMean;
+  const night = vals.filter((v) => v < threshold);
+  return {
+    fraction: night.length / vals.length,
+    dayMean,
+    nightMean: night.length ? night.reduce((a, b) => a + b, 0) / night.length : NaN,
+    below: night.length,
+    total: vals.length,
+  };
+}
+
+/**
+ * 3.4 — terminator softness measured FROM PIXELS, at one azimuth.
+ *
+ * The analytic crossing only chooses where to sample; the measurement is the median of
+ * five parallel luminance lines offset perpendicular to the sun's screen axis by
+ * -0.2R..+0.2R, smoothed, with the 90%->10% width taken by the direction-aware
  * `transitionWidth` (a naive scan reported a 25 px ramp as 90 px).
  */
 export async function measureTerminator(
   page: Page,
-  { offsets = [-0.2, -0.1, 0, 0.1, 0.2] as number[], smooth = 9 } = {},
+  { azimuthDeg = 0, offsets = [-0.2, -0.1, 0, 0.1, 0.2] as number[], smooth = 9 } = {},
 ): Promise<{ result: TerminatorResult; geometry: DiscGeometry }> {
-  await settleAt(page, 0);
+  await settleAt(page, azimuthDeg);
   await setLayers(page, { stars: false, pins: false, rings: false });
-  const geom = await disc(page);
+
+  const fit = await fitLimb(page);
+  if (!Number.isFinite(fit.r)) throw new Error('measureTerminator: limb fit produced no circle');
+  const geom: DiscGeometry = { cx: fit.cx, cy: fit.cy, r: fit.r };
+
+  await setLayers(page, { stars: false, pins: false, rings: false });
   const img = await capture(page);
   const { sun, cam } = await sunAndCamera(page);
   const { ax, ay } = sunScreenAxis(sun, cam);
+  const night = nightFractionByLuma(img, geom);
 
-  // Build the sampled lines. Each is parallel to the sun axis, offset perpendicular
-  // to it by `offset * R`.
+  // Each line is parallel to the sun axis, offset perpendicular to it by offset * R.
   const lines: Array<Array<{ t: number; luma: number }>> = [];
   for (const o of offsets) {
     const ox = -ay * o * geom.r;
@@ -517,12 +566,11 @@ export async function measureTerminator(
       if (!insideDisc(geom, x, y)) continue;
       line.push({ t, luma: lumaAt(img, x, y) });
     }
-    lines.push(line);
+    if (line.length) lines.push(line);
   }
 
-  // Median across the lines at each t, then smooth.
-  const tMin = Math.min(...lines.map((l) => (l.length ? l[0].t : 0)));
-  const tMax = Math.max(...lines.map((l) => (l.length ? l[l.length - 1].t : 0)));
+  const tMin = Math.min(...lines.map((l) => l[0].t));
+  const tMax = Math.max(...lines.map((l) => l[l.length - 1].t));
   const merged: Array<{ t: number; luma: number }> = [];
   for (let t = tMin; t <= tMax; t += 1) {
     const vals: number[] = [];
@@ -533,7 +581,6 @@ export async function measureTerminator(
     if (vals.length) merged.push({ t, luma: median(vals) });
   }
 
-  // Box smooth.
   const smoothed = merged.map((row, i) => {
     const half = smooth >> 1;
     const slice = merged.slice(Math.max(0, i - half), Math.min(merged.length, i + half + 1));
@@ -544,22 +591,42 @@ export async function measureTerminator(
   const lo = Math.min(...smoothed.map((p) => p.luma));
   const highLevel = lo + (hi - lo) * 0.9;
   const lowLevel = lo + (hi - lo) * 0.1;
-  // `transitionWidth` speaks in `r` for the rim case; here the axis is `t`.
   const w = transitionWidth(
     smoothed.map((p2) => ({ r: p2.t, luma: p2.luma })),
     highLevel,
     lowLevel,
   );
 
+  /*
+   * Max adjacent 1 px step ACROSS the terminator: between the two crossings found by
+   * `transitionWidth`, not over the whole profile. A step anywhere else is limb or
+   * texture, which no terminator rule may be blamed for.
+   */
+  let crossTerminatorStep = 0;
+  if (w) {
+    const i0 = Math.min(w.iHigh, w.iLow);
+    const i1 = Math.max(w.iHigh, w.iLow);
+    for (let i = Math.max(1, i0); i <= Math.min(smoothed.length - 1, i1); i += 1) {
+      const step = Math.abs(smoothed[i].luma - smoothed[i - 1].luma);
+      if (step > crossTerminatorStep) crossTerminatorStep = step;
+    }
+  }
+
   const result: TerminatorResult = {
     profile: smoothed.map((p) => ({ t: p.t, luma: +p.luma.toFixed(2) })),
     dayLevel: +hi.toFixed(2),
     nightLevel: +lo.toFixed(2),
     widthPx: w ? +w.width.toFixed(1) : null,
-    widthPctR: w ? +((w.width / geom.r) * 100).toFixed(1) : null,
+    widthPctR: w ? +((w.width / geom.r) * 100).toFixed(2) : null,
     axis: { ax, ay },
+    nightFractionLuma: +night.fraction.toFixed(4),
+    nightMeanLuma: +night.nightMean.toFixed(2),
+    dayMeanLuma: +night.dayMean.toFixed(2),
+    crossTerminatorStep: +crossTerminatorStep.toFixed(2),
+    rFit: +geom.r.toFixed(3),
+    rms: +fit.rms.toFixed(3),
   };
-  await writeResult('terminator', { geometry: geom, ...result });
+  await writeResult(`terminator-az${azimuthDeg}`, { geometry: geom, ...result });
   return { result, geometry: geom };
 }
 

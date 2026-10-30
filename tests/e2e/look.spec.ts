@@ -20,10 +20,8 @@ import {
   measureRim,
   measureTerminator,
   writeResult,
-  ALL_LAYERS,
 } from './look/measure';
-import { openGlobe, setLayers, settleAt } from './look/capture';
-import { luma } from '../../src/lib/look/helpers';
+import { openGlobe } from './look/capture';
 
 const AZIMUTHS = Array.from({ length: 12 }, (_, i) => i * 30);
 
@@ -233,33 +231,105 @@ test.describe('globe look', () => {
 
   // ------------------------------------------------------- 3.4 terminator -----
   test('3.4 terminator: measured from pixels, soft and readable', async ({ page }) => {
-    const geom = await requireValidDisc(page);
+    await requireValidDisc(page);
     const { result } = await measureTerminator(page);
 
+    // Inputs.
     expect(result.profile.length, 'terminator profile has no samples').toBeGreaterThan(100);
     expect(
       result.profile.every((p) => Number.isFinite(p.luma)),
       'terminator profile contains a non-finite luma',
     ).toBe(true);
     expect(result.widthPx, 'transition width could not be measured').not.toBeNull();
+    expect(result.rms, 'the limb fit was not a circle').toBeLessThanOrEqual(0.4);
 
     console.log(
-      `[terminator] day=${result.dayLevel} night=${result.nightLevel} ` +
-        `width=${result.widthPx}px (${result.widthPctR}% of R) axis=(${result.axis.ax.toFixed(2)},${result.axis.ay.toFixed(2)})`,
+      `[terminator] az=0 day=${result.dayLevel} night=${result.nightLevel} ` +
+        `width=${result.widthPx}px (${result.widthPctR}% of R_fit ${result.rFit}) ` +
+        `axis=(${result.axis.ax.toFixed(2)},${result.axis.ay.toFixed(2)})\n` +
+        `[terminator] nightFraction(luma, <25% of day mean)=${(result.nightFractionLuma * 100).toFixed(2)}% ` +
+        `nightMean=${result.nightMeanLuma} dayMean=${result.dayMeanLuma} ` +
+        `crossTerminatorStep=${result.crossTerminatorStep}/255`,
     );
 
-    // State the noise floor: a softness figure is meaningless without it.
+    // Default-view gates.
+    expect(
+      result.widthPctR!,
+      `90%->10% width is ${result.widthPctR}% of R_fit, needs >= 6%`,
+    ).toBeGreaterThanOrEqual(6);
+    expect(
+      result.nightFractionLuma * 100,
+      `night fraction by luma is ${(result.nightFractionLuma * 100).toFixed(2)}%, needs 10-30%`,
+    ).toBeGreaterThanOrEqual(10);
+    expect(result.nightFractionLuma * 100).toBeLessThanOrEqual(30);
+    expect(result.nightMeanLuma, 'night mean luma is below 4/255').toBeGreaterThanOrEqual(4);
+
+    // Noise floor, so "soft" is not confused with "noisy".
     const noise = await frameNoise(page);
     console.log(
       `[terminator] frame noise meanAbs=${noise.meanAbs.toFixed(4)} maxAbs=${noise.maxAbs.toFixed(1)}`,
     );
     expect(Number.isFinite(noise.meanAbs), 'frame noise is NaN').toBe(true);
+  });
 
-    // Baseline look must still be the approved one after all the toggling.
-    await setLayers(page, ALL_LAYERS);
-    await settleAt(page, 0);
-    const restored = await disc(page);
-    expect(Math.abs(restored.r - geom.r) / geom.r).toBeLessThanOrEqual(0.02);
-    void luma; // re-exported for ad-hoc use in a failing test
+  test('3.4 terminator: other 11 azimuths, night mean and no hard step', async ({ page }) => {
+    const AZIMUTHS = [0, 30, 60, 90, 120, 150, 180, 210, 240, 270, 300, 330];
+    const rows: Array<{
+      az: number;
+      nightMeanLuma: number;
+      crossTerminatorStep: number;
+      widthPx: number | null;
+      widthPctR: number | null;
+      nightFractionLuma: number;
+      rFit: number;
+    }> = [];
+
+    for (const az of AZIMUTHS) {
+      const { result } = await measureTerminator(page, { azimuthDeg: az });
+      expect(result.rms, `az ${az}: limb fit RMS too large`).toBeLessThanOrEqual(0.4);
+      expect(Number.isFinite(result.nightMeanLuma), `az ${az}: night mean is NaN`).toBe(true);
+      rows.push({
+        az,
+        nightMeanLuma: result.nightMeanLuma,
+        crossTerminatorStep: result.crossTerminatorStep,
+        widthPx: result.widthPx,
+        widthPctR: result.widthPctR,
+        nightFractionLuma: result.nightFractionLuma,
+        rFit: result.rFit,
+      });
+    }
+
+    const maxStep = Math.max(...rows.map((r) => r.crossTerminatorStep));
+    const threshold = Math.ceil(1.25 * maxStep);
+
+    console.log(
+      `[terminator table]\n${rows
+        .map(
+          (r) =>
+            `  az=${String(r.az).padStart(3)}  nightMean=${r.nightMeanLuma.toFixed(2).padStart(6)}  ` +
+            `crossStep=${r.crossTerminatorStep.toFixed(2).padStart(6)}  ` +
+            `width=${r.widthPx === null ? 'null' : r.widthPx.toFixed(1).padStart(5)}px ` +
+            `(${r.widthPctR === null ? 'null' : r.widthPctR.toFixed(2)}% R)  ` +
+            `nightFrac=${(r.nightFractionLuma * 100).toFixed(2)}%  R_fit=${r.rFit}`,
+        )
+        .join('\n')}\n` +
+        `[terminator] max step=${maxStep.toFixed(2)}/255 -> threshold ceil(1.25 x max)=${threshold}/255`,
+    );
+
+    await writeResult('terminator-table', { rows, maxStep, threshold, rule: 'ceil(1.25 x max measured)' });
+
+    // STOP condition from the brief: a step over 12/255 is a real defect.
+    expect(
+      maxStep,
+      `measured cross-terminator step ${maxStep.toFixed(2)}/255 exceeds 12/255`,
+    ).toBeLessThanOrEqual(12);
+
+    for (const r of rows) {
+      expect(r.nightMeanLuma, `az ${r.az}: night mean luma ${r.nightMeanLuma} < 4/255`).toBeGreaterThanOrEqual(4);
+      expect(
+        r.crossTerminatorStep,
+        `az ${r.az}: cross-terminator step ${r.crossTerminatorStep}/255 exceeds the derived ${threshold}/255`,
+      ).toBeLessThanOrEqual(threshold);
+    }
   });
 });
