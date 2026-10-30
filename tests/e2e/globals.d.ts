@@ -26,6 +26,8 @@ export interface GlobeProbeHandle {
   setCamera(position: [number, number, number]): Promise<void>;
   setAzimuth(deg: number): Promise<void>;
   defaultOrbit(): { distance: number; elevationDeg: number };
+  /** Flip internal look flags (the raw store; `__look.set` is the narrow API). */
+  setLookFlags(patch: Record<string, boolean>): Record<string, boolean>;
 }
 
 /** Mirrors `SceneGateState` from src/lib/engine/sceneGate.ts (E2E builds only). */
@@ -122,6 +124,8 @@ declare global {
       surfaceWhite(on: boolean): boolean;
       /** True once the Earth's surface mesh exists (the swap precondition). */
       surfaceReady(): boolean;
+      /** Read (no arg) or set the surface material's specular intensity. */
+      specularIntensity(v?: number): number | null;
     };
   }
 }

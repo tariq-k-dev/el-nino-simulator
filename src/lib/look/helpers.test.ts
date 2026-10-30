@@ -16,6 +16,7 @@ import {
   blurLuma,
   cameraBasis,
   collectDiscPixels,
+  diffStats,
   discRadiusNaivePx,
   discRadiusTangentPx,
   edgeCrossing,
@@ -32,7 +33,7 @@ import {
   pixelAt,
   radialProfile,
   raySamples,
-  sunGlintPoint,
+  specularMask,
   sunScreenAxis,
   transitionWidth,
 } from '@/lib/look/helpers';
@@ -351,41 +352,6 @@ describe('meanAbsDiff', () => {
   });
 });
 
-describe('sunGlintPoint', () => {
-  const geom = { cx: 640, cy: 400, r: 300 };
-
-  it('returns null when the sun is directly behind the camera, so there is no forward scatter', () => {
-    const cam: [number, number, number] = [0, 0, 5];
-    const sun: [number, number, number] = [0, 0, -5];
-    expect(sunGlintPoint(sun, cam, geom)).toBeNull();
-  });
-
-  it('puts the glint at the disc centre when the sun is directly behind the eye', () => {
-    // Sun and camera both along +z: the half-vector is +z, which is the centre of
-    // the visible hemisphere.
-    const cam: [number, number, number] = [0, 0, 5];
-    const sun: [number, number, number] = [0, 0, 9];
-    const g = sunGlintPoint(sun, cam, geom);
-    expect(g).not.toBeNull();
-    expect(g!.x).toBeCloseTo(geom.cx, 0);
-    expect(g!.y).toBeCloseTo(geom.cy, 0);
-  });
-
-  it('offsets the glint toward the sun side', () => {
-    const cam: [number, number, number] = [0, 0, 5];
-    const sun: [number, number, number] = [5, 0, 5]; // sun to the right
-    const g = sunGlintPoint(sun, cam, geom);
-    expect(g).not.toBeNull();
-    expect(g!.x).toBeGreaterThan(geom.cx);
-  });
-
-  it('the exclusion radius is 0.15 R', () => {
-    const cam: [number, number, number] = [0, 0, 5];
-    const sun: [number, number, number] = [0, 0, 9];
-    expect(sunGlintPoint(sun, cam, geom)!.r).toBeCloseTo(45, 6);
-  });
-});
-
 describe('cameraBasis / sunScreenAxis', () => {
   it('builds an orthonormal right-handed basis', () => {
     const { f, u, v } = cameraBasis([0, 1, 3]);
@@ -549,5 +515,90 @@ describe('fitCircle', () => {
     expect(fitCircle([[0, 0], [1, 1]])).toBeNull();
     // Collinear: no unique circle.
     expect(fitCircle([[0, 0], [1, 1], [2, 2], [3, 3]])).toBeNull();
+  });
+});
+
+describe('diffStats', () => {
+  const geom = { cx: 40, cy: 40, r: 30 };
+
+  it('isolates the changed layer and ignores identical frames', () => {
+    const same = makeImage(80, 80, () => [50, 50, 50]);
+    const d = diffStats(same, same, geom);
+    expect(d.max).toBe(0);
+    expect(d.area6).toBe(0);
+    expect(d.area3).toBe(0);
+    expect(d.bbox).toBeNull();
+    expect(d.centroid).toBeNull();
+  });
+
+  it('reports the peak where the layer actually changed, not where the scene is brightest', () => {
+    // Bright everywhere, but the DIFFERENCE is a 4 px patch at (52, 40).
+    const off = makeImage(80, 80, () => [10, 10, 10]);
+    const on = makeImage(80, 80, (x, y) =>
+      Math.abs(x - 52) <= 1 && Math.abs(y - 40) <= 1 ? [200, 200, 200] : [10, 10, 10],
+    );
+    const d = diffStats(on, off, geom);
+    expect(d.max).toBeCloseTo(luma(200, 200, 200) - luma(10, 10, 10), 4);
+    expect(d.area6).toBe(9);
+    // The 3x3 patch ties, so maxAt is the first one in scan order - assert it is
+    // INSIDE the patch rather than pinning an arbitrary tie-break.
+    expect(Math.abs(d.maxAt![0] - 52)).toBeLessThanOrEqual(1);
+    expect(Math.abs(d.maxAt![1] - 40)).toBeLessThanOrEqual(1);
+    // The centroid is not a tie: it is the patch centre.
+    expect(d.centroid![0]).toBeCloseTo(52, 6);
+    expect(d.centroid![1]).toBeCloseTo(40, 6);
+  });
+
+  it('is SIGNED: a darkening is not counted as a glint', () => {
+    const off = makeImage(80, 80, () => [200, 200, 200]);
+    const on = makeImage(80, 80, () => [20, 20, 20]);
+    const d = diffStats(on, off, geom);
+    expect(d.max).toBeLessThan(0);
+    expect(d.area6).toBe(0);
+  });
+
+  it('ignores differences outside the disc', () => {
+    const off = makeImage(80, 80, () => [0, 0, 0]);
+    const on = makeImage(80, 80, (x) => (x > 70 ? [255, 255, 255] : [0, 0, 0]));
+    const d = diffStats(on, off, geom);
+    expect(d.max).toBe(0);
+  });
+
+  it('reports the centroid in units of R', () => {
+    const off = makeImage(80, 80, () => [0, 0, 0]);
+    // A patch 15 px right of the centre, inside R=30 -> 0.5 R.
+    const on = makeImage(80, 80, (x, y) =>
+      Math.abs(x - 55) <= 1 && Math.abs(y - 40) <= 1 ? [255, 255, 255] : [0, 0, 0],
+    );
+    const d = diffStats(on, off, geom);
+    expect(d.centroidROverR!).toBeCloseTo(15 / 30, 2);
+  });
+});
+
+describe('specularMask', () => {
+  const geom = { cx: 40, cy: 40, r: 30 };
+
+  it('covers the changed pixels and dilates by the requested radius', () => {
+    const off = makeImage(80, 80, () => [0, 0, 0]);
+    const on = makeImage(80, 80, (x, y) => (x === 40 && y === 40 ? [255, 255, 255] : [0, 0, 0]));
+    const m = specularMask(on, off, geom, { threshold: 3, radius: 4 });
+    expect(m.mask[40 * 80 + 40]).toBe(1);
+    expect(m.mask[40 * 80 + 44]).toBe(1); // +4 px
+    expect(m.mask[40 * 80 + 46]).toBe(0); // +6 px, outside the dilation
+    // 9x9 square from a 1 px seed.
+    expect(m.pixels).toBe(81);
+  });
+
+  it('returns an empty mask when nothing changed', () => {
+    const same = makeImage(80, 80, () => [100, 100, 100]);
+    const m = specularMask(same, same, geom);
+    expect(m.pixels).toBe(0);
+  });
+
+  it('ignores a change weaker than the threshold', () => {
+    const off = makeImage(80, 80, () => [0, 0, 0]);
+    const on = makeImage(80, 80, () => [2, 2, 2]);
+    const m = specularMask(on, off, geom, { threshold: 3 });
+    expect(m.pixels).toBe(0);
   });
 });

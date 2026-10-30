@@ -73,49 +73,6 @@ export function insideDisc(geom: DiscGeometry, x: number, y: number, scale = 1):
   return dx * dx + dy * dy <= r * r;
 }
 
-/**
- * Analytically predicted specular point: the point on the sphere where the
- * half-vector of (sun, camera) meets the surface.
- *
- * Used to EXCLUDE the sun glint, which is allowed to be bright. Returns null when
- * the sun is behind the camera, because then there is no forward-scatter point on
- * the visible hemisphere and there is nothing to exclude.
- *
- * `sun` and `cam` are world-space directions pointing FROM the globe TOWARD the
- * light/camera, which is what `SUN_DIRECTION` and `project(0,0,0) - camera.position`
- * give.
- */
-export function sunGlintPoint(
-  sun: [number, number, number],
-  cam: [number, number, number],
-  geom: DiscGeometry,
-): { x: number; y: number; r: number } | null {
-  const nSun = norm3(sun);
-  const nCam = norm3(cam);
-  const half: [number, number, number] = [
-    nSun[0] + nCam[0],
-    nSun[1] + nCam[1],
-    nSun[2] + nCam[2],
-  ];
-  const len = Math.hypot(half[0], half[1], half[2]);
-  if (len < 1e-6) return null; // sun exactly opposite the camera
-  const n: [number, number, number] = [half[0] / len, half[1] / len, half[2] / len];
-
-  // Visible only if the half-vector faces the camera.
-  const facing = n[0] * nCam[0] + n[1] * nCam[1] + n[2] * nCam[2];
-  if (facing <= 0) return null;
-
-  /*
-   * Project onto the screen disc. Build a camera basis and express `n` in it: the
-   * disc is the unit circle, so the screen offset is (n.u, -n.v) scaled by R.
-   * The sign flip on v is because screen y runs downward while camera v runs up.
-   */
-  const { u, v } = cameraBasis(nCam);
-  const su = n[0] * u[0] + n[1] * u[1] + n[2] * u[2];
-  const sv = n[0] * v[0] + n[1] * v[1] + n[2] * v[2];
-  return { x: geom.cx + su * geom.r, y: geom.cy - sv * geom.r, r: geom.r * 0.15 };
-}
-
 /** Orthonormal camera basis: forward `f`, then right `u` and up `v`. */
 export function cameraBasis(f: [number, number, number]): {
   f: [number, number, number];
@@ -687,6 +644,154 @@ export function fitCircle(points: Array<[number, number]>): CircleFit | null {
     sq += d * d;
   }
   return { cx, cy, r, rms: Math.sqrt(sq / n), n };
+}
+
+// --------------------------------------------------- difference images (glint)
+
+export interface DiffStats {
+  /** Largest signed difference, /255. */
+  max: number;
+  maxAt: [number, number] | null;
+  /** 99.9th percentile of the signed differences inside the disc. */
+  p999: number;
+  /** Pixels with a difference greater than 6/255. */
+  area6: number;
+  /** Pixels with a difference greater than 3/255. */
+  area3: number;
+  bbox: [number, number, number, number] | null;
+  centroid: [number, number] | null;
+  /** Centroid distance from the disc centre, in units of R. */
+  centroidROverR: number | null;
+}
+
+/**
+ * Statistics of a SIGNED luma difference between two frames, inside a disc.
+ *
+ * This is the only honest way to measure a glint. "Peak luma in the glint region"
+ * counts cloud tops and diffuse ocean, which reach ~210 on their own — a metric that
+ * reported a 92% "retained peak" for a build whose actual specular contribution had
+ * dropped by half. A difference of two frames from the same frozen scene isolates the
+ * layer under test by construction, because everything that did not change cancels.
+ *
+ * Signed, not absolute: the question is "how much BRIGHTER did this layer make the
+ * pixel", and an absolute value would count a darkening as a glint.
+ */
+export function diffStats(a: Bitmap, b: Bitmap, geom: DiscGeometry): DiffStats {
+  const n = Math.min(a.width * a.height, b.width * b.height);
+  const vals: number[] = [];
+  let max = -Infinity;
+  let maxAt: [number, number] | null = null;
+  let area6 = 0;
+  let area3 = 0;
+  let sx = 0;
+  let sy = 0;
+  let x0 = Infinity;
+  let y0 = Infinity;
+  let x1 = -Infinity;
+  let y1 = -Infinity;
+  const r2 = geom.r * geom.r;
+  for (let i = 0; i < n; i += 1) {
+    const x = i % a.width;
+    const y = Math.floor(i / a.width);
+    const dx = x - geom.cx;
+    const dy = y - geom.cy;
+    if (dx * dx + dy * dy > r2) continue;
+    const o = i * 4;
+    const v =
+      luma(a.data[o], a.data[o + 1], a.data[o + 2]) - luma(b.data[o], b.data[o + 1], b.data[o + 2]);
+    vals.push(v);
+    if (v > max) {
+      max = v;
+      maxAt = [x, y];
+    }
+    if (v > 6) {
+      area6 += 1;
+      sx += x;
+      sy += y;
+    }
+    if (v > 3) {
+      area3 += 1;
+      x0 = Math.min(x0, x);
+      x1 = Math.max(x1, x);
+      y0 = Math.min(y0, y);
+      y1 = Math.max(y1, y);
+    }
+  }
+  const centroid: [number, number] | null = area6 ? [sx / area6, sy / area6] : null;
+  return {
+    max,
+    maxAt,
+    p999: percentile(vals, 0.999),
+    area6,
+    area3,
+    bbox: area3 ? [x0, y0, x1, y1] : null,
+    centroid,
+    centroidROverR: centroid
+      ? Math.hypot(centroid[0] - geom.cx, centroid[1] - geom.cy) / geom.r
+      : null,
+  };
+}
+
+/**
+ * Mask of pixels a specular source actually lights.
+ *
+ * Replaces `sunGlintPoint`, which predicted the glint by projecting the half-vector
+ * ORTHOGRAPHICALLY. That is meaningless for a broad lobe: under the 42deg perspective
+ * camera it landed 89 px from where the lobe actually peaks (and the perspective-
+ * correct projection was still 74 px off, because the lobe is broad, not a point).
+ *
+ * Empirical instead: diff two frames (specular sources on vs off, same frozen scene),
+ * keep pixels over `threshold`, then dilate by `radius` so the mask covers the lobe's
+ * soft shoulder rather than only its core.
+ */
+export function specularMask(
+  on: Bitmap,
+  off: Bitmap,
+  geom: DiscGeometry,
+  { threshold = 3, radius = 8 }: { threshold?: number; radius?: number } = {},
+): { mask: Uint8Array; width: number; height: number; pixels: number } {
+  const { width, height } = on;
+  const raw = new Uint8Array(width * height);
+  const r2 = geom.r * geom.r;
+  for (let y = 0; y < height; y += 1) {
+    for (let x = 0; x < width; x += 1) {
+      const dx = x - geom.cx;
+      const dy = y - geom.cy;
+      if (dx * dx + dy * dy > r2) continue;
+      const o = (y * width + x) * 4;
+      const d =
+        luma(on.data[o], on.data[o + 1], on.data[o + 2]) -
+        luma(off.data[o], off.data[o + 1], off.data[o + 2]);
+      if (d > threshold) raw[y * width + x] = 1;
+    }
+  }
+  /*
+   * Square dilation of `radius` px, done separably (two passes) rather than as a
+   * (2r+1)^2 kernel: at r=8 that is 17x17 per pixel, i.e. 289 comparisons each, and
+   * this runs over a 1280x800 frame inside a spec.
+   */
+  let cur = raw;
+  for (let pass = 0; pass < 2; pass += 1) {
+    const next = new Uint8Array(width * height);
+    for (let y = 0; y < height; y += 1) {
+      for (let x = 0; x < width; x += 1) {
+        if (!cur[y * width + x]) continue;
+        if (pass === 0) {
+          for (let k = Math.max(0, x - radius); k <= Math.min(width - 1, x + radius); k += 1) {
+            next[y * width + k] = 1;
+          }
+        } else {
+          for (let k = Math.max(0, y - radius); k <= Math.min(height - 1, y + radius); k += 1) {
+            next[k * width + x] = 1;
+          }
+        }
+      }
+    }
+    cur = next;
+  }
+  let pixels = 0;
+  for (let i = 0; i < cur.length; i += 1) if (cur[i]) pixels += 1;
+  return { mask: cur, width, height, pixels };
 }
 
 /** Decode a PNG buffer into a Bitmap. */

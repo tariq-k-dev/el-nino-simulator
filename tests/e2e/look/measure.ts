@@ -22,8 +22,8 @@ import {
   labelBlobs,
   lumaAt,
   median,
+  specularMask,
   raySamples,
-  sunGlintPoint,
   sunScreenAxis,
   transitionWidth,
   type Blob,
@@ -38,6 +38,7 @@ import {
   setLayers,
   settleAt,
   sunAndCamera,
+  twoFrames,
 } from './capture';
 
 /** Results land here, and are echoed into the test output. */
@@ -243,6 +244,77 @@ export async function measureGlare(
   return { result, geometry: geom };
 }
 
+
+// --------------------------------------------------------- specular mask (3.3)
+
+export interface SpecularMaskResult {
+  lookup(x: number, y: number): boolean;
+  summary: { pixels: number; threshold: string; dilationPx: number; bbox: [number, number, number, number] | null };
+}
+
+/**
+ * The region the SPECULAR sources light, measured rather than predicted.
+ *
+ * Two captures of the same frozen scene — every specular source on, then all off —
+ * differenced, thresholded at 3/255, dilated 8 px. Used by the local-peak rule to
+ * excuse the sun glint, which is allowed to be bright.
+ *
+ * The previous exclusion was a 0.15 R circle at `sunGlintPoint`'s orthographic
+ * projection of the half-vector, which landed 89 px from the lobe's actual peak: it
+ * excused a patch of ocean while the glint it meant to excuse sat outside it.
+ */
+export async function measureSpecularMask(
+  page: Page,
+  geom: DiscGeometry,
+): Promise<SpecularMaskResult> {
+  // ON: the approved look's specular sources (material lobe + overlay).
+  await setLayers(page, { stars: false, pins: false, rings: false });
+  await page.evaluate(() => {
+    window.__look!.specularIntensity(0.18);
+    window.__globe!.setLookFlags({ specular: true });
+  });
+  const on = await capture(page);
+
+  // OFF: both specular paths disabled.
+  await page.evaluate(() => {
+    window.__look!.specularIntensity(0);
+    window.__globe!.setLookFlags({ specular: false });
+  });
+  const off = await capture(page);
+
+  // Restore the committed look before returning.
+  await page.evaluate(() => {
+    window.__look!.specularIntensity(0);
+    window.__globe!.setLookFlags({ specular: true });
+  });
+  await setLayers(page, ALL_LAYERS);
+  await twoFrames(page);
+
+  const m = specularMask(on, off, geom, { threshold: 3, radius: 8 });
+  let x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity;
+  for (let y = 0; y < m.height; y += 1) {
+    for (let x = 0; x < m.width; x += 1) {
+      if (!m.mask[y * m.width + x]) continue;
+      x0 = Math.min(x0, x); x1 = Math.max(x1, x);
+      y0 = Math.min(y0, y); y1 = Math.max(y1, y);
+    }
+  }
+  return {
+    lookup: (x: number, y: number) => {
+      const ix = Math.round(x);
+      const iy = Math.round(y);
+      if (ix < 0 || iy < 0 || ix >= m.width || iy >= m.height) return false;
+      return m.mask[iy * m.width + ix] === 1;
+    },
+    summary: {
+      pixels: m.pixels,
+      threshold: '3/255',
+      dilationPx: 8,
+      bbox: m.pixels ? [x0, y0, x1, y1] : null,
+    },
+  };
+}
+
 // ------------------------------------------------------- 3.3 blue-circle guard
 
 export interface BlueCircleResult {
@@ -289,8 +361,15 @@ export async function measureBlueCircle(
   await setLayers(page, { stars: false, pins: false, rings: false, clouds: false });
   const geom = await disc(page);
   const img = await capture(page);
-  const { sun, cam } = await sunAndCamera(page);
-  const glint = sunGlintPoint(sun, cam, geom);
+  /*
+   * The sun glint is excluded from the local-peak rule because it is SUPPOSED to be
+   * bright. It used to be excluded at the analytically predicted half-vector point,
+   * which `sunGlintPoint` projected orthographically — measured 89 px away from where
+   * the lobe actually peaks, so the exclusion window was missing the thing it meant to
+   * excuse. The mask is now empirical: two captures, every specular source on vs off,
+   * differenced and dilated.
+   */
+  const glintMask = await measureSpecularMask(page, geom);
 
   const blurred = blurLuma(img, 3);
   const blurAt = (x: number, y: number) => {
@@ -324,10 +403,8 @@ export async function measureBlueCircle(
     }
     const med = median(ring);
     const ratio = med > 1e-6 ? peak / med : NaN;
-    // Excluded inside 0.15 R of the analytically predicted glint point.
-    const excluded = glint
-      ? Math.hypot(px - glint.x, py - glint.y) <= glint.r
-      : false;
+    // Excluded where the specular mask says a specular source is lighting the surface.
+    const excluded = glintMask.lookup(px, py);
     rows.push({
       x: w.x,
       y: w.y,
@@ -341,7 +418,7 @@ export async function measureBlueCircle(
   }
 
   const result: BlueCircleResult = { windows: rows };
-  await writeResult('blue-circle', { geometry: geom, glint, ...result });
+  await writeResult('blue-circle', { geometry: geom, glintMask: glintMask.summary, ...result });
   return { result, geometry: geom };
 }
 

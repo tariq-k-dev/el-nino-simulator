@@ -1,3 +1,30 @@
+# GLINT REMOVED - needs Tariq's decision
+
+The material's own sun glint was zeroed in SPECLOCK Step 1 and **has not been
+restored**. Measured as a difference image (B1, 2A2), the current build keeps only
+**53.95%** of the approved look's glint peak (88.52/255 vs 164.07/255), which is below
+the 60% retention the task set. Two candidates were built and measured on the real
+render — both still clip — so nothing was adopted and `specularIntensity` stays **0**.
+
+Look at `glint-before-after.png`: left is the approved look (si 0.18), right is the
+current build. The bright lobe above and right of centre is the missing piece.
+
+| candidate | default-view max | vs Dt | area6 | clipped (worst of 12 az) | largest blob | mean luma | verdict |
+|---|---|---|---|---|---|---|---|
+| si 0.18 (pre-fix) | 164.07 | 1.000x | 15469 | **49** | 49 | +3.10% | reject: clips |
+| si 0.12 | 130.00 | 0.792x | 14400 | **23** | 24 | +2.74% | reject: clips |
+| **si 0 (current)** | 88.52 | **0.540x** | 9594 | **0** | 0 | baseline | keeps 0 clipped px, loses the lobe |
+
+Neither candidate survived `0 clipped px at all 12 azimuths`, so per the task rule the
+thresholds were not relaxed and no grazing-falloff shader was shipped. The falloff
+patch was written and **never reached the GPU** — `onBeforeCompile` measured zero
+invocations because R3F only renders on invalidation, so the patch compiled nothing and
+the si=0.18 frame came back pixel-identical to the unpatched reference (max 164.07,
+area6 15469, clipped 49). Fixing that is the open work, and it is the prerequisite for
+reinstating the glint at all.
+
+---
+
 # CLIPPED-FACTS — the 13 / 52 / 38 pixels at azimuths 150 / 210 / 240
 
 Investigated before fixing, per the task. Ablation harness:

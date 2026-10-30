@@ -473,6 +473,40 @@ export function GlobeScene({
                * predicate: once it has swapped, there is no MeshPhysicalMaterial
                * left to find and it correctly reports false forever after.
                */
+              /**
+               * Set the surface material's own specular intensity at runtime, or read it.
+               *
+               * Exists because B1 has to compare two specularIntensity candidates
+               * (0.18 and 0.12) with the same grazing falloff, and a rebuild per
+               * candidate would mean the comparison straddled two bundles.
+               */
+              specularIntensity: (v?: number) => {
+                let mat: THREE.MeshPhysicalMaterial | null = null;
+                scene.traverse((o) => {
+                  const m = o as THREE.Mesh;
+                  if (m.isMesh && (m.material as THREE.Material)?.type === 'MeshPhysicalMaterial') {
+                    mat = m.material as THREE.MeshPhysicalMaterial;
+                  }
+                });
+                if (!mat) return null;
+                const target = mat as THREE.MeshPhysicalMaterial;
+                if (v !== undefined) {
+                  target.specularIntensity = v;
+                  target.needsUpdate = true;
+                  /*
+                   * Render explicitly after the flag change.
+                   *
+                   * R3F's default frameloop only draws when something INVALIDATES the
+                   * canvas (a React re-render, a control change). Mutating a material
+                   * does neither, so `needsUpdate` alone left the change uncompiled
+                   * and unpainted: the si=0.18 frame came back pixel-identical to the
+                   * previous one. This is the same call the app's own snapshot path
+                   * uses (see lib/canvasCapture registerRenderer).
+                   */
+                  gl.render(scene, camera);
+                }
+                return target.specularIntensity;
+              },
               surfaceReady: () => {
                 let found = false;
                 scene.traverse((o) => {
