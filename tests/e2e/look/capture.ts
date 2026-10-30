@@ -17,7 +17,7 @@
 import { expect, type Page } from '@playwright/test';
 // Relative on purpose: tsconfig.node.json (which owns tests/e2e) has no `@/*`
 // path mapping, so an alias here fails to resolve while the app tsconfig compiles.
-import { decodePng, type Bitmap, type DiscGeometry } from '../../../src/lib/look/helpers';
+import { decodePng, edgeCrossing, fitCircle, type Bitmap, type DiscGeometry } from '../../../src/lib/look/helpers';
 
 export const VIEWPORT = { width: 1280, height: 800 } as const;
 
@@ -174,4 +174,114 @@ export async function sunAndCamera(
       cam: [cam.position.x, cam.position.y, cam.position.z] as [number, number, number],
     };
   });
+}
+
+/**
+ * Scene numbers the limb arithmetic needs, read live from the camera.
+ *
+ * `fov` is three's VERTICAL fov and `height` is the canvas' CSS height, which is
+ * exactly what `focalPxFromFov` expects. Read rather than hard-coded: the 1024x768
+ * case moves both.
+ */
+export async function cameraGeometry(page: Page): Promise<{
+  fov: number;
+  height: number;
+  width: number;
+  distance: number;
+  radius: number;
+}> {
+  return page.evaluate(() => {
+    const cam = window.__camera as { fov: number };
+    const canvas = document.querySelector('#globe-canvas canvas') as HTMLCanvasElement;
+    return {
+      fov: cam.fov,
+      height: canvas.clientHeight,
+      width: canvas.clientWidth,
+      distance: window.__globe!.distance(),
+      radius: 1, // EARTH_RADIUS in scene units
+    };
+  });
+}
+
+export interface LimbFit {
+  cx: number;
+  cy: number;
+  r: number;
+  /** RMS of |P-C| - r over the accepted rays, px. */
+  rms: number;
+  /** Rays that produced a usable crossing. */
+  rays: number;
+  /** Rays that produced none (reported, never silently dropped). */
+  misses: number;
+}
+
+/**
+ * Ground-truth limb: fit a circle to the rendered edge at 360 rays, sub-pixel.
+ *
+ * Why this exists: `__globe.discRadiusPx()` and the visible limb disagreed by ~3 px,
+ * and every disc-relative rule (the rim origin, the probe windows, "keep expecting
+ * deeper rise") inherits that error. Fitting the edge in the actual pixels is the
+ * only way to settle which number is right.
+ *
+ * The scene is reduced to a single unlit white sphere before the capture:
+ *
+ *  - atmosphere, clouds, pins, rings and stars OFF, because the atmosphere shell is
+ *    a 1.1 R additive annulus whose glow IS the thing that makes a "luma edge" fuzzy,
+ *    and pins/rings/stars are bright objects on or beyond the limb;
+ *  - the surface material swapped for flat unlit white via `__look.surfaceWhite`.
+ *    A lit sphere has a terminator and a specular gradient, so its luma edge is only
+ *    crisp on the day side — a 360-ray fit over a lit sphere measures TWO different
+ *    edges and averages them.
+ *
+ * The material and the layer flags are restored before returning, so a failing fit
+ * cannot leave the scene white for the next spec.
+ */
+export async function fitLimb(
+  page: Page,
+  { rays = 360, span = 14 }: { rays?: number; span?: number } = {},
+): Promise<LimbFit> {
+  await setLayers(page, { atmosphere: false, pins: false, clouds: false, stars: false, rings: false });
+  /*
+   * Wait for the surface mesh to exist before swapping it.
+   *
+   * `__look` and `__globe` are installed in `onCreated`, which runs before the
+   * textured <Globe> finishes suspending — so at the moment `openGlobe()` returns,
+   * `scene.traverse` finds ZERO meshes and the swap silently returns false. This
+   * poll is the difference between "the fit works" and "the fit throws on a
+   * half-constructed scene", which is a flake with an obvious cause.
+   */
+  await expect
+    .poll(() => page.evaluate(() => window.__look!.surfaceReady()), { timeout: 60_000 })
+    .toBe(true);
+  const swapped = await page.evaluate(() => window.__look!.surfaceWhite(true));
+  if (!swapped) throw new Error('fitLimb: surface exists but the white swap failed');
+  await twoFrames(page);
+
+  try {
+    const img = await capture(page);
+    const centre = await page.evaluate(() => window.__globe!.project());
+    const rGuess = await page.evaluate(() => window.__globe!.discRadiusPx());
+
+    const points: Array<[number, number]> = [];
+    let misses = 0;
+    for (let i = 0; i < rays; i += 1) {
+      const th = (i / rays) * Math.PI * 2;
+      const e = edgeCrossing(img, centre.x, centre.y, th, rGuess, span);
+      if (!e) {
+        misses += 1;
+        continue;
+      }
+      points.push([centre.x + Math.cos(th) * e.radius, centre.y + Math.sin(th) * e.radius]);
+    }
+
+    const fit = fitCircle(points);
+    if (!fit) {
+      return { cx: NaN, cy: NaN, r: NaN, rms: NaN, rays: points.length, misses };
+    }
+    return { cx: fit.cx, cy: fit.cy, r: fit.r, rms: fit.rms, rays: fit.n, misses };
+  } finally {
+    await page.evaluate(() => window.__look!.surfaceWhite(false));
+    await setLayers(page, ALL_LAYERS);
+    await twoFrames(page);
+  }
 }

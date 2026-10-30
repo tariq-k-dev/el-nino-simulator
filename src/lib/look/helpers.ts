@@ -445,6 +445,250 @@ export function meanAbsDiff(a: Float32Array | number[], b: Float32Array | number
   return s / a.length;
 }
 
+// ---------------------------------------------------------------- limb fitting
+
+/**
+ * Focal length in pixels for a vertical FOV.
+ *
+ * `fov` is three.js's VERTICAL field of view, so the height is what converts it to
+ * pixels. Using the width here is the classic silent error: it returns a focal
+ * ~1.6x too large at 1280x800 and the disc then "measures" 500 px.
+ */
+export function focalPxFromFov(fovDeg: number, heightPx: number): number {
+  return heightPx / 2 / Math.tan((fovDeg * Math.PI) / 180 / 2);
+}
+
+/**
+ * Apparent radius of a sphere, perspective-EXACT.
+ *
+ * The silhouette is where the view ray is tangent to the sphere, so
+ * `sin(theta) = R / d` and the pixel radius is `tan(theta) * focal`. Algebraically
+ * that equals `focal * R / sqrt(d^2 - R^2)`; both forms are the same number and
+ * the closed form is used here because it avoids the asin/tan round trip.
+ */
+export function discRadiusTangentPx(R: number, d: number, focalPx: number): number {
+  const denom = d * d - R * R;
+  if (denom <= 0) return NaN; // camera at or inside the surface: no silhouette
+  return (focalPx * R) / Math.sqrt(denom);
+}
+
+/** The small-angle / naive form `focal * R / d`. Understates the disc near the limb. */
+export function discRadiusNaivePx(R: number, d: number, focalPx: number): number {
+  if (d <= 0) return NaN;
+  return (focalPx * R) / d;
+}
+
+/**
+ * Bilinear luma sample.
+ *
+ * Needed for the limb fit: the edge crossing is located BETWEEN pixels, and
+ * nearest-neighbour sampling quantises every ray's edge to a whole pixel, which
+ * turns a sub-pixel circle fit into a ±0.5 px staircase.
+ */
+export function bilinearLuma(img: Bitmap, x: number, y: number): number {
+  const x0 = Math.floor(x);
+  const y0 = Math.floor(y);
+  const fx = x - x0;
+  const fy = y - y0;
+  const at = (ix: number, iy: number) => {
+    const cx = Math.min(img.width - 1, Math.max(0, ix));
+    const cy = Math.min(img.height - 1, Math.max(0, iy));
+    const o = (cy * img.width + cx) * 4;
+    return luma(img.data[o], img.data[o + 1], img.data[o + 2]);
+  };
+  const top = at(x0, y0) * (1 - fx) + at(x0 + 1, y0) * fx;
+  const bot = at(x0, y0 + 1) * (1 - fx) + at(x0 + 1, y0 + 1) * fx;
+  return top * (1 - fy) + bot * fy;
+}
+
+export interface EdgeCrossing {
+  /** Distance from the centre along the ray, in px, interpolated to sub-pixel. */
+  radius: number;
+  /** Luma level the crossing was taken at (the 50% midpoint). */
+  level: number;
+  /** Mean luma of the 4 px just inside the edge. */
+  innerLevel: number;
+  /** Mean luma of the far background outside the edge. */
+  outerLevel: number;
+}
+
+/**
+ * Sub-pixel edge crossing along one ray.
+ *
+ * Definition, as specified for the limb ground truth: walk outward from the
+ * centre, find the steepest fall in luma inside `[rGuess-span, rGuess+span]`, take
+ * the inner level as the mean of the 4 px just inside that fall and the outer level
+ * as the background further out, then interpolate the 50% crossing linearly
+ * between the two straddling samples.
+ *
+ * Why the 4-px inner mean rather than the peak: a single pixel at the limb is
+ * itself a partial-coverage pixel, so using it as the "inside" level biases the
+ * level toward the background and pulls the reported edge outward.
+ *
+ * Returns null when no fall of at least `minDrop` exists, so a caller cannot
+ * mistake a smooth gradient for an edge.
+ */
+export function edgeCrossing(
+  img: Bitmap,
+  cx: number,
+  cy: number,
+  angleRad: number,
+  rGuess: number,
+  span = 14,
+  minDrop = 20,
+): EdgeCrossing | null {
+  const cos = Math.cos(angleRad);
+  const sin = Math.sin(angleRad);
+  const step = 0.25;
+  const from = rGuess - span;
+  const to = rGuess + span;
+  const samples: Array<{ r: number; luma: number }> = [];
+  for (let r = from; r <= to + 1e-9; r += step) {
+    samples.push({ r, luma: bilinearLuma(img, cx + cos * r, cy + sin * r) });
+  }
+  if (samples.length < 8) return null;
+
+  // Steepest fall over a 2 px window (averaging the difference a little keeps a
+  // single noisy pixel from being elected as "the edge").
+  const win = Math.round(2 / step);
+  let bestIdx = -1;
+  let bestDrop = 0;
+  for (let i = win; i < samples.length - win; i += 1) {
+    const drop = samples[i - win].luma - samples[i + win].luma;
+    if (drop > bestDrop) {
+      bestDrop = drop;
+      bestIdx = i;
+    }
+  }
+  if (bestIdx < 0 || bestDrop < minDrop) return null;
+
+  // Inner level: the 4 px just inside the steepest point. Outer: 4..12 px beyond it.
+  const innerOf = (r: number) => {
+    let s = 0;
+    let n = 0;
+    for (let k = 1; k <= 4; k += 1) {
+      const rr = r - k;
+      if (rr < 0) continue;
+      s += bilinearLuma(img, cx + cos * rr, cy + sin * rr);
+      n += 1;
+    }
+    return n ? s / n : NaN;
+  };
+  const outerOf = (r: number) => {
+    let s = 0;
+    let n = 0;
+    for (let k = 4; k <= 12; k += 1) {
+      const rr = r + k;
+      s += bilinearLuma(img, cx + cos * rr, cy + sin * rr);
+      n += 1;
+    }
+    return n ? s / n : NaN;
+  };
+
+  const rPeak = samples[bestIdx].r;
+  const innerLevel = innerOf(rPeak);
+  const outerLevel = outerOf(rPeak);
+  if (!Number.isFinite(innerLevel) || !Number.isFinite(outerLevel)) return null;
+  if (innerLevel - outerLevel < minDrop) return null;
+  const level = (innerLevel + outerLevel) / 2;
+
+  /*
+   * Scan the WHOLE sampled window for the 50% crossing, outward direction.
+   *
+   * Not from `bestIdx`: the steepest sample is by construction already partway
+   * down the edge, and on a 1 px-wide edge it is already BELOW the level. Starting
+   * there found no `>= level` sample to the right and returned null on every ray —
+   * 360 silent misses, which is exactly the failure mode a "returns null rather
+   * than a wrong number" contract must not hide. The scan starts at 0 and takes the
+   * FIRST descending crossing, which is the top of this edge rather than an
+   * interior one.
+   */
+  for (let i = 0; i < samples.length - 1; i += 1) {
+    const a = samples[i];
+    const b = samples[i + 1];
+    if (a.luma >= level && b.luma < level) {
+      const denom = b.luma - a.luma;
+      const f = Math.abs(denom) < 1e-9 ? 0 : (level - a.luma) / denom;
+      return { radius: a.r + (b.r - a.r) * f, level, innerLevel, outerLevel };
+    }
+  }
+  return null;
+}
+
+export interface CircleFit {
+  cx: number;
+  cy: number;
+  r: number;
+  /** RMS of |P-C| - r over the input points, in px. */
+  rms: number;
+  n: number;
+}
+
+/**
+ * Algebraic (Kasa) least-squares circle fit.
+ *
+ * Minimises sum (x^2 + y^2 + Dx + Ey + F)^2, which is linear in (D, E, F) and has
+ * a closed form. Chosen over a geometric fit because it needs no iteration and no
+ * initial guess, and for a well-sampled near-complete circle the two agree far
+ * below the 0.4 px tolerance this feeds.
+ *
+ * Returns null for fewer than 3 points or a degenerate (collinear) system, rather
+ * than a NaN circle that would silently compare as "close enough" against nothing.
+ */
+export function fitCircle(points: Array<[number, number]>): CircleFit | null {
+  const n = points.length;
+  if (n < 3) return null;
+
+  // Normalise around the centroid for conditioning.
+  let mx = 0;
+  let my = 0;
+  for (const [x, y] of points) {
+    mx += x;
+    my += y;
+  }
+  mx /= n;
+  my /= n;
+
+  let Suu = 0;
+  let Svv = 0;
+  let Suv = 0;
+  let Suuu = 0;
+  let Svvv = 0;
+  let Suvv = 0;
+  let Svuu = 0;
+  for (const [x0, y0] of points) {
+    const u = x0 - mx;
+    const v = y0 - my;
+    Suu += u * u;
+    Svv += v * v;
+    Suv += u * v;
+    Suuu += u * u * u;
+    Svvv += v * v * v;
+    Suvv += u * v * v;
+    Svuu += v * u * u;
+  }
+
+  const det = Suu * Svv - Suv * Suv;
+  if (Math.abs(det) < 1e-9) return null;
+  const rhs1 = 0.5 * (Suuu + Suvv);
+  const rhs2 = 0.5 * (Svvv + Svuu);
+  const uc = (rhs1 * Svv - rhs2 * Suv) / det;
+  const vc = (rhs2 * Suu - rhs1 * Suv) / det;
+
+  const cx = uc + mx;
+  const cy = vc + my;
+  let rSum = 0;
+  for (const [x, y] of points) rSum += Math.hypot(x - cx, y - cy);
+  const r = rSum / n;
+
+  let sq = 0;
+  for (const [x, y] of points) {
+    const d = Math.hypot(x - cx, y - cy) - r;
+    sq += d * d;
+  }
+  return { cx, cy, r, rms: Math.sqrt(sq / n), n };
+}
+
 /** Decode a PNG buffer into a Bitmap. */
 export function decodePng(buf: Buffer): Bitmap {
   const png = PNG.sync.read(buf);

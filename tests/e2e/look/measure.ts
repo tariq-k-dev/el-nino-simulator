@@ -14,6 +14,7 @@ import { writeFile, mkdir } from 'node:fs/promises';
 import path from 'node:path';
 import {
   annulus,
+  bilinearLuma,
   blurLuma,
   collectDiscPixels,
   insideDisc,
@@ -32,6 +33,7 @@ import {
   ALL_LAYERS,
   capture,
   disc,
+  fitLimb,
   frameNoise,
   setLayers,
   settleAt,
@@ -64,21 +66,41 @@ export interface RimResult {
   limbToHaloStep: number;
   rays: number;
   samplesPerRay: number;
+  /** The fitted limb the profile is registered against. */
+  origin: { cx: number; cy: number; r: number; rms: number; source: 'fit' };
 }
 
 /**
  * 3.1 — atmosphere rim at the default view.
  *
  * Stars OFF (a star on a ray is a spike no rim rule can satisfy) and the sun
- * pinned. Samples 16 rays from 10 px inside the limb to 40 px outside it.
+ * pinned. Samples 16 rays from 6 px inside the limb to 60 px outside it.
+ *
+ * **Origin is the FITTED limb, not `discRadiusPx()`.** Offset 0 in this profile is
+ * the per-angle point on the (cx, cy, R_fit) circle from `fitLimb`, so "the peak is
+ * at +0.4 px" means 0.4 px outside the planet's edge. The earlier version used
+ * `discRadiusPx()`, which happens to agree to 0.11 px — but it agrees by luck of
+ * the formula, and the whole point of A2 was to stop treating a hook value as
+ * ground truth. The brief requires the fit, so the fit is what this uses.
+ *
+ * The fit runs a 360-ray sub-pixel edge fit with the surface swapped to unlit white,
+ * which restores the scene before returning.
  */
 export async function measureRim(
   page: Page,
-  { rays = 16, inside = 10, outside = 40 }: { rays?: number; inside?: number; outside?: number } = {},
+  { rays = 16, inside = 6, outside = 60 }: { rays?: number; inside?: number; outside?: number } = {},
 ): Promise<{ result: RimResult; geometry: DiscGeometry }> {
   await settleAt(page, 0);
   await setLayers(page, { stars: false });
-  const geom = await disc(page);
+
+  const fit = await fitLimb(page);
+  if (!Number.isFinite(fit.r)) throw new Error('measureRim: limb fit produced no circle');
+  const origin = { cx: fit.cx, cy: fit.cy, r: fit.r, rms: fit.rms, source: 'fit' as const };
+  const geom: DiscGeometry = { cx: fit.cx, cy: fit.cy, r: fit.r };
+
+  // Re-establish the view the rim is measured on: fitLimb restores ALL layers, so
+  // stars must be switched off again for the actual capture.
+  await setLayers(page, { stars: false });
   const img = await capture(page);
 
   const shellScale = 1.1;
@@ -92,8 +114,13 @@ export async function measureRim(
     const cos = Math.cos(angle);
     const sin = Math.sin(angle);
     for (const o of offsets) {
-      const r = geom.r + o;
-      profile.push({ r: o, luma: lumaAt(img, geom.cx + cos * r, geom.cy + sin * r) });
+      const r = origin.r + o;
+      profile.push({
+        r: o,
+        // Bilinear, because the fitted origin is sub-pixel and every threshold here
+        // is a per-255 luma step measured on a 1 px grid.
+        luma: bilinearLuma(img, origin.cx + cos * r, origin.cy + sin * r),
+      });
     }
     perRay.push(profile);
   }
@@ -166,6 +193,7 @@ export async function measureRim(
     limbToHaloStep,
     rays,
     samplesPerRay: offsets.length,
+    origin,
   };
   await writeResult('rim', { geometry: geom, ...result });
   return { result, geometry: geom };

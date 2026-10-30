@@ -112,6 +112,16 @@ declare global {
       set(patch: Partial<LookLayerFlags>): LookLayerFlags;
       get(): LookLayerFlags;
       setAzimuth(deg: number): Promise<void>;
+      animate(on: boolean): void;
+      /**
+       * Swap the Earth's surface for flat unlit white (or restore it). Used only by
+       * `fitLimb`, whose 360-ray circle fit needs an edge that is the same at every
+       * angle — a lit sphere's luma edge is crisp on the day side and soft on the
+       * night side, and averaging the two is not ground truth.
+       */
+      surfaceWhite(on: boolean): boolean;
+      /** True once the Earth's surface mesh exists (the swap precondition). */
+      surfaceReady(): boolean;
     };
   }
 }

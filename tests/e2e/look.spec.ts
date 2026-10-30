@@ -69,9 +69,12 @@ test.describe('globe look', () => {
 
     // Inputs.
     expect(result.rays).toBe(16);
-    expect(result.samplesPerRay).toBe(51); // -10..+40 inclusive
+    expect(result.samplesPerRay).toBe(67); // -6..+60 inclusive
     expect(Number.isFinite(result.peak)).toBe(true);
     expect(Number.isFinite(result.shellMinusBackground)).toBe(true);
+    // The origin must be a real fit, not a hook value standing in for one.
+    expect(result.origin.source).toBe('fit');
+    expect(result.origin.rms, 'the limb fit was not a circle').toBeLessThanOrEqual(0.4);
 
     // Print the raw profile table.
     const table = result.meanByOffset

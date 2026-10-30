@@ -416,6 +416,74 @@ export function GlobeScene({
               },
               /** Release the scene clock and the spin (restores the live look). */
               animate: (on: boolean) => setLookFlags({ animate: on }),
+              /**
+               * Swap the Earth's surface material for flat unlit white, or restore it.
+               *
+               * Exists for `fitLimb`: a lit sphere has a terminator and a specular
+               * gradient, so its luma edge is only crisp on the day side and a
+               * 360-ray circle fit would measure two different edges. An unlit white
+               * material is uniformly bright right up to the geometric silhouette at
+               * every angle, which is what makes the fitted radius ground truth.
+               *
+               * Idempotent and restorable: the original material is held in
+               * `userData` so `false` always puts it back. Lives here (rather than in
+               * the spec) because `THREE` is already imported in this module and the
+               * spec has no bundle access to a second copy of the library.
+               */
+              surfaceWhite: (on: boolean) => {
+                /*
+                 * Find the surface by EITHER its physical material or its saved
+                 * original. Matching only the material type looks right and breaks
+                 * twice: after a swap the mesh is MeshBasicMaterial, so a second
+                 * `true` cannot re-find it, and `false` cannot restore it either —
+                 * the restore search has nothing to match and the scene stays white
+                 * for every later spec. The saved material IS the identity.
+                 */
+                let mesh: THREE.Mesh | null = null;
+                scene.traverse((o) => {
+                  if (mesh) return;
+                  const m = o as THREE.Mesh;
+                  if (!m.isMesh) return;
+                  const type = (m.material as THREE.Material)?.type;
+                  if (type === 'MeshPhysicalMaterial' || m.userData.__savedMaterial) mesh = m;
+                });
+                if (!mesh) return false;
+                const target = mesh as THREE.Mesh;
+                if (on) {
+                  // Idempotent: a caller may poll this, and creating a fresh material
+                  // per call would leak one GPU material per poll.
+                  if (target.userData.__savedMaterial) return true;
+                  target.userData.__savedMaterial = target.material;
+                  const flat = new THREE.MeshBasicMaterial({ color: 0xffffff, fog: false });
+                  (flat as THREE.Material).toneMapped = false;
+                  target.material = flat;
+                } else if (target.userData.__savedMaterial) {
+                  target.material = target.userData.__savedMaterial as THREE.Material;
+                  delete target.userData.__savedMaterial;
+                }
+                return true;
+              },
+              /**
+               * True once the Earth's surface mesh exists.
+               *
+               * `__look` is installed in `onCreated`, before the textured <Globe>
+               * finishes suspending, so at that moment `scene.traverse` finds zero
+               * meshes. Specs that must swap the surface poll THIS (an observation)
+               * rather than re-calling `surfaceWhite(true)` — that call is not a
+               * predicate: once it has swapped, there is no MeshPhysicalMaterial
+               * left to find and it correctly reports false forever after.
+               */
+              surfaceReady: () => {
+                let found = false;
+                scene.traverse((o) => {
+                  const m = o as THREE.Mesh;
+                  if (!found && m.isMesh) {
+                    const t = (m.material as THREE.Material)?.type;
+                    found = t === 'MeshPhysicalMaterial' || !!m.userData.__savedMaterial;
+                  }
+                });
+                return found;
+              },
             },
           });
         }
