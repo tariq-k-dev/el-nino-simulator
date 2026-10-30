@@ -709,36 +709,32 @@ describe('monotonicStartOffset', () => {
 describe('PROBE_WINDOWS / resolveWindow / windowValidity', () => {
   const geom = { cx: 640, cy: 400, r: 325.66 };
 
-  it('defines eight windows and no absolute (300,392) entry', () => {
-    expect(PROBE_WINDOWS).toHaveLength(8);
-    expect(PROBE_WINDOWS.map((w) => w.id)).toEqual(['W1', 'W2', 'W3', 'W4', 'W5', 'W6', 'W7', 'W8']);
-    // The deleted window was at 1.045 R. Nothing may sit outside 0.95 R again.
+  it('defines W1 only, and no absolute (300,392) entry', () => {
+    // W2-W8 were retired in 2A4: on the real render they flagged scene content
+    // (W5 disc centre 1.240, W8 upper centre 1.191) rather than regressions.
+    expect(PROBE_WINDOWS).toHaveLength(1);
+    expect(PROBE_WINDOWS[0].id).toBe('W1');
+    expect(PROBE_WINDOWS[0].rFrac).toBe(0.91);
+    expect(PROBE_WINDOWS[0].angleDeg).toBe(180);
+    // Still nowhere near the deleted window's 1.045 R.
     for (const w of PROBE_WINDOWS) expect(w.rFrac).toBeLessThanOrEqual(0.94);
   });
 
   it('puts W1 (0.91, 180deg) on the (344,392) regression point', () => {
     const w = resolveWindow(PROBE_WINDOWS[0], geom);
     expect(w.x).toBeCloseTo(640 - 0.91 * 325.66, 6); // 343.6
+    // W1 is horizontal, so its y IS the centre's y. The (344,392) figure came from a
+    // frame whose disc centre sat at y=392; the default viewport's centre is y=400, and
+    // following the disc is exactly why the window is polar.
     expect(w.y).toBeCloseTo(400, 6);
-    // Horizontal window: y is the centre's y. The (344,392) figure came from a frame
-    // whose disc centre was at y=392; the default viewport's centre is y=400, so the
-    // regression point follows the disc, which is the whole reason it is polar.
     expect(Math.round(w.x)).toBe(344);
   });
 
-  it('measures angles CLOCKWISE on screen: 90deg is below centre', () => {
-    const w7 = resolveWindow(PROBE_WINDOWS.find((w) => w.id === 'W7')!, geom);
-    expect(w7.x).toBeCloseTo(geom.cx, 6);
-    expect(w7.y).toBeGreaterThan(geom.cy); // screen y grows down
-    const w8 = resolveWindow(PROBE_WINDOWS.find((w) => w.id === 'W8')!, geom);
-    expect(w8.y).toBeLessThan(geom.cy);
-  });
-
-  it('accepts every shipped window on the default disc', () => {
-    for (const w of PROBE_WINDOWS) {
-      const v = windowValidity(resolveWindow(w, geom), geom);
-      expect(v.ok, `${w.id}: ${v.reason}`).toBe(true);
-    }
+  it('accepts W1 on the default disc with full coverage', () => {
+    const v = windowValidity(resolveWindow(PROBE_WINDOWS[0], geom), geom);
+    expect(v.ok, v.reason).toBe(true);
+    expect(v.insideFraction).toBe(1);
+    expect(Number.isFinite(v.rPx)).toBe(true);
   });
 
   it('rejects a window at 1.045 R, which is what (300,392) was', () => {
@@ -770,10 +766,102 @@ describe('PROBE_WINDOWS / resolveWindow / windowValidity', () => {
     expect(v.ok).toBe(false);
     expect(v.reason).toContain('needs <= R - 28px');
   });
+});
 
-  it('reports the inside fraction as a real number, not 0 on an empty window', () => {
-    const v = windowValidity(resolveWindow(PROBE_WINDOWS[4], geom), geom); // W5 at the centre
-    expect(v.insideFraction).toBe(1);
-    expect(Number.isFinite(v.rPx)).toBe(true);
+describe('shellSilhouetteOffsetPx', () => {
+  it('matches the measured cloud-shell offset at the default camera', () => {
+    /*
+     * Measured on the real render in B2: the cloud shell (1.004 R) sits at +1.028 px
+     * past R_fit. This helper works in the TANGENT-limb frame, where R_fit is +0.402 px
+     * outside the tangent circle (the fit's centre sits half a pixel off a pixel grid,
+     * and the sub-pixel edge lands on the boundary), so 1.430 - 0.402 = 1.028.
+     */
+    const focal = 1042.036;
+    expect(shellSilhouetteOffsetPx(1.004, 1, 3.3533565, focal)).toBeCloseTo(1.430, 2);
+    expect(shellSilhouetteOffsetPx(1.1, 1, 3.3533565, focal)).toBeCloseTo(36.283, 2);
+    expect(
+      shellSilhouetteOffsetPx(1.004, 1, 3.3533565, focal) -
+        shellSilhouetteOffsetPx(1, 1, 3.3533565, focal),
+    ).toBeCloseTo(1.430, 2); // the planet's own offset cancels to 0
+  });
+
+  it('puts the atmosphere shell beyond every opaque layer', () => {
+    const focal = 1042.036;
+    // Not treated as opaque: 36 px would skip the whole halo.
+    expect(shellSilhouetteOffsetPx(1.1, 1, 3.3533565, focal)).toBeGreaterThan(30);
+  });
+
+  it('is 0 for a shell at the planet radius and NaN inside it', () => {
+    expect(shellSilhouetteOffsetPx(1, 1, 3.35, 1042)).toBeCloseTo(0, 9);
+    expect(shellSilhouetteOffsetPx(1.002, 1, 3.35, 1042)).toBeGreaterThan(0);
   });
 });
+
+describe('checkMonotonicOutward', () => {
+  /** A descending halo, optionally with a rise at `riseAt`. */
+  const profile = (deg: number, riseAt: number | null, rise = 8) => {
+    const points = [];
+    for (let o = -6; o <= 20; o += 1) {
+      let v = 100 - (o + 6) * 2; // falls 2/255 per px
+      if (riseAt !== null && o >= riseAt) v += rise;
+      points.push({ offset: o, luma: v });
+    }
+    return { deg, points };
+  };
+
+  it('passes a strictly descending profile', () => {
+    const r = checkMonotonicOutward([profile(0, null), profile(90, null)], 0);
+    expect(r.worstIncrease).toBeCloseTo(-2, 6);
+  });
+
+  it('passes a rise at +1 px when the gate starts past the shell band', () => {
+    // Rule (b): a rise inside the antialiased silhouette band is approved.
+    // ceil(1.430 + 1) = 3: past the cloud shell's own silhouette.
+    const start = monotonicStartOffset(0, 1.430);
+    expect(start).toBe(3);
+    const r = checkMonotonicOutward([profile(247.5, 1)], start);
+    // The rise is at +1, which is BEFORE the start, so it is not measured.
+    expect(r.worstIncrease).toBeLessThanOrEqual(1);
+  });
+
+  it('fails a rise at +10 px even with the shifted start', () => {
+    const start = monotonicStartOffset(0, 1.430);
+    const r = checkMonotonicOutward([profile(247.5, 10)], start);
+    // An 8/255 step up net of the 2/255 baseline fall.
+    expect(r.worstIncrease).toBeCloseTo(6, 6);
+    expect(r.at).toEqual({ deg: 247.5, fromOffset: 9, toOffset: 10 });
+  });
+
+  it('fails the same rise when the gate starts at 0', () => {
+    const r = checkMonotonicOutward([profile(247.5, 1)], 0);
+    expect(r.worstIncrease).toBeCloseTo(6, 6);
+  });
+
+  it('allows exactly the tolerance but not more', () => {
+    const base = profile(0, null);
+    const jittered = base.points.map((p) => ({ ...p, luma: p.luma + (p.offset === 5 ? 1 : 0) }));
+    // A single +1 step: the step INTO it is +1 and the step OUT is -3, so worst = 1.
+    const r = checkMonotonicOutward([{ deg: 0, points: jittered }], 0);
+    // Baseline falls 2/px, so a +1 bump nets -1: quantisation noise cannot trip 1/255.
+    expect(r.worstIncrease).toBeCloseTo(-1, 6);
+    expect(r.worstIncrease).toBeLessThanOrEqual(1);
+  });
+
+  it('reports a degenerate profile as no rise rather than NaN', () => {
+    const r = checkMonotonicOutward([], 0);
+    expect(r.worstIncrease).toBe(-Infinity);
+    expect(r.at).toBeNull();
+  });
+});
+
+describe('monotonicStartOffset', () => {
+  it('takes the peak when the peak is further out than the shells', () => {
+    expect(monotonicStartOffset(6, 1.028)).toBe(6);
+  });
+
+  it('takes outermost silhouette + 1 when that is further out than the peak', () => {
+    expect(monotonicStartOffset(0, 1.430)).toBe(3);
+    expect(monotonicStartOffset(1, 3.7)).toBe(5);
+  });
+});
+

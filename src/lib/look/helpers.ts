@@ -659,29 +659,26 @@ export interface PolarWindow {
 }
 
 /**
- * The A3 probe windows, in disc-relative polar coordinates.
+ * The probe window set, in disc-relative polar coordinates — **W1 only**.
  *
  * Polar rather than absolute pixels because the disc moves: at 1024x768 R_fit is 312.6
  * px instead of 325.7, so an absolute coordinate that sits at 0.91 R in one viewport
- * lands somewhere else entirely in another. The old list was absolute and included
- * `(300, 392)`, which is at 1.045 R — outside the disc, sampling pure atmosphere halo,
- * and it is what made 3.3 report a 3.7x "local peak".
+ * lands somewhere else entirely in another. The original list was absolute and included
+ * `(300, 392)`, which is at 1.045 R — outside the disc, in pure atmosphere halo — and
+ * it is what made 3.3 report a 3.7x "local peak".
  *
  * W1 is the `(344, 392)` regression window: it is where the removed fill light drew a
- * blue circle, so it must stay in the set or the regression it guards is untested.
+ * blue circle. It is the ONLY window that guards a known regression, so it is the only
+ * one that stayed. W2-W8 were retired in 2A4: measured on the real render they were not
+ * regressions but scene content (W5 the disc centre at 1.240, W8 the bright upper
+ * centre at 1.191, W6 excused by the specular mask), and a window that flags the scene
+ * doing its job is a false positive generator, not a guard.
  *
- * Clockwise from +x on screen: angle 90 is DOWN, 270 is UP. A3's W7/W8 are "90"/"270"
- * and follow that convention.
+ * Angle convention: degrees measured from +x, CLOCKWISE on screen (x = cy + sin), so
+ * 90 is DOWN and 270 is UP. W1 at 180 is horizontal, therefore y == cy.
  */
 export const PROBE_WINDOWS: readonly PolarWindow[] = [
   { id: 'W1', rFrac: 0.91, angleDeg: 180, size: 40 },
-  { id: 'W2', rFrac: 0.8, angleDeg: 135, size: 40 },
-  { id: 'W3', rFrac: 0.8, angleDeg: 225, size: 40 },
-  { id: 'W4', rFrac: 0.5, angleDeg: 180, size: 40 },
-  { id: 'W5', rFrac: 0.0, angleDeg: 0, size: 40 },
-  { id: 'W6', rFrac: 0.8, angleDeg: 0, size: 40 },
-  { id: 'W7', rFrac: 0.8, angleDeg: 90, size: 40 },
-  { id: 'W8', rFrac: 0.8, angleDeg: 270, size: 40 },
 ] as const;
 
 export interface ResolvedWindow extends PolarWindow {

@@ -181,7 +181,8 @@ test.describe('globe look', () => {
     const { result } = await measureBlueCircle(page);
 
     // Inputs: eight polar windows, all valid, none NaN.
-    expect(result.windows.length, 'no probe windows were measured').toBe(8);
+    // W1 only: W2-W8 were retired in 2A4 as false-positive generators.
+    expect(result.windows.length, 'no probe windows were measured').toBe(1);
     expect(result.glintMask.pixels, 'the specular mask is empty, so nothing is excluded')
       .toBeGreaterThan(0);
 
@@ -226,7 +227,7 @@ test.describe('globe look', () => {
     );
 
     // Coverage statement: W1..W8 only, no whole-ocean sweep.
-    console.log('[blue-circle] coverage: W1..W8 only (no ocean-mask sweep)');
+    console.log('[blue-circle] coverage: W1 only (no ocean-mask sweep)');
   });
 
   // ------------------------------------------------------- 3.4 terminator -----
