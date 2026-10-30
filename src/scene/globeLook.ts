@@ -104,18 +104,31 @@ export const GLOBE_LOOK = {
     roughness: 0.9,
     metalness: 0,
     /**
-     * The lever that actually removes the blowout.
+     * Dielectric specular intensity — **0**. The surface is matte by design.
      *
-     * Roughness alone could only choose between two bad extremes, measured at a
-     * fixed camera: a floor of 0 gave one ~14 px blown disc (0.037% clipped) and
-     * a floor of 0.34 spread the lobe into a ~165 px patch (0.062% clipped).
-     * Neither is a look, because the material's GGX sun highlight under a 3.6
-     * intensity key light is simply over 1.0 before tone mapping. Scaling the
-     * dielectric specular down is what a specular *intensity* is for, and it
-     * leaves diffuse albedo, the terminator and the texture colours untouched —
-     * the surface stays matte with only the overlay's glint on top.
+     * The ocean glint the approved look actually shows comes from the additive
+     * overlay shader (`GLOBE_LOOK.specular`), NOT from three's lighting model. This
+     * value is the material's own GGX specular, and after the overlay existed it
+     * had no remaining job except to clip:
+     *
+     *  - STEP 1 of SPECLOCK ablated it: `specularIntensity: 0` takes the clipped
+     *    pixel count at azimuths 150/210/240 from 49/24/38 to **0/0/0**, while
+     *    bloom, clouds, atmosphere, the glint overlay, pins, rings and stars each
+     *    move it by at most a few and never to zero. Named cause: **grazing-angle
+     *    sun glint on the ocean** — the offenders sit at r/R 0.73–1.00, worst at
+     *    the limb (az 240, r/R 0.998), which is exactly where a GGX lobe tightens
+     *    into a point.
+     *  - Cost at the default view is inside both budgets: mean luminance
+     *    **-1.23%** (budget 2%) and night/day ratio **+0.0018** (budget 0.02). The
+     *    day side loses a faint sheen and nothing else; the terminator is
+     *    untouched.
+     *
+     * An earlier value of 0.18 was itself a reduction from 1.0, taken when the
+     * material was the suspected glare source. The measurement since showed the
+     * overlay shader is the only specular the look needs, so the honest setting is
+     * zero rather than "small enough to mostly not clip".
      */
-    specularIntensity: 0.18,
+    specularIntensity: 0,
     /** Clearcoat on top of an already-mirror-ish lobe is a second blowout path. */
     clearcoat: 0,
     clearcoatRoughness: 0.5,
