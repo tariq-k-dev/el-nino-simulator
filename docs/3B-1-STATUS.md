@@ -1,4 +1,4 @@
-# 3B-1a status — globe zoom, specular glare, framing
+# 3B-1a status — globe zoom, lighting/atmosphere, framing
 
 Honest state at the point this work stopped. No half-applied step: every commit in
 this document is green under `pnpm tsc -b && pnpm lint && pnpm test && pnpm build`.
@@ -94,52 +94,102 @@ Two test-side traps worth carrying forward:
 
 ---
 
-## STEP 2 — SPECULAR GLARE: **NOT STARTED** (diagnosed, not fixed)
+## STEP 2 — LIGHTING + ATMOSPHERE: **FIXED, MEASURED** (specs + screenshots outstanding)
 
-Diagnosis is partially complete and one hypothesis has been **eliminated**.
+Commits:
+`879e490 feat(globe): remove pin pointLight, rim shell via impact parameter, tame specular/bloom`
+`f4f0fe8 docs(3b-1): STEP 2 facts -- light inventory, limb profile, pin RGB, bloom halo`
 
-### What the blowout is not
+Full measurement record: **`docs/globe-look/STEP2-FACTS.md`**.
 
-Screenshot `docs/globe-look/shot-b-upperleft.png` (fixed camera at `[2.2, 1.6, 2.2]`,
-DOM chrome hidden) shows two distinct bright areas:
+### 2a — pin lights
 
-1. A **compact** specular highlight mid-Atlantic — this is the ocean glint, and it
-   reads correctly as a highlight, not a floodlight.
-2. A **large, broad** near-white/amber flood over the western US, coincident with
-   the **California hotspot marker**.
+`<pointLight>` removed from `Hotspot.tsx`. **Light count 8 -> 4** (1 ambient,
+3 directional; all world-fixed, none rig- or camera-attached). The pin core was
+`meshBasicMaterial`, which ignores `emissive` — switched to `MeshStandardMaterial`
+with `toneMapped={false}`, amber emissive at **1.75** idle / **1.95** active.
+The `rgba()` -> `THREE.Color` console warning is gone: the material takes a
+`THREE.Color`; CSS alpha only reaches the DOM.
 
-The upper-left blowout is therefore **#2**, and it is not the specular term.
-`Hotspot.tsx` gives every pin a `pointLight` (`intensity 0.9` when active, `0.35`
-otherwise, `distance 0.5`, `decay 2`) sitting ON the surface at radius 1.012. At
-0.5 units of range on a globe of radius 1, that light covers a large solid angle and
-lights the cloud and surface shells from very close range — which is exactly the
-"broad floodlight over the active region" visible in the shot.
+The housing was also wrong and is now fixed: it was a concentric *sphere* of
+radius 0.016 around a 0.011 core, i.e. it **enclosed** the core and the pin
+rendered as a black blob (measured ~10/255). It is now a dark **disc** behind the
+core. Measured core: mean RGB `(255,255,158-172)`, luminance **248-249/255**,
+channel spread **83-97**, **0% pure-white pixels**.
 
-Post-processing **bloom** was also checked as a candidate and is not implicated in
-the flood: `Bloom` has `luminanceThreshold={0.62}`, which passes an already-bright
-surface but does not create the underlying brightness.
+### 2b — atmosphere
 
-### What remains
+Exponent tuning alone could not work, and the reason is structural: on a BackSide
+shell the fresnel `1 - |dot(n,v)|` runs from ~0.77 at the planet limb UP to 1.0 at
+the shell silhouette, so alpha peaked exactly at the geometry edge.
 
-- Confirm quantitatively by toggling `isPointLight.intensity` to 0 at the fixed
-  camera (the harness existed but measured through `project()`, which was returning
-  `behind: true` for the globe centre — fixed in `f878577`, so the next run will
-  produce real numbers instead of a 1-pixel sample).
-- Introduce the single exported, commented `GLOBE_LOOK` constants object with the
-  brief's starting values (`specularStrength ~0.12`, shininess `~48`, ocean-masked
-  specular, bloom `luminanceThreshold >= 0.95`, surface colour clamped `<= 0.92`
-  pre-tonemap).
-- Move the hotspot light out of the surface (or drop it in favour of the existing
-  emissive ring), which the diagnosis says is the actual fix.
-- Implement the acceptance test: `pngjs` is already installed, and the probe now
-  supports it — decoded PNGs, `R,G,B >= 250` inside `__globe`'s disc `<= 0.05%`,
-  night-side mean luminance `< 25%` of day-side, three fixed camera angles.
-- Save before/after pairs to `docs/globe-look/` (JPEG, `<= 300 KB`, max 6 files).
+Replaced the driver with the **impact parameter** `b`:
+`x = (b-R)/(S-R)`, `fade = 1-x`, so alpha is **exactly 0 at the shell silhouette**.
+Exponents **2.4 -> 1.6** and **5.5 -> 3.8** (-33% / -31%); shell scale
+**1.028 -> 1.10**.
 
-Current placeholder shots in `docs/globe-look/` (`shot-a-default.png`,
-`shot-b-upperleft.png`, `shot-c-side.png`) are **before** images only, captured for
-the diagnosis. They are PNG and over 300 KB, so they must be replaced by the
-JPEG before/after pairs before this step is called done.
+| Measure | Before | After | Budget |
+|---|---:|---:|---:|
+| Worst adjacent upward step, beyond the limb, 16 rays | 160.6/255 | **0.00/255** | <= 6/255 |
+| Value at shell silhouette vs background | 12.6 | **0.00** (3.3 vs 3.3) | <= 2/255 |
+| Peak halo luminance / offset | — | **99.0 @ +0.44 px** from the limb | — |
+| Haze guard (interior vs atmosphere-off) | — | **0.32-0.89%** | <= 3% |
+
+The `0.00` is a genuine floor, not a bug: measured over `r >= ceil(R)+1` the
+profile is *strictly* decreasing on all 16 rays, so there is no upward movement
+at all. An earlier pass reported 160.6 because it sampled from `R-4` — inside the
+disc, over the range where the profile legitimately rises into the limb peak.
+Sampling a rising function over the range where it rises can never report a small
+step. (With stars ON, exactly two rays showed a single-pixel 3.2 -> 59.7 spike: a
+star sprite sitting on the ray, removed by the `stars` flag.)
+
+### 2c — residual glare
+
+Contributor found by **ablation**, one toggle at a time at a fixed camera:
+
+| Toggle | Clipped share |
+|---|---:|
+| all on | 0.1008% |
+| pins off | 0.1008% (no contribution) |
+| specular off | 0.1002% (~2 px) |
+| clouds off | 0.0989% |
+| atmosphere off | 0.1005% |
+| **bloom off** | **0.0372%** (dominant) |
+| surface only | 0.0372% |
+
+Two causes, both fixed inside the single exported `GLOBE_LOOK` object:
+
+1. **Bloom** — `luminanceThreshold` **0.62 -> 0.95**.
+2. **`meshPhysicalMaterial`** — `earth_specular.jpg` is white on water and
+   `roughness` MULTIPLIES the map, so inverting the mask and multiplying by 0.72
+   gave water roughness **0** (a literal mirror). Added `roughnessFloor` 0.55
+   compressing the inverted mask into `[floor,1]`, plus `specularIntensity` 0.18.
+   Roughness tuning alone only traded a small blown disc (0.037%) for a larger one
+   (0.062%); specular intensity is the lever that removes it.
+
+**Result: 0.0000% clipped at all three camera angles**, including the upper-left
+lit area. Night/day **0.14** (budget < 0.25).
+
+### Bloom halo (asked in CLOSE-A)
+
+A pin's total footprint — geometry + bloom — ends at **~22 px** and is at noise by
+**24 px**: inside the 30-60 px ring-luminance check radius, so the check is sound.
+Two earlier passes were contaminated by the pulsing ring (control: two frames with
+pins off measured up to 66 units of animation noise). Measured in a fully static
+scene with a **5.96** noise floor. Operational consequence: **the ring-luminance
+check must start at >= 24 px, not 12 px**, or the pin's own skirt leaks into it.
+
+### Still outstanding for STEP 2
+
+- **Specs not written.** `tests/e2e/globe.spec.ts` still holds only the 5 STEP 1
+  zoom cases. The acceptance logic exists and runs, but lives in
+  `tests/e2e/globe-{measure,ablate,facts,probe2,halo,control}.mjs` and
+  `globePixels.ts` — evidence, not assertions.
+- **Pin cast-light ring check noisy**: 0.12-8.02% against a 3% bar on two pins,
+  partly antialiasing at the core edge (core edge is at 8 px) inside the sample ring.
+- **Screenshots**: `docs/globe-look/` still holds the three oversized pre-Step-2
+  PNGs (`shot-a/b/c`); only `step2-default.png` (238 KB) exists so far. Before/after
+  pairs and the required night-side-pin + limb close-ups are not produced.
 
 ---
 
@@ -165,7 +215,7 @@ mutation-window re-measure, `<FrameOffset>` damping with `setViewOffset`, the
 | `pnpm lint` | clean (`--max-warnings 0`) |
 | `pnpm test` | **494 passed** (19 files) |
 | `pnpm build` | 17 assets, **0 test hooks** |
-| `pnpm e2e:globe` | **5/5**, 1.5 min |
+| `pnpm e2e:globe` | **not re-run this pass** (nothing in the zoom path changed) |
 | full `pnpm e2e` | **not run since STEP 1** — the last full run was 21/21 before this part |
 
 `cross-env` and `pngjs` (+ `@types/pngjs`) are now devDependencies, and
