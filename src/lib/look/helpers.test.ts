@@ -42,6 +42,7 @@ import {
   windowValidity,
   sunScreenAxis,
   transitionWidth,
+  terminatorFalloff,
 } from '@/lib/look/helpers';
 
 /** Build a bitmap from a per-pixel colour function. */
@@ -865,3 +866,83 @@ describe('monotonicStartOffset', () => {
   });
 });
 
+
+describe('terminatorFalloff', () => {
+  /** Day plateau, a linear ramp, then a night side with optional cloud bumps. */
+  const build = (opts: { nightClouds?: number[]; dayDips?: number[] } = {}) => {
+    const p: Array<{ t: number; luma: number }> = [];
+    for (let t = -150; t <= 150; t += 1) {
+      let v: number;
+      if (t < -30) v = 120; // day plateau
+      else if (t > 30) v = 6; // night plateau
+      else v = 120 - ((t + 30) / 60) * 114; // linear ramp
+      p.push({ t, luma: v });
+    }
+    for (const at of opts.nightClouds ?? []) {
+      for (let k = at; k <= at + 12; k += 1) {
+        const row = p.find((r) => r.t === k);
+        if (row) row.luma = 95; // a bright cloud on the night side
+      }
+    }
+    for (const at of opts.dayDips ?? []) {
+      for (let k = at; k <= at + 10; k += 1) {
+        const row = p.find((r) => r.t === k);
+        if (row) row.luma = 40; // a dark ocean patch on the day side
+      }
+    }
+    return p;
+  };
+
+  it('finds the ramp on a clean profile', () => {
+    const f = terminatorFalloff(build());
+    expect(f.startLuma).toBeCloseTo(120, 0);
+    expect(f.endLuma).toBeCloseTo(6, 0);
+    expect(f.length).toBeGreaterThan(50);
+    expect(f.length).toBeLessThan(70);
+  });
+
+  it('stops at a bright cloud mass on the NIGHT side', () => {
+    /*
+     * Without this the 90->10% scan takes the cloud's own crossing and reports a
+     * "terminator" spanning most of the disc — measured on the real render as 162-188%
+     * of R_fit, i.e. wider than the planet.
+     */
+    const f = terminatorFalloff(build({ nightClouds: [60, 80, 100] }));
+    expect(f.endLuma).toBeLessThan(20);
+    expect(f.length).toBeLessThan(80);
+  });
+
+  it('ignores a dark ocean patch on the DAY side', () => {
+    // The dip is on the day plateau, before the ramp: the ramp start must not be pulled
+    // onto it, or the "day plateau" reference becomes the dip.
+    const f = terminatorFalloff(build({ dayDips: [-120, -100] }));
+    expect(f.startLuma).toBeGreaterThan(80);
+    expect(f.length).toBeGreaterThan(50);
+  });
+
+  it('tolerates single-pixel cloud bumps inside the ramp', () => {
+    const p = build();
+    const mid = p.find((r) => r.t === 0)!;
+    mid.luma += 0.5; // within the 0.75 tolerance
+    const f = terminatorFalloff(p);
+    expect(f.length).toBeGreaterThan(50);
+  });
+
+  it('returns a degenerate window rather than throwing on a tiny profile', () => {
+    const f = terminatorFalloff([{ t: 0, luma: 1 }]);
+    expect(f.length).toBe(1);
+    expect(Number.isNaN(f.startLuma)).toBe(true);
+  });
+
+  it('measures a real width inside the falloff, not across the whole disc', () => {
+    // The end-to-end point: 90->10% inside the trimmed ramp is ~48 px, not ~300.
+    const p = build({ nightClouds: [60] });
+    const f = terminatorFalloff(p);
+    const window = p.slice(f.start, f.end + 1).map((r) => ({ r: r.t, luma: r.luma }));
+    const hi = Math.max(...window.map((w) => w.luma));
+    const lo = Math.min(...window.map((w) => w.luma));
+    const w = transitionWidth(window, lo + (hi - lo) * 0.9, lo + (hi - lo) * 0.1)!;
+    expect(w.width).toBeGreaterThan(30);
+    expect(w.width).toBeLessThan(70);
+  });
+});

@@ -33,6 +33,7 @@ import {
   raySamples,
   sunScreenAxis,
   transitionWidth,
+  terminatorFalloff,
   focalPxFromFov,
   type Blob,
   type PolarWindow,
@@ -492,6 +493,8 @@ export interface TerminatorResult {
   /** Radius the profile is registered against. */
   rFit: number;
   rms: number;
+  /** The locally monotonic falloff the width and step were measured inside. */
+  falloff: { fromT: number; toT: number; samples: number; fromLuma: number; toLuma: number };
 }
 
 /**
@@ -587,15 +590,21 @@ export async function measureTerminator(
     return { t: row.t, luma: slice.reduce((s, p) => s + p.luma, 0) / slice.length };
   });
 
-  const hi = Math.max(...smoothed.map((p) => p.luma));
-  const lo = Math.min(...smoothed.map((p) => p.luma));
+  /*
+   * Width and step are measured ONLY inside the terminator's own locally monotonic
+   * falloff (see `terminatorFalloff`). Scanning the whole disc is what produced
+   * "widths" of 162-188% of R_fit — wider than the planet.
+   */
+  const falloff = terminatorFalloff(smoothed.map((p2) => ({ t: p2.t, luma: p2.luma })));
+  const windowed = smoothed
+    .slice(falloff.start, falloff.end + 1)
+    .map((p2) => ({ r: p2.t, luma: p2.luma }));
+
+  const hi = Math.max(...windowed.map((p) => p.luma));
+  const lo = Math.min(...windowed.map((p) => p.luma));
   const highLevel = lo + (hi - lo) * 0.9;
   const lowLevel = lo + (hi - lo) * 0.1;
-  const w = transitionWidth(
-    smoothed.map((p2) => ({ r: p2.t, luma: p2.luma })),
-    highLevel,
-    lowLevel,
-  );
+  const w = transitionWidth(windowed, highLevel, lowLevel);
 
   /*
    * Max adjacent 1 px step ACROSS the terminator: between the two crossings found by
@@ -606,8 +615,8 @@ export async function measureTerminator(
   if (w) {
     const i0 = Math.min(w.iHigh, w.iLow);
     const i1 = Math.max(w.iHigh, w.iLow);
-    for (let i = Math.max(1, i0); i <= Math.min(smoothed.length - 1, i1); i += 1) {
-      const step = Math.abs(smoothed[i].luma - smoothed[i - 1].luma);
+    for (let i = Math.max(1, i0); i <= Math.min(windowed.length - 1, i1); i += 1) {
+      const step = Math.abs(windowed[i].luma - windowed[i - 1].luma);
       if (step > crossTerminatorStep) crossTerminatorStep = step;
     }
   }
@@ -625,6 +634,13 @@ export async function measureTerminator(
     crossTerminatorStep: +crossTerminatorStep.toFixed(2),
     rFit: +geom.r.toFixed(3),
     rms: +fit.rms.toFixed(3),
+    falloff: {
+      fromT: smoothed[falloff.start].t,
+      toT: smoothed[falloff.end].t,
+      samples: falloff.length,
+      fromLuma: +falloff.startLuma.toFixed(2),
+      toLuma: +falloff.endLuma.toFixed(2),
+    },
   };
   await writeResult(`terminator-az${azimuthDeg}`, { geometry: geom, ...result });
   return { result, geometry: geom };

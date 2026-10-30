@@ -646,6 +646,90 @@ export function fitCircle(points: Array<[number, number]>): CircleFit | null {
   return { cx, cy, r, rms: Math.sqrt(sq / n), n };
 }
 
+/**
+ * Trim a profile to the terminator's own locally monotonic falloff.
+ *
+ * The bug this fixes: the 90%->10% scan ran over the WHOLE disc profile, so a bright
+ * cloud mass on the night side or a dark ocean patch on the day side introduced a
+ * secondary crossing and `transitionWidth` took the first one. On the real render that
+ * produced "widths" of 162.76%, 186.70% and 188.03% of R_fit at az 0/30/90 — a
+ * terminator wider than the planet, which is not a softness measurement.
+ *
+ * Method: take the LONGEST SUSTAINED DESCENT, measured by total luma dropped.
+ *
+ * The first two attempts here are worth recording because both failed on the same
+ * shape of problem — a flat region masquerading as structure:
+ *
+ *   1. "Follow the descent from the brightest sample" broke out on the DAY plateau,
+ *      which is exactly as flat as the night one, and returned a 1 px window.
+ *   2. Testing flatness only after a real drop fixed that but started the window at the
+ *      first sample of the day plateau, so the reported length spanned the entire lit
+ *      hemisphere (~181 px on a 300 px profile).
+ *
+ * Scoring runs by total drop solves both: the day plateau contributes no drop, a day-side
+ * dip is a short run with a shallow drop, a night-side cloud is a rise that terminates a
+ * run rather than being swept into it, and the terminator is by construction the run that
+ * falls furthest.
+ *
+ * A sample may exceed the run's running maximum by up to `noiseTolerance` (single-pixel
+ * cloud texture) but not more; anything brighter starts a new run.
+ */
+export function terminatorFalloff(
+  profile: Array<{ t: number; luma: number }>,
+  { noiseTolerance = 0.75, minDrop = 4 }: { noiseTolerance?: number; minDrop?: number } = {},
+): { start: number; end: number; length: number; startLuma: number; endLuma: number } {
+  const n = profile.length;
+  if (n < 3) {
+    return {
+      start: 0,
+      end: Math.max(0, n - 1),
+      length: n,
+      startLuma: NaN,
+      endLuma: NaN,
+    };
+  }
+
+  let best = { start: 0, end: 0, drop: -Infinity };
+  let i = 0;
+  while (i < n - 1) {
+    const runStart = i;
+    let runMax = profile[i].luma;
+    let minIdx = i;
+    let j = i + 1;
+    for (; j < n; j += 1) {
+      const v = profile[j].luma;
+      if (v > runMax + noiseTolerance) break; // a real rise ends the run
+      if (v > runMax) runMax = v;
+      if (v < profile[minIdx].luma) minIdx = j;
+    }
+    const drop = runMax - profile[minIdx].luma;
+    if (drop > best.drop) best = { start: runStart, end: minIdx, drop };
+    i = j > runStart ? j : runStart + 1;
+  }
+
+  if (best.drop < minDrop) {
+    // No descent worth the name: report the whole profile rather than pretending.
+    const lo = profile.reduce((a, b) => (b.luma < a.luma ? b : a));
+    return { start: 0, end: profile.indexOf(lo), length: n, startLuma: profile[0].luma, endLuma: lo.luma };
+  }
+
+  /*
+   * The run's start is where the descent actually begins, not where the run's scan began:
+   * skip forward over the flat prefix that shares the run's maximum.
+   */
+  const hi = profile[best.start].luma;
+  let from = best.start;
+  while (from < best.end && profile[from + 1].luma >= hi - noiseTolerance) from += 1;
+
+  return {
+    start: from,
+    end: best.end,
+    length: best.end - from + 1,
+    startLuma: profile[from].luma,
+    endLuma: profile[best.end].luma,
+  };
+}
+
 // ------------------------------------------------------------ probe windows (A3)
 
 export interface PolarWindow {
