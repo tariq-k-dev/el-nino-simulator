@@ -46,6 +46,17 @@ export interface GlobeProbe {
    * then discards — a pin on the far side still occludes nothing.
    */
   pins(): Array<{ id: string; x: number; y: number; behind: boolean; facing: boolean }>;
+  /**
+   * Each pin's CORE position in WORLD space.
+   *
+   * `pins()` deliberately reports screen space, which is what the pixel checks need.
+   * The negative suite needs the opposite: to place a light ON a pin it has to know where
+   * that pin is in the scene, and reconstructing a world point from a screen coordinate is
+   * not possible without inverting the projection (and it silently succeeds with a wrong
+   * answer, which cost a debugging round: a light placed from a guessed world point
+   * projected 580 px from the pin it was meant to sit on).
+   */
+  pinAnchors(): Array<{ id: string; world: [number, number, number] }>;
   /** Current layer switches. */
   lookFlags(): GlobeLookFlags;
   /** Flip layer switches. Returns the new set. */
@@ -231,6 +242,7 @@ export function createGlobeProbe(input: GlobeProbeInput): GlobeProbe {
   return {
     project,
     discRadiusPx,
+    pinAnchors: () => input.pins?.() ?? [],
     distance,
     insets: () => input.readInsets(),
     pins,

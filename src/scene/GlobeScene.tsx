@@ -233,6 +233,15 @@ export function GlobeScene({
         // from a production bundle.
         if (import.meta.env.VITE_E2E === '1' && new URLSearchParams(window.location.search).has('debug')) {
           Object.assign(window, { __scene: scene, __camera: camera, __gl: gl });
+          /*
+           * `__THREE` — the library itself, for the NEGATIVE suite only.
+           *
+           * Negative tests have to inject a real PointLight / DirectionalLight into the
+           * live scene to prove a check can go red. There is no other way to construct
+           * one from the page: the spec bundle does not import three, and handing it a
+           * second copy of the library would create objects the renderer cannot draw.
+           */
+          Object.assign(window, { __THREE: THREE });
 
           /*
            * `__globe` — the screen-space probe the globe specs assert against.

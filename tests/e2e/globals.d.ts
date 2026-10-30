@@ -23,6 +23,8 @@ export interface GlobeProbeHandle {
   distance(): number;
   insets(): { top: number; right: number; bottom: number; left: number };
   pins(): Array<{ id: string; x: number; y: number; behind: boolean; facing: boolean }>;
+  /** Pin core positions in WORLD space, for negative tests that inject at a pin. */
+  pinAnchors(): Array<{ id: string; world: [number, number, number] }>;
   setCamera(position: [number, number, number]): Promise<void>;
   setAzimuth(deg: number): Promise<void>;
   defaultOrbit(): { distance: number; elevationDeg: number };
@@ -100,6 +102,9 @@ declare global {
     /** E2E-only, ?debug only: three.js handles for visual QA. */
     __globe?: GlobeProbeHandle;
     __scene?: unknown;
+    /** E2E-only, ?debug only: the three.js namespace, so negative tests can construct
+     * a real light to inject into the live scene. */
+    __THREE?: typeof import('three');
     __camera?: unknown;
     __gl?: unknown;
     /** E2E-only: single-purpose ablation seam for the globe look flags. */

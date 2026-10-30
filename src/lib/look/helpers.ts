@@ -304,12 +304,28 @@ export function labelBlobs(points: Array<[number, number]>): Blob[] {
         }
       }
     }
+    /*
+     * Bounds by loop, NOT `Math.min(...xs)`.
+     *
+     * The spread form passes one argument per element, and an all-white 1280x800 capture
+     * produces ~1M points in ONE component — which blows the call stack with
+     * "Maximum call stack size exceeded". The negative suite found this by feeding 3.2 a
+     * synthetic all-white frame; no real render is that uniform, so it had never fired.
+     */
     const xs = comp.map((c) => c[0]);
     const ys = comp.map((c) => c[1]);
-    const x0 = Math.min(...xs);
-    const x1 = Math.max(...xs);
-    const y0 = Math.min(...ys);
-    const y1 = Math.max(...ys);
+    let x0 = Infinity;
+    let x1 = -Infinity;
+    let y0 = Infinity;
+    let y1 = -Infinity;
+    for (const v of xs) {
+      if (v < x0) x0 = v;
+      if (v > x1) x1 = v;
+    }
+    for (const v of ys) {
+      if (v < y0) y0 = v;
+      if (v > y1) y1 = v;
+    }
     blobs.push({
       size: comp.length,
       x0,

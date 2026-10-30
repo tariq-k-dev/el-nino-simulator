@@ -241,35 +241,63 @@ export async function measureRim(
 
 // ----------------------------------------------------------------- 3.2 glare
 
-export interface GlareResult {
+export interface GlareVerdict {
   clipped: number;
   largestBlob: number;
   blobCount: number;
   blobs: Array<{ size: number; w: number; h: number; cx: number; cy: number; rOverR: number }>;
+  /** False when the frame carries no disc content, so the numbers mean nothing. */
+  valid: boolean;
+  invalidReason: string | null;
+  pass: boolean;
 }
 
 /**
- * 3.2 — clipped pixels and the largest bright blob at one azimuth.
+ * 3.2's rule as a PURE function of a bitmap.
  *
- * stars/pins/rings OFF: the rule excludes pins, and a star or a ring is a bright
- * object that is not the surface.
+ * Split out from `measureGlare` so the negative suite can feed it a synthetic frame and
+ * assert on the verdict object — the brief requires asserting the result, not catching a
+ * throw.
+ *
+ * Input validity comes FIRST. An all-black frame has zero clipped pixels and zero blobs,
+ * so it would "pass" the glare rule perfectly while measuring nothing at all. This is the
+ * null-vs-null trap the whole spec family exists to avoid, and `N5` proves the guard
+ * works by feeding exactly that frame.
  */
-export async function measureGlare(
-  page: Page,
-  azimuthDeg: number,
-): Promise<{ result: GlareResult; geometry: DiscGeometry }> {
-  await settleAt(page, azimuthDeg);
-  await setLayers(page, { stars: false, pins: false, rings: false });
-  const geom = await disc(page);
-  const img = await capture(page);
-
+export function checkGlare(img: Bitmap, geom: DiscGeometry): GlareVerdict {
   const clipped = collectDiscPixels(img, geom, (r, g, b) => isClipped(r, g, b));
   const bright = collectDiscPixels(img, geom, (_r, _g, _b, l) => l >= 250);
   const blobs = labelBlobs(bright.points);
 
-  const result: GlareResult = {
+  // Is there a rendered disc at all? A frame that never drew has max luma 0, which makes
+  // "0 clipped pixels" meaningless rather than clean.
+  let sum = 0;
+  let max = 0;
+  let n = 0;
+  const y0 = Math.max(0, Math.floor(geom.cy - geom.r));
+  const y1 = Math.min(img.height - 1, Math.ceil(geom.cy + geom.r));
+  const x0 = Math.max(0, Math.floor(geom.cx - geom.r));
+  const x1 = Math.min(img.width - 1, Math.ceil(geom.cx + geom.r));
+  for (let y = y0; y <= y1; y += 1) {
+    for (let x = x0; x <= x1; x += 1) {
+      if (!insideDisc(geom, x, y)) continue;
+      const l = lumaAt(img, x, y);
+      sum += l;
+      if (l > max) max = l;
+      n += 1;
+    }
+  }
+  const mean = n ? sum / n : 0;
+
+  let invalidReason: string | null = null;
+  if (n === 0) invalidReason = 'no pixels inside the disc';
+  else if (max === 0) invalidReason = `disc is entirely black (mean ${mean.toFixed(2)}, max ${max})`;
+  else if (mean < 1) invalidReason = `disc mean luma ${mean.toFixed(4)} is indistinguishable from black`;
+
+  const largestBlob = blobs.length ? blobs[0].size : 0;
+  return {
     clipped: clipped.points.length,
-    largestBlob: blobs.length ? blobs[0].size : 0,
+    largestBlob,
     blobCount: blobs.length,
     blobs: blobs.slice(0, 8).map((b: Blob) => ({
       size: b.size,
@@ -279,10 +307,29 @@ export async function measureGlare(
       cy: Math.round(b.cy),
       rOverR: +Math.hypot(b.cx - geom.cx, b.cy - geom.cy).toFixed(3) / geom.r,
     })),
+    valid: invalidReason === null,
+    invalidReason,
+    // INVALID input cannot pass: a null measurement is not a clean one.
+    pass: invalidReason === null && clipped.points.length === 0 && largestBlob <= 12,
   };
-  return { result, geometry: geom };
 }
 
+/** `checkGlare`'s verdict, re-exported under the name the specs and reports use. */
+export type GlareResult = GlareVerdict;
+
+/** 3.2 at one azimuth: capture, then apply `checkGlare`. */
+export async function measureGlare(
+  page: Page,
+  azimuthDeg: number,
+): Promise<{ result: GlareResult; geometry: DiscGeometry }> {
+  await settleAt(page, azimuthDeg);
+  await setLayers(page, { stars: false, pins: false, rings: false });
+  const geom = await disc(page);
+  const img = await capture(page);
+  const verdict = checkGlare(img, geom);
+  const result: GlareResult = verdict;
+  return { result, geometry: geom };
+}
 
 // --------------------------------------------------------- specular mask (3.3)
 
@@ -819,6 +866,16 @@ export interface RingCastResult {
  */
 export async function measureRingCast(
   page: Page,
+  /**
+   * Optional hook that runs AFTER the limb fit and BEFORE the captures.
+   *
+   * Exists for the negative suite. `fitLimb` swaps the surface to unlit white and restores
+   * it, and the restore's material rebuild recompiles the shader — compiling the light
+   * count in. A light injected before this point is present in the scene graph and
+   * completely inert on screen (measured: 0.002% delta with lights 3 -> 4), so the negative
+   * test would "fail" against a check that was working correctly.
+   */
+  { afterFit }: { afterFit?: () => Promise<void> } = {},
 ): Promise<{ results: RingCastResult[]; geometry: DiscGeometry }> {
   await settleAt(page, 0);
   await setLayers(page, { rings: false, atmosphere: false, stars: false, clouds: false });
@@ -827,6 +884,8 @@ export async function measureRingCast(
   if (!Number.isFinite(fit.r)) throw new Error('measureRingCast: limb fit produced no circle');
   const geom: DiscGeometry = { cx: fit.cx, cy: fit.cy, r: fit.r };
   await setLayers(page, { rings: false, atmosphere: false, stars: false, clouds: false });
+
+  if (afterFit) await afterFit();
 
   const pins = await page.evaluate(() => window.__globe!.pins());
   const inside = (x: number, y: number) => insideDisc(geom, x, y);
