@@ -11,7 +11,32 @@ from a CDN.
 pnpm build      # the suite serves dist/, so build first
 pnpm e2e        # all specs — measured 5.0 min wall clock on this machine
 pnpm e2e:report # open the HTML report from the last run
+
+pnpm build:e2e  # REQUIRED for the look specs: they need the VITE_E2E hooks
+pnpm e2e:look   # look specs + negative tests + the five globe zoom cases
 ```
+
+### The look suite (`pnpm e2e:look`)
+
+`tests/e2e/look.spec.ts` measures the approved globe look from pixels (3.1 rim, 3.2 glare,
+3.3 local peak, 3.4 terminator, 3.5 pin cores, 3.6 ring light cast, 3.7 console), and
+`tests/e2e/globe.spec.ts` supplies the five zoom cases (3.8). What each check means, its
+threshold and its measured value live in **`docs/globe-look/SPEC.md`** — do not restate
+them here, they go stale.
+
+**Build with `pnpm build:e2e`, not `pnpm build`.** The look specs read `window.__globe` /
+`window.__look`, which are dead-code-eliminated from a production bundle. A plain
+`pnpm build` leaves a `dist/` whose hooks are gone, and the specs then fail on
+`waitForFunction` timing out after 90 s — which reads as a product bug. This bites in
+practice: running the gate (`pnpm build`) and then the e2e suite in one command sequence
+silently tests the wrong bundle.
+
+`tests/e2e/negative.spec.ts` proves the checks can go red: each test asserts the real
+check PASSES on the untouched scene, injects a defect at run time, asserts the same check
+now reports FAIL, and removes the defect. No defect is ever committed to source. Three
+cases are `test.fixme` — see the header of that file for the measurements showing that the
+defect is real but its delivery into the measured window is not, which is the same R3F
+invalidation seam documented in `3B-1-STATUS.md`.
 
 ### Running one profile at a time
 

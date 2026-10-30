@@ -48,6 +48,25 @@ windows are unchanged and the numbers are recorded in the spec's output and in
    rather than gated. pacific projects to 1.100 R — outside the disc — so its 20.4%
    "delta" was sky, not cast light. Same class as the deleted (300,392) window.
 
+## Test runs (2B)
+
+| run | result | wall |
+|---|---|---|
+| full gate (`tsc -b`, `lint`, `test`, `build`) | **green** — 597 tests, 0 hooks | ~14 s |
+| `look.spec.ts` | **8/8 pass** | 3.6 min |
+| `negative.spec.ts` + `globe.spec.ts` | **7 passed, 3 skipped** | 1.7 min |
+| `pnpm e2e:look` (all three files) | **15 passed, 3 skipped** | 5.3 min |
+| full `pnpm e2e` | **11 failed — browser worker CRASHED** | 5.0 min |
+
+The full-suite failures are not spec failures: the log shows
+`browserContext.newPage: Target crashed` and
+`worker process exited unexpectedly (code=3221225794)`. 0xC0000142 is a DLL
+initialisation failure — Chromium ran out of resources after the long serial run
+(`workers: 1`, SwiftShader software rendering, dozens of 1280x800 captures). The same
+specs pass when run as the two smaller batches above, so this is an environment limit, not
+a regression. Re-running the full suite needs either more memory for the worker or
+`fullyParallel` split across workers.
+
 ## Spec source
 
 `docs/prompts/speclock-2a.md` holds A3/A4 plus the 2A3/2A4 amendments.
