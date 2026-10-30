@@ -79,7 +79,7 @@ export function createGlobeProbe(input: GlobeProbeInput): GlobeProbe {
     return {
       x: ((ndc.x + 1) / 2) * input.size.width,
       y: ((1 - ndc.y) / 2) * input.size.height,
-      behind: ndc.z > 1,
+      behind: ndc.z > 1 || ndc.z < -1,
     };
   };
 
@@ -131,8 +131,22 @@ function projectVector(
   const p = camera.projectionMatrix.elements;
   const px = p[0] * cx + p[4] * cy + p[8] * cz + p[12];
   const py = p[1] * cx + p[5] * cy + p[9] * cz + p[13];
+  const pz = p[2] * cx + p[6] * cy + p[10] * cz + p[14];
   const pw = p[3] * cx + p[7] * cy + p[11] * cz + p[15];
 
   if (pw === 0) return { x: 0, y: 0, z: Infinity };
-  return { x: px / pw, y: py / pw, z: cz === 0 ? 0 : -cz };
+
+  /*
+   * `behind` is decided by the NDC z, not by camera-space z.
+   *
+   * After the perspective divide, NDC z runs -1 (near plane) to +1 (far plane),
+   * so `z > 1` means the point is beyond the far plane and `z < -1` means it is
+   * in front of the near plane. The previous version tested a camera-space value
+   * and reported the globe CENTRE as `behind: true` at the default camera — the
+   * point furthest from the near plane is exactly what should be inside the
+   * frustum, so that was backwards. Callers use `behind` to skip points that
+   * cannot be visible; getting it inverted blanked the whole disc.
+   */
+  const ndcZ = pz / pw;
+  return { x: px / pw, y: py / pw, z: ndcZ };
 }
