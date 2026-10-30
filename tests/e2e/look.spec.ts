@@ -23,7 +23,7 @@ import {
   measureTerminator,
   writeResult,
 } from './look/measure';
-import { openGlobe } from './look/capture';
+import { openGlobe, capture, setLayers, settleAt } from './look/capture';
 
 const AZIMUTHS = Array.from({ length: 12 }, (_, i) => i * 30);
 
@@ -444,6 +444,48 @@ test.describe('globe look', () => {
           `(max(3%, 1.5 x noise ${r.noisePct}%)) — the pin is casting light on the surface`,
       ).toBe(true);
     }
+  });
+
+  // ------------------------------------------------------- 3.7 console -----
+  test('3.7 console: zero warnings or errors through the look suite', async ({ page }) => {
+    /*
+     * Captured from the FIRST navigation, before any interaction, so a warning emitted
+     * during boot is caught too — not just the ones the later assertions happen to be
+     * watching for at the moment they run.
+     *
+     * WebGL driver chatter is filtered: SwiftShader emits "GPU stall due to ReadPixels"
+     * performance notices on every screenshot, which is the harness's own capture path
+     * and not the app. That filter is stated explicitly rather than implied.
+     */
+    const messages: Array<{ type: string; text: string }> = [];
+    page.on('console', (m) => {
+      const t = m.type();
+      if (t === 'warning' || t === 'error') messages.push({ type: t, text: m.text() });
+    });
+    page.on('pageerror', (e) => messages.push({ type: 'error', text: `pageerror: ${e.message}` }));
+
+    await openGlobe(page);
+
+    // Exercise the code paths the rest of the suite uses, so the check covers them.
+    for (const az of [0, 180]) {
+      await settleAt(page, az);
+      await setLayers(page, { stars: false, pins: false, rings: false });
+      await setLayers(page, { stars: true, pins: true, rings: true });
+    }
+    await capture(page);
+
+    const DRIVER_NOISE = /GL Driver Message|GPU stall due to ReadPixels|swiftshader/i;
+    const real = messages.filter((m) => !DRIVER_NOISE.test(m.text));
+
+    console.log(
+      `[console] ${real.length} app message(s), ${messages.length - real.length} driver notice(s) filtered`,
+    );
+    for (const m of real.slice(0, 10)) console.log(`  ${m.type}: ${m.text}`);
+
+    expect(
+      real.length,
+      `console is not clean:\n${real.map((m) => `  ${m.type}: ${m.text}`).join('\n')}`,
+    ).toBe(0);
   });
 
 });
