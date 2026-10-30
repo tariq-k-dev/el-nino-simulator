@@ -17,7 +17,8 @@ import { EARTH_RADIUS, SUN_POSITION } from '@/scene/constants';
 import { CameraRig } from '@/scene/CameraRig';
 import { EarthSystem } from '@/scene/EarthSystem';
 import type { SpinState } from '@/scene/EarthSystem';
-import { REGIONS } from '@/lib/regions';
+import { GLOBE_LOOK, getLookFlags, setLookFlags, subscribeLookFlags } from '@/scene/globeLook';
+import { REGIONS, latLonToVector3 } from '@/lib/regions';
 import { regionHeadline } from '@/lib/model';
 import { registerRenderer } from '@/lib/canvasCapture';
 import { createGlobeProbe } from '@/lib/globeProbe';
@@ -172,6 +173,16 @@ export function GlobeScene({
   const controlsRef = useRef<OrbitControlsImpl | null>(null);
   const spin = useRef<SpinState>({ y: 0, paused: false });
 
+  /*
+   * Layer switches, and the seam the acceptance specs write to.
+   *
+   * The store itself lives in scene/globeLook.ts (module scope, no React), so
+   * the probe can call `setLookFlags` directly from a `page.evaluate` without
+   * needing a component to exist. This component only subscribes, so a flip
+   * re-renders exactly the layers that read it.
+   */
+  const look = useSyncExternalStore(subscribeLookFlags, getLookFlags, getLookFlags);
+
   // WebGL can be absent entirely (headless, blocklisted GPU, disabled by policy).
   // Mark the gate failed so the engine boots without waiting for a canvas.
   useEffect(() => {
@@ -233,6 +244,48 @@ export function GlobeScene({
               getTarget: () => controlsRef.current?.target ?? new THREE.Vector3(),
               globeRadius: EARTH_RADIUS,
               readInsets: getInsets,
+              // Layer toggles + the tuning constants, so a spec can hold one
+              // contribution still and can print the whole look in a failure.
+              readLookFlags: getLookFlags,
+              writeLookFlags: setLookFlags,
+              look: GLOBE_LOOK,
+              /*
+               * Pin anchors, rotated by the planet's CURRENT spin.
+               *
+               * `spin.y` is the authoritative rotation (EarthSystem writes it
+               * into the group every frame), so applying it here reproduces the
+               * transform the renderer uses rather than sampling a matrix that
+               * is one frame stale — a spec reads this, screenshots, then reads
+               * it again, and the two must agree about where the pin is.
+               */
+              pins: () =>
+                REGIONS.map((region) => {
+                  /*
+                   * The CORE's position, not the surface anchor.
+                   *
+                   * Hotspot builds the pin at `anchorRadius`, lifts the whole
+                   * group by `idleLift`, then offsets the core `coreOffset` along
+                   * the normal. Reporting the bare anchor instead put the probe
+                   * ~0.09 R inside the core — at the default camera that is ~26 px,
+                   * far enough away that the pin report sampled plain ocean and
+                   * reported a core luminance of 7 for a pin that is actually
+                   * there and bright. All three values come from GLOBE_LOOK so the
+                   * probe and the component cannot drift apart again.
+                   */
+                  const radius =
+                    GLOBE_LOOK.pins.anchorRadius * GLOBE_LOOK.pins.idleLift +
+                    GLOBE_LOOK.pins.coreOffset;
+                  const [x, y, z] = latLonToVector3(region.lat, region.lon, radius);
+                  const cos = Math.cos(spin.current.y);
+                  const sin = Math.sin(spin.current.y);
+                  return {
+                    id: region.id,
+                    world: [x * cos + z * sin, y, -x * sin + z * cos] as [number, number, number],
+                  };
+                }),
+              setSpinPaused: (paused: boolean) => {
+                spin.current.paused = paused;
+              },
             }),
           });
         }
@@ -264,7 +317,11 @@ export function GlobeScene({
         <TextureProgressSignal />
         <TextureSettledSignal />
         <FirstFrameSignal />
-        <Starfield count={14000} />
+        {/* Stars are a whole-sky additive layer, so "hide them" is a render
+            gate rather than a star-by-star dimming. The atmosphere profile
+            spec walks 16 rays outward through this region and any star crossing
+            a ray is a luminance spike no atmosphere rule can satisfy. */}
+        {look.stars && <Starfield count={14000} />}
         <EarthSystem
           sst={sst}
           metrics={metrics}
@@ -307,10 +364,29 @@ export function GlobeScene({
         touches={{ ONE: THREE.TOUCH.ROTATE, TWO: THREE.TOUCH.DOLLY_PAN }}
       />
 
-      <EffectComposer multisampling={0}>
-        <Bloom intensity={0.42} luminanceThreshold={0.62} luminanceSmoothing={0.32} mipmapBlur radius={0.55} />
-        <Vignette eskil={false} offset={0.18} darkness={0.72} />
-      </EffectComposer>
+      {/*
+        Bloom is a legitimate contributor to glare, so it is behind a flag as
+        well as behind GLOBE_LOOK. `luminanceThreshold` is the seam that decides
+        whether an already-bright surface gets smeared into a floodlight or stays
+        a highlight: at 0.62 a sunlit cloud top passes and blooms, which is a
+        second way to produce clipped pixels that no surface-level cap can fix.
+      */}
+      {look.bloom ? (
+        <EffectComposer multisampling={0}>
+          <Bloom
+            intensity={GLOBE_LOOK.bloom.intensity}
+            luminanceThreshold={GLOBE_LOOK.bloom.luminanceThreshold}
+            luminanceSmoothing={GLOBE_LOOK.bloom.luminanceSmoothing}
+            mipmapBlur
+            radius={GLOBE_LOOK.bloom.radius}
+          />
+          <Vignette eskil={false} offset={0.18} darkness={0.72} />
+        </EffectComposer>
+      ) : (
+        <EffectComposer multisampling={0}>
+          <Vignette eskil={false} offset={0.18} darkness={0.72} />
+        </EffectComposer>
+      )}
 
       <AdaptiveDpr pixelated />
 

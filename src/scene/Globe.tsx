@@ -1,4 +1,4 @@
-import { useMemo, useRef } from 'react';
+import { useMemo, useRef, useSyncExternalStore } from 'react';
 import { useFrame } from '@react-three/fiber';
 import { useTexture } from '@react-three/drei';
 import * as THREE from 'three';
@@ -10,6 +10,7 @@ import {
   surfaceOverlayVertex,
 } from '@/scene/shaders';
 import { SHELLS } from '@/scene/constants';
+import { GLOBE_LOOK, getLookFlags, subscribeLookFlags } from '@/scene/globeLook';
 import { installTextureTracking } from '@/lib/engine/textureTimeline';
 
 // Instrument three's DefaultLoadingManager BEFORE any texture is requested.
@@ -60,6 +61,11 @@ export function Globe({ sst, sunDirection }: GlobeProps) {
     '/textures/earth_clouds.jpg',
   ]);
 
+  // Layer switches, read from the same external store the specs write to. The
+  // default is all-true, so a visitor's scene is unchanged; this exists so an
+  // acceptance test can hold one contribution still (see scene/globeLook.ts).
+  const look = useSyncExternalStore(subscribeLookFlags, getLookFlags, getLookFlags);
+
   useMemo(() => {
     // Colour *albedo* must be sRGB or everything renders desaturated and dark.
     // The gloss mask and normal map are data, not colour, and must stay linear.
@@ -85,6 +91,15 @@ export function Globe({ sst, sunDirection }: GlobeProps) {
   // Doing the inversion once on a canvas at load time costs ~20 ms; inverting in
   // the fragment shader would put a texture read plus arithmetic on every pixel
   // of the globe for every frame.
+  //
+  // The inverted value is then COMPRESSED into [floor, 1] rather than used
+  // directly. Water in the gloss mask is pure white, so the naive inversion gave
+  // water roughness 0.0 — and `roughness` on the material MULTIPLIES this map, so
+  // no material-level value could rescue it (0.72 x 0 is still 0). A roughness of
+  // exactly 0 is a perfect mirror: the sun's highlight focused into a hard clipped
+  // disc roughly 14 px across, which is what survived with every optional layer
+  // switched off (measured 0.037% of the disc clipped, surface only). Compressing
+  // to the floor keeps water glossy and the highlight a highlight.
   const roughnessMap = useMemo(() => {
     const image = glossMap.image as CanvasImageSource & { width?: number; height?: number };
     if (!image || !image.width || !image.height) return glossMap;
@@ -95,11 +110,15 @@ export function Globe({ sst, sunDirection }: GlobeProps) {
     const ctx = canvas.getContext('2d', { willReadFrequently: false });
     if (!ctx) return glossMap;
 
+    const floor = GLOBE_LOOK.surface.roughnessFloor;
+    const span = 1 - floor;
+
     ctx.drawImage(image, 0, 0, image.width, image.height);
     const pixels = ctx.getImageData(0, 0, image.width, image.height);
     const data = pixels.data;
     for (let i = 0; i < data.length; i += 4) {
-      const inverted = 255 - data[i];
+      // 255 - value inverts the mask, then map 0..255 -> floor..1
+      const inverted = (255 - data[i]) * span + floor * 255;
       data[i] = inverted;
       data[i + 1] = inverted;
       data[i + 2] = inverted;
@@ -126,11 +145,20 @@ export function Globe({ sst, sunDirection }: GlobeProps) {
       uRayleighColor: { value: new THREE.Color('#1d63d8') },
       uMieColor: { value: new THREE.Color('#ffd9a3') },
       uHorizonColor: { value: new THREE.Color('#9fe8ff') },
-      uIntensity: { value: 0.62 },
-      uRayleighPower: { value: 2.4 },
-      uHorizonPower: { value: 5.5 },
+      uIntensity: { value: GLOBE_LOOK.atmosphere.intensity },
+      uRayleighPower: { value: GLOBE_LOOK.atmosphere.rayleighPower },
+      uHorizonPower: { value: GLOBE_LOOK.atmosphere.horizonPower },
       uSunGlow: { value: 0.85 },
       uTime: { value: 0 },
+      // The shader needs its own geometry to place the impact parameter, so the
+      // radii are uniforms rather than baked literals: the plan shell scale and
+      // the fit-distance maths read the same numbers.
+      uShellRadius: { value: SHELLS.atmosphere },
+      uPlanetRadius: { value: 1 },
+      uBodyWeight: { value: GLOBE_LOOK.atmosphere.bodyWeight },
+      uHorizonWeight: { value: GLOBE_LOOK.atmosphere.horizonWeight },
+      uAlphaCap: { value: GLOBE_LOOK.atmosphere.alphaCap },
+      uBreatheAmp: { value: GLOBE_LOOK.atmosphere.breatheAmplitude },
     }),
     [sunVector],
   );
@@ -141,8 +169,11 @@ export function Globe({ sst, sunDirection }: GlobeProps) {
       uSunDirection: { value: sunVector.clone() },
       uHeatColor: { value: new THREE.Color('#fb923c') },
       uHeat: { value: 0.5 },
-      uSpecularPower: { value: 160 },
-      uSpecularStrength: { value: 0.5 },
+      uSpecularPower: { value: GLOBE_LOOK.specular.power },
+      uSpecularStrength: { value: GLOBE_LOOK.specular.strength },
+      uSheen: { value: GLOBE_LOOK.specular.sheen },
+      uAlphaCap: { value: GLOBE_LOOK.specular.alphaCap },
+      uEmitCap: { value: GLOBE_LOOK.specular.emitCap },
       uSunGlow: { value: 0.85 },
     }),
     [glossMap, sunVector],
@@ -207,20 +238,25 @@ export function Globe({ sst, sunDirection }: GlobeProps) {
   return (
     <group>
       {/* Atmosphere, drawn first in the transparent pass so it never occludes
-          the surface or the glint. */}
-      <mesh scale={SHELLS.atmosphere} renderOrder={1}>
-        <sphereGeometry args={[1, 96, 96]} />
-        <shaderMaterial
-          ref={atmosphereMat}
-          vertexShader={atmosphereVertex}
-          fragmentShader={atmosphereFragment}
-          uniforms={atmosphereUniforms}
-          transparent
-          side={THREE.BackSide}
-          blending={THREE.NormalBlending}
-          depthWrite={false}
-        />
-      </mesh>
+          the surface or the glint. BackSide: we see the far inner surface, so
+          only the annulus outside the planet's limb survives the depth test —
+          which is what makes the impact-parameter profile in the fragment
+          shader land exactly on zero at the shell's silhouette. */}
+      {look.atmosphere && (
+        <mesh scale={SHELLS.atmosphere} renderOrder={1}>
+          <sphereGeometry args={[1, 96, 96]} />
+          <shaderMaterial
+            ref={atmosphereMat}
+            vertexShader={atmosphereVertex}
+            fragmentShader={atmosphereFragment}
+            uniforms={atmosphereUniforms}
+            transparent
+            side={THREE.BackSide}
+            blending={THREE.NormalBlending}
+            depthWrite={false}
+          />
+        </mesh>
+      )}
 
       {/* Cloud shell.
           earth_clouds.jpg is a single-channel coverage map with NO alpha: dark
@@ -229,21 +265,23 @@ export function Globe({ sst, sunDirection }: GlobeProps) {
           ones — which measured as mean saturation dropping 0.65 -> 0.39 and was
           the main source of the "muddy wash". The luminance belongs in `alphaMap`,
           with flat white as the cloud colour, so clear sky is genuinely transparent. */}
-      <mesh ref={cloudRef} scale={SHELLS.clouds} renderOrder={2}>
-        <sphereGeometry args={[1, 96, 96]} />
-        <meshStandardMaterial
-          ref={cloudMat}
-          color="#ffffff"
-          alphaMap={cloudsMap}
-          transparent
-          opacity={0.92}
-          depthWrite={false}
-          roughness={1}
-          metalness={0}
-          emissive="#ffffff"
-          emissiveIntensity={0.04}
-        />
-      </mesh>
+      {look.clouds && (
+        <mesh ref={cloudRef} scale={SHELLS.clouds} renderOrder={2}>
+          <sphereGeometry args={[1, 96, 96]} />
+          <meshStandardMaterial
+            ref={cloudMat}
+            color="#ffffff"
+            alphaMap={cloudsMap}
+            transparent
+            opacity={0.92}
+            depthWrite={false}
+            roughness={1}
+            metalness={0}
+            emissive="#ffffff"
+            emissiveIntensity={0.04}
+          />
+        </mesh>
+      )}
 
       <mesh renderOrder={0}>
         <sphereGeometry args={[1, 128, 128]} />
@@ -254,12 +292,15 @@ export function Globe({ sst, sunDirection }: GlobeProps) {
           // it carries almost no relief; the scale is dialled back rather than
           // pretending it encodes mountain ranges that are not there.
           normalMap={normalMap}
-          normalScale={new THREE.Vector2(0.35, 0.35)}
+          normalScale={
+            new THREE.Vector2(GLOBE_LOOK.surface.normalScale, GLOBE_LOOK.surface.normalScale)
+          }
           roughnessMap={roughnessMap}
-          roughness={0.72}
-          metalness={0.02}
-          clearcoat={0.06}
-          clearcoatRoughness={0.35}
+          roughness={GLOBE_LOOK.surface.roughness}
+          metalness={GLOBE_LOOK.surface.metalness}
+          specularIntensity={GLOBE_LOOK.surface.specularIntensity}
+          clearcoat={GLOBE_LOOK.surface.clearcoat}
+          clearcoatRoughness={GLOBE_LOOK.surface.clearcoatRoughness}
           emissiveMap={nightMap}
           emissive={new THREE.Color('#6fb8ff')}
           emissiveIntensity={0.18}
@@ -267,18 +308,20 @@ export function Globe({ sst, sunDirection }: GlobeProps) {
       </mesh>
 
       {/* Ocean glint + anomaly heat, one pixel above the surface. */}
-      <mesh scale={SHELLS.overlay} renderOrder={3}>
-        <sphereGeometry args={[1, 128, 128]} />
-        <shaderMaterial
-          ref={overlayMat}
-          vertexShader={surfaceOverlayVertex}
-          fragmentShader={surfaceOverlayFragment}
-          uniforms={overlayUniforms}
-          transparent
-          depthWrite={false}
-          blending={THREE.AdditiveBlending}
-        />
-      </mesh>
+      {look.specular && (
+        <mesh scale={SHELLS.overlay} renderOrder={3}>
+          <sphereGeometry args={[1, 128, 128]} />
+          <shaderMaterial
+            ref={overlayMat}
+            vertexShader={surfaceOverlayVertex}
+            fragmentShader={surfaceOverlayFragment}
+            uniforms={overlayUniforms}
+            transparent
+            depthWrite={false}
+            blending={THREE.AdditiveBlending}
+          />
+        </mesh>
+      )}
     </group>
   );
 }

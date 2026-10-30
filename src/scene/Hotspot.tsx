@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react';
 import { useFrame } from '@react-three/fiber';
 import { Html } from '@react-three/drei';
 import * as THREE from 'three';
@@ -6,6 +6,7 @@ import type { RegionDefinition } from '@/types/enso';
 import { thermalColor, thermalVector } from '@/lib/model';
 import { latLonToVector3 } from '@/lib/regions';
 import { hotspotFragment, hotspotVertex } from '@/scene/shaders';
+import { GLOBE_LOOK, getLookFlags, subscribeLookFlags } from '@/scene/globeLook';
 
 interface HotspotProps {
   region: RegionDefinition;
@@ -27,12 +28,22 @@ export function Hotspot({ region, sst, active, headline, onSelect }: HotspotProp
   const labelWrapRef = useRef<HTMLDivElement>(null);
   const facingRef = useRef(1);
 
-  const position = useMemo(() => latLonToVector3(region.lat, region.lon, 1.012), [region]);
+  const position = useMemo(
+    () => latLonToVector3(region.lat, region.lon, GLOBE_LOOK.pins.anchorRadius),
+    [region],
+  );
   const quaternion = useMemo(() => {
     // Orient the ring's +Z along the surface normal at this lat/lon.
     const normal = new THREE.Vector3(...position).normalize();
     return new THREE.Quaternion().setFromUnitVectors(new THREE.Vector3(0, 0, 1), normal);
   }, [position]);
+
+  // Stem geometry: a short dark collar from the surface up to the core, oriented
+  // along the surface normal. It exists for CONTRAST, not decoration — an amber
+  // core measured only ~1.2:1 luminance against a sunlit cloud deck, so the pin
+  // needs something dark to sit on. A dark stem gets that without emitting light
+  // onto the surface, which is exactly what the old <pointLight> got wrong.
+  const look = useSyncExternalStore(subscribeLookFlags, getLookFlags, getLookFlags);
 
   const uniforms = useMemo(
     () => ({
@@ -56,7 +67,8 @@ export function Hotspot({ region, sst, active, headline, onSelect }: HotspotProp
       );
     }
     if (pinRef.current) {
-      const lift = active || hovered ? 1.06 : 1.035;
+      const lift =
+        active || hovered ? GLOBE_LOOK.pins.activeLift : GLOBE_LOOK.pins.idleLift;
       pinRef.current.position.set(position[0] * lift, position[1] * lift, position[2] * lift);
     }
 
@@ -138,7 +150,11 @@ export function Hotspot({ region, sst, active, headline, onSelect }: HotspotProp
 
   return (
     <group>
-      {/* Pulsing ring anchored to the surface */}
+      {/* Pulsing ring anchored to the surface. Also the click target — an
+          additive quad 0.22 world units across, so it is a far bigger tap area
+          than the 0.011-radius core (MOBILE_AUDIT #2 measured the core at 6-12
+          CSS px). */}
+      {look.hotspotRings && (
       <mesh
         ref={ringRef}
         position={position}
@@ -168,15 +184,79 @@ export function Hotspot({ region, sst, active, headline, onSelect }: HotspotProp
           blending={THREE.AdditiveBlending}
         />
       </mesh>
+      )}
 
-      {/* Pin stem + head */}
-      <group ref={pinRef} position={position}>
-        <mesh>
-          <sphereGeometry args={[active ? 0.016 : 0.011, 16, 16]} />
-          <meshBasicMaterial color={glowColor} toneMapped={false} />
-        </mesh>
-        <pointLight color={glowColor} intensity={active ? 0.9 : 0.35} distance={0.5} decay={2} />
-      </group>
+      {/* Pin stem + head.
+          There is deliberately NO light in here. The old <pointLight>
+          (intensity 0.9 active / 0.35 idle, distance 0.5) sat on the surface at
+          1.012 R and lit the cloud and surface shells from ~0.1 unit away, which
+          is the broad amber flood over the western US in
+          docs/globe-look/shot-b-upperleft.png — not the specular term. A light of
+          its own also made the pin's brightness depend on what it happened to be
+          standing on, so the same pin was invisible over the night side and blew
+          out over the day side. Emissive geometry fixes both: it is a fixed
+          brightness regardless of the surface, and it lights nothing.
+
+          The core is MeshStandardMaterial, not MeshBasicMaterial, because
+          `emissive` is ignored by MeshBasicMaterial — the material used here
+          before this change, which is why the pin had no self-illumination at
+          all and relied on the light. `toneMapped={false}` keeps the amber from
+          being dimmed by ACES so the intended colour reaches the screen. */}
+      {look.pins && (
+        <group ref={pinRef} position={position} quaternion={quaternion}>
+          {/* Dark collar: gives the core something to contrast against.
+              The cylinder is Y-up by default; rotate it so its axis is the
+              group's +Z (the surface normal) and push it out by half its height
+              so it stands on the surface. */}
+          <mesh position={[0, 0, 0.025]} rotation={[Math.PI / 2, 0, 0]} renderOrder={6}>
+            <cylinderGeometry args={[0.0055, 0.0075, 0.05, 10, 1, true]} />
+            <meshBasicMaterial
+              color={GLOBE_LOOK.pins.housingColor}
+              toneMapped={false}
+              transparent
+              opacity={0.92}
+            />
+          </mesh>
+          {/* Housing: a flat dark DISC behind the core, so the core never sits on
+              a bright surface without a dark boundary around it.
+              
+              It has to be a disc at a smaller radius-in-z, not a concentric
+              sphere: at `housingScale` 1.45 a sphere of radius 0.016 around the
+              same centre completely ENCLOSES the 0.011 core, so the pin rendered
+              as a black blob and every pixel measurement read ~10/255 where the
+              amber should be. A circle facing outward, pushed back along the
+              normal, leaves the core showing through the middle with a dark ring
+              around it — which is the contrast this exists for. */}
+          <mesh position={[0, 0, GLOBE_LOOK.pins.coreOffset - 0.006]} renderOrder={7}>
+            <circleGeometry
+              args={[(active ? 0.016 : 0.011) * GLOBE_LOOK.pins.housingScale, 24]}
+            />
+            <meshBasicMaterial
+              color={GLOBE_LOOK.pins.housingColor}
+              toneMapped={false}
+              side={THREE.DoubleSide}
+            />
+          </mesh>
+          {/* The core itself. Colour comes from the SST ramp so the whole
+              constellation shifts cyan -> amber -> red with the slider; the
+              emissive intensity is what makes it readable on both limbs. */}
+          <mesh position={[0, 0, GLOBE_LOOK.pins.coreOffset]} renderOrder={8}>
+            <sphereGeometry args={[active ? 0.016 : 0.011, 16, 16]} />
+            <meshStandardMaterial
+              color={glowColor}
+              emissive={glowColor}
+              emissiveIntensity={
+                active
+                  ? GLOBE_LOOK.pins.activeEmissiveIntensity
+                  : GLOBE_LOOK.pins.emissiveIntensity
+              }
+              roughness={0.45}
+              metalness={0}
+              toneMapped={false}
+            />
+          </mesh>
+        </group>
+      )}
 
       {/* Label.
           drei <Html> renders real DOM outside the WebGL canvas, so it inherits

@@ -27,7 +27,15 @@ export const EARTH_RADIUS = 1;
 
 /** Shell scales, outermost first. */
 export const SHELLS = {
-  atmosphere: 1.028,
+  /**
+   * Atmosphere shell. Sized at 1.1 R rather than 1.028 R so the visible annulus
+   * is wide enough for the alpha profile to fade to zero before the geometry
+   * edge. At 1.028 the annulus measured ~9 px at the default camera distance,
+   * which is narrower than the ramp needs: the glow arrived at full strength and
+   * stopped at a step. The shader reaches exactly 0 at this radius, so the extra
+   * width is used for fade-out, not for a thicker band of colour.
+   */
+  atmosphere: 1.1,
   clouds: 1.004,
   surface: 1.0,
   overlay: 1.0012,

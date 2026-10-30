@@ -20,6 +20,7 @@
 
 import type * as THREE from 'three';
 import type { Insets } from '@/lib/viewport/insets';
+import type { GlobeLookFlags } from '@/scene/globeLook';
 
 export interface GlobeProjection {
   /** CSS pixels from the viewport's left/top edge. */
@@ -38,6 +39,27 @@ export interface GlobeProbe {
   distance(): number;
   /** Current occluder insets, in CSS pixels. */
   insets(): Insets;
+  /**
+   * Where each pin's CORE lands on screen, plus whether it is on the near
+   * hemisphere. The glare rule excludes a circle around every projected pin
+   * (pins are allowed to be bright), so the spec needs this even for pins it
+   * then discards — a pin on the far side still occludes nothing.
+   */
+  pins(): Array<{ id: string; x: number; y: number; behind: boolean; facing: boolean }>;
+  /** Current layer switches. */
+  lookFlags(): GlobeLookFlags;
+  /** Flip layer switches. Returns the new set. */
+  setLookFlags(patch: Partial<GlobeLookFlags>): GlobeLookFlags;
+  /** The tuning constants, for printing in a failure message. */
+  look(): unknown;
+  /**
+   * Park the camera at a fixed world position looking at the origin, with
+   * rotation paused. Returns when the next frame has been drawn.
+   *
+   * Specs need three reproducible angles, and the scene auto-rotates — so
+   * "screenshot the upper-left lit area" is otherwise a race against the spin.
+   */
+  setCamera(position: [number, number, number]): Promise<void>;
 }
 
 export interface GlobeProbeInput {
@@ -56,6 +78,17 @@ export interface GlobeProbeInput {
   globeRadius: number;
   /** Read the live occluder insets. */
   readInsets: () => Insets;
+  /** Read / write the layer switches and read the tuning object. */
+  readLookFlags: () => GlobeLookFlags;
+  writeLookFlags: (patch: Partial<GlobeLookFlags>) => GlobeLookFlags;
+  look: unknown;
+  /**
+   * Pin anchors in WORLD space, with the planet's current spin already applied.
+   * Optional so unit tests can build a probe without a scene.
+   */
+  pins?: () => Array<{ id: string; world: [number, number, number] }>;
+  /** Pause the planet's spin so a fixed camera shows a fixed hemisphere. */
+  setSpinPaused?: (paused: boolean) => void;
 }
 
 /**
@@ -112,10 +145,59 @@ export function createGlobeProbe(input: GlobeProbeInput): GlobeProbe {
     return Math.tan(theta) * focalPx;
   };
 
-  return { project, discRadiusPx, distance, insets: () => input.readInsets() };
+  /**
+   * Pin anchors. `facing` is the pin normal against the eye direction, which is
+   * what decides whether the core is on the visible hemisphere — the same test
+   * Hotspot.tsx uses to fade its DOM label.
+   */
+  const pins = (): Array<{ id: string; x: number; y: number; behind: boolean; facing: boolean }> => {
+    const anchors = input.pins?.() ?? [];
+    const eye = input.camera.position;
+    const eyeLen = eye.length() || 1;
+    return anchors.map(({ id, world }) => {
+      const p = project(world);
+      const len = Math.hypot(world[0], world[1], world[2]) || 1;
+      const dot =
+        ((world[0] / len) * eye.x + (world[1] / len) * eye.y + (world[2] / len) * eye.z) / eyeLen;
+      return { id, x: p.x, y: p.y, behind: p.behind, facing: dot > 0.06 };
+    });
+  };
+
+  /**
+   * Park the camera and pause the spin.
+   *
+   * Resolves on the next animation frame rather than immediately: the renderer
+   * draws on rAF, so a screenshot taken in the same task would capture the
+   * previous pose. `setSpinPaused` is what makes the pose stable — the planet
+   * advances 0.045 rad/s, which is ~2.6 px/s of drift at the default distance
+   * and enough to move a pin out of a sampled ring between two screenshots.
+   */
+  const setCamera = (position: [number, number, number]): Promise<void> => {
+    input.setSpinPaused?.(true);
+    input.camera.position.set(position[0], position[1], position[2]);
+    input.camera.lookAt(0, 0, 0);
+    input.camera.updateMatrixWorld(true);
+    return new Promise((resolve) => {
+      requestAnimationFrame(() => requestAnimationFrame(() => resolve()));
+    });
+  };
+
+  return {
+    project,
+    discRadiusPx,
+    distance,
+    insets: () => input.readInsets(),
+    pins,
+    lookFlags: () => input.readLookFlags(),
+    setLookFlags: (patch) => input.writeLookFlags(patch),
+    look: () => input.look,
+    setCamera,
+  };
 }
 
-/** `Vector3.project(camera)` without allocating a Vector3 per call. */
+/**
+ * `Vector3.project(camera)` without allocating a Vector3 per call.
+ */
 function projectVector(
   camera: THREE.Camera,
   v: { x: number; y: number; z: number },

@@ -4,31 +4,57 @@
  * The atmosphere is a single-shell analytic Rayleigh/Mie approximation rather
  * than a two-shell additive stack. The previous double shell put a bright,
  * near-opaque band at the silhouette: both shells peak at the limb, so their
- * falloffs summed into a hard yellow ring. One shell with two different
- * exponents gives the thin cyan-to-deep-blue fringe real orbital photographs
- * show, and stays genuinely translucent.
+ * falloffs summed into a hard yellow ring.
+ *
+ * ## Why the profile is driven by the impact parameter, not by a fresnel term
+ *
+ * The shell is a BackSide sphere of radius `uShellRadius`, so the only part of
+ * it that survives the depth test is the annulus between the planet's limb and
+ * the shell's own silhouette. Over that annulus a fresnel term
+ *
+ *     rim = 1 - |dot(normal, viewDir)|
+ *
+ * runs from ~0.77 at the planet limb UP to 1.0 at the shell silhouette, because
+ * the far-hemisphere normal rotates away from the view axis as the ray moves
+ * outward. Alpha therefore peaked exactly at the geometry edge, which is the
+ * hard ring — and with the shell at 1.028 R the annulus was ~9 px wide, so the
+ * ramp had nowhere to fade. Measured alpha across it: 0.20 at the limb rising to
+ * the 0.5 cap, i.e. a flat saturated band with a step edge.
+ *
+ * The physically-correct quantity is the impact parameter `b`: the perpendicular
+ * distance from the planet's centre to the view ray. Optical depth through the
+ * atmosphere is maximal at `b = planet radius` (the chord grazes the surface)
+ * and decays outward, reaching ~0 at the top of the shell. So:
+ *
+ *     x     = (b - R) / (S - R)      // 0 at the limb, 1 at the shell rim
+ *     fade  = 1 - x                  // monotonic, exactly 0 at x = 1
+ *     body  = fade^rayleighPower     // broad blue body
+ *     horiz = fade^horizonPower      // tight bright band hugging the limb
+ *
+ * Both terms are zero at the shell silhouette, so there is no edge to see: the
+ * alpha reaches zero before the geometry does. That is the whole fix, and no
+ * exponent tuning alone could achieve it (see docs/3B-1-STATUS.md).
+ *
+ * `x` is clamped to 0 below the limb, i.e. over the planet's own disc — but
+ * those fragments are depth-rejected by the opaque surface, so the shell puts
+ * nothing over the disc interior and the "no haze" guard holds by construction.
  */
-
 export const atmosphereVertex = /* glsl */ `
   uniform vec3 uSunDirection;
 
-  varying vec3 vNormalView;
-  varying vec3 vViewDir;
+  varying vec3 vWorldPos;
   varying float vSunDot;
 
   void main() {
     vec4 worldPos = modelMatrix * vec4(position, 1.0);
+    vWorldPos = worldPos.xyz;
 
-    // The shell is centred on the origin and never rotated, so world space
-    // equals object space for the sun vector.
+    // The shell is centred on the origin, so world space equals object space for
+    // the sun vector. The parent group spins; a sphere is invariant under a Y
+    // rotation, so this stays correct without undoing the rotation.
     vSunDot = dot(normalize(worldPos.xyz), normalize(uSunDirection));
 
-    // View-space normal is stable under orbit and gives a clean rim.
-    vNormalView = normalize(normalMatrix * normal);
-    vec4 viewPos = viewMatrix * worldPos;
-    vViewDir = normalize(-viewPos.xyz);
-
-    gl_Position = projectionMatrix * viewPos;
+    gl_Position = projectionMatrix * viewMatrix * worldPos;
   }
 `;
 
@@ -41,20 +67,32 @@ export const atmosphereFragment = /* glsl */ `
   uniform float uHorizonPower;   // steeper exponent for the razor-thin fringe
   uniform float uSunGlow;        // forward-scatter strength toward the sun
   uniform float uTime;
+  uniform float uShellRadius;    // shell radius in Earth radii
+  uniform float uPlanetRadius;   // planet radius in Earth radii
+  uniform float uBodyWeight;     // body alpha at the limb
+  uniform float uHorizonWeight;  // fringe alpha at the limb
+  uniform float uAlphaCap;       // hard ceiling on the shell's alpha
+  uniform float uBreatheAmp;
 
-  varying vec3 vNormalView;
-  varying vec3 vViewDir;
+  varying vec3 vWorldPos;
   varying float vSunDot;
 
   void main() {
-    // Optical-depth proxy: grazing angles travel through more atmosphere.
-    float rim = clamp(1.0 - abs(dot(normalize(vNormalView), normalize(vViewDir))), 0.0, 1.0);
+    // Impact parameter: perpendicular distance from the planet centre to this
+    // pixel's view ray, in Earth radii. 1.0 exactly at the limb.
+    vec3 rayDir = normalize(vWorldPos - cameraPosition);
+    float tca = dot(-cameraPosition, rayDir);        // ray origin is the camera
+    float b = length(cameraPosition + rayDir * tca) / uPlanetRadius;
 
-    // Two terms with very different exponents. The high-exponent term is only
-    // non-zero in the last few degrees of the limb - that is the razor-thin
-    // fringe. The low-exponent term is the soft body haze.
-    float body = pow(rim, uRayleighPower);
-    float horizon = pow(rim, uHorizonPower);
+    // Normalised height through the annulus: 0 at the limb, 1 at the shell rim.
+    float span = max(uShellRadius - uPlanetRadius, 1e-4);
+    float x = clamp((b - uPlanetRadius) / span, 0.0, 1.0);
+
+    // Decays OUTWARD and is exactly zero at x = 1 — the shell silhouette. This
+    // is what removes the hard edge: alpha reaches 0 before the geometry ends.
+    float fade = 1.0 - x;
+    float body = pow(fade, uRayleighPower);
+    float horizon = pow(fade, uHorizonPower);
 
     // Mie forward scattering is strongest on the day side and dramatically so
     // toward the sun. Wrapped in smoothstep so the terminator has no hard edge.
@@ -71,16 +109,20 @@ export const atmosphereFragment = /* glsl */ `
     vec3 fringeTint = mix(uHorizonColor, uMieColor, forward * uSunGlow);
     vec3 fringe = fringeTint * horizon * (0.55 + 0.75 * sunWarmth);
 
-    // Slow breathing so the halo is not a dead decal.
-    float breathe = 0.985 + 0.015 * sin(uTime * 0.6);
+    // Slow breathing so the halo is not a dead decal. Uniform in x, so it scales
+    // the whole profile without ever inverting its sign.
+    float breathe = 1.0 - uBreatheAmp + uBreatheAmp * sin(uTime * 0.6);
 
     vec3 color = (rayleigh + fringe) * uIntensity * breathe;
 
-    // Alpha stays well below 1 - an opaque shell reads as a plastic bubble,
-    // not air. The fringe is allowed to be the densest part.
-    // Capped at 0.5: a thicker shell desaturates everything behind it, which is
-    // what made the planet read muddy rather than blue.
-    float alpha = clamp((body * 0.22 + horizon * 0.9) * uIntensity, 0.0, 0.5);
+    // Alpha stays well below 1 - an opaque shell reads as a plastic bubble, not
+    // air. The fade factor is what makes the profile land on zero at the shell
+    // rim; the cap only bounds the peak.
+    float alpha = clamp(
+      (body * uBodyWeight + horizon * uHorizonWeight) * uIntensity * breathe,
+      0.0,
+      uAlphaCap
+    );
 
     gl_FragColor = vec4(color, alpha);
     #include <colorspace_fragment>
@@ -115,6 +157,9 @@ export const surfaceOverlayFragment = /* glsl */ `
   uniform float uHeat;            // 0..1 anomaly strength
   uniform float uSpecularPower;
   uniform float uSpecularStrength;
+  uniform float uSheen;
+  uniform float uAlphaCap;
+  uniform float uEmitCap;
   uniform float uSunGlow;
 
   varying vec2 vUv;
@@ -138,7 +183,7 @@ export const surfaceOverlayFragment = /* glsl */ `
     float glint = pow(cosAngle, uSpecularPower) * ocean * uSpecularStrength;
 
     // Broad sheen, very low, so the surface reads as wet without glowing.
-    float sheen = pow(cosAngle, 8.0) * ocean * 0.045;
+    float sheen = pow(cosAngle, 8.0) * ocean * uSheen;
 
     // Anomaly warmth. Restricted to the equatorial band and to water, and
     // weighted far below the glint: this is a data cue, not a colour grade.
@@ -151,8 +196,12 @@ export const surfaceOverlayFragment = /* glsl */ `
     vec3 glintColor = vec3(1.0, 0.985, 0.96);
     vec3 color = glintColor * (glint + sheen) + uHeatColor * heat;
 
+    // Emitted light is bounded below 1 so that no combination of terms can add a
+    // colour the tone mapper then has to clip; uEmitCap is the tuning seam.
+    color = min(color, vec3(uEmitCap));
+
     // Alpha is clamped well below 1 so no pixel can saturate to pure white.
-    float alpha = clamp(glint * 0.8 + sheen + heat * 0.7, 0.0, 0.72);
+    float alpha = clamp(glint * 0.8 + sheen + heat * 0.7, 0.0, uAlphaCap);
     gl_FragColor = vec4(color, alpha);
     #include <colorspace_fragment>
   }
