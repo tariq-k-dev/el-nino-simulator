@@ -2,6 +2,32 @@
  * Page-side globals installed by addInitScript and read back via page.evaluate.
  * Declared here so the specs typecheck without `any` casts.
  */
+/** The six layer switches `window.__look` exposes. Mirrors src/scene/globeLook.ts. */
+export interface LookLayerFlags {
+  stars: boolean;
+  rings: boolean;
+  atmosphere: boolean;
+  clouds: boolean;
+  pins: boolean;
+  bloom: boolean;
+}
+
+/**
+ * Mirrors the `__globe` probe from src/lib/globeProbe.ts, narrowed to what a
+ * spec reads. `setAzimuth` orbits at the default elevation and distance, so a
+ * spec never has to re-derive the spherical maths.
+ */
+export interface GlobeProbeHandle {
+  project(point?: [number, number, number]): { x: number; y: number; behind: boolean };
+  discRadiusPx(): number;
+  distance(): number;
+  insets(): { top: number; right: number; bottom: number; left: number };
+  pins(): Array<{ id: string; x: number; y: number; behind: boolean; facing: boolean }>;
+  setCamera(position: [number, number, number]): Promise<void>;
+  setAzimuth(deg: number): Promise<void>;
+  defaultOrbit(): { distance: number; elevationDeg: number };
+}
+
 /** Mirrors `SceneGateState` from src/lib/engine/sceneGate.ts (E2E builds only). */
 export interface SceneGateStateProbe {
   outcome: 'ready' | 'failed' | 'timeout' | null;
@@ -70,6 +96,7 @@ declare global {
     /** E2E-only: errors captured before React mounted. */
     __bootErrors?: Array<{ kind: string; message: string; stack: string }>;
     /** E2E-only, ?debug only: three.js handles for visual QA. */
+    __globe?: GlobeProbeHandle;
     __scene?: unknown;
     __camera?: unknown;
     __gl?: unknown;
@@ -79,6 +106,12 @@ declare global {
       get(): Record<string, boolean>;
       reset(): Record<string, boolean>;
       look(): unknown;
+    };
+    /** E2E-only: the stable look API the committed specs use. */
+    __look?: {
+      set(patch: Partial<LookLayerFlags>): LookLayerFlags;
+      get(): LookLayerFlags;
+      setAzimuth(deg: number): Promise<void>;
     };
   }
 }

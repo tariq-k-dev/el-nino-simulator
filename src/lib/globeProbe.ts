@@ -60,6 +60,29 @@ export interface GlobeProbe {
    * "screenshot the upper-left lit area" is otherwise a race against the spin.
    */
   setCamera(position: [number, number, number]): Promise<void>;
+  /**
+   * Orbit the camera to `deg` around the globe at the DEFAULT elevation and
+   * distance. 0 = the default view.
+   *
+   * Exists because a spec that wants twelve azimuths should not re-derive the
+   * spherical maths (and get the elevation convention wrong) in every file. The
+   * convention is fixed here: `az` increases as `sin(az)` on world +X and
+   * `cos(az)` on world +Z, which is what the LOOK2 sweep used and therefore what
+   * the recorded baselines were measured with.
+   */
+  setAzimuth(deg: number): Promise<void>;
+  /** The default camera distance and elevation the azimuth orbit preserves. */
+  defaultOrbit(): { distance: number; elevationDeg: number };
+  /**
+   * Freeze the planet at an absolute Y rotation, or release it.
+   *
+   * A pixel baseline is only reproducible if the texture is at the same longitude
+   * on every load. Pausing alone is not enough: `spin.y` accumulates from frame
+   * deltas, so two loads that reach the first screenshot at different times show
+   * different hemispheres (measured: 17.4 mean absolute luma inside the disc,
+   * versus 0.02 in the sky the spin does not touch).
+   */
+  setSpin(frozen: boolean, angle: number): void;
 }
 
 export interface GlobeProbeInput {
@@ -89,6 +112,8 @@ export interface GlobeProbeInput {
   pins?: () => Array<{ id: string; world: [number, number, number] }>;
   /** Pause the planet's spin so a fixed camera shows a fixed hemisphere. */
   setSpinPaused?: (paused: boolean) => void;
+  /** Freeze the planet at an absolute Y rotation, or release it. */
+  setSpin?: (frozen: boolean, angle: number) => void;
 }
 
 /**
@@ -182,6 +207,27 @@ export function createGlobeProbe(input: GlobeProbeInput): GlobeProbe {
     });
   };
 
+  /*
+   * Default orbit, derived from the scene's own initial camera position rather
+   * than hard-coded here: if the composition moves the camera, the azimuth
+   * sweep moves with it instead of silently measuring a different framing.
+   */
+  const defaultOrbit = () => {
+    const cam = input.camera as THREE.PerspectiveCamera;
+    const distance = cam.position.length();
+    const elevationDeg = (Math.asin(cam.position.y / Math.max(distance, 1e-9)) * 180) / Math.PI;
+    return { distance, elevationDeg };
+  };
+
+  const setAzimuth = (deg: number): Promise<void> => {
+    const { distance, elevationDeg } = defaultOrbit();
+    const a = (deg * Math.PI) / 180;
+    const el = (elevationDeg * Math.PI) / 180;
+    const r = distance * Math.cos(el);
+    const y = distance * Math.sin(el);
+    return setCamera([r * Math.sin(a), y, r * Math.cos(a)]);
+  };
+
   return {
     project,
     discRadiusPx,
@@ -192,6 +238,9 @@ export function createGlobeProbe(input: GlobeProbeInput): GlobeProbe {
     setLookFlags: (patch) => input.writeLookFlags(patch),
     look: () => input.look,
     setCamera,
+    setAzimuth,
+    defaultOrbit,
+    setSpin: (frozen, angle) => input.setSpin?.(frozen, angle),
   };
 }
 

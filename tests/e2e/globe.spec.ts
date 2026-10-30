@@ -21,18 +21,7 @@ import { connectionInit } from './fixtures';
  * on VITE_E2E and stripped from production by scripts/check-assets.mjs.
  */
 
-interface GlobeProbe {
-  project(point?: [number, number, number]): { x: number; y: number; behind: boolean };
-  discRadiusPx(): number;
-  distance(): number;
-  insets(): { top: number; right: number; bottom: number; left: number };
-}
-
-declare global {
-  interface Window {
-    __globe?: GlobeProbe;
-  }
-}
+// `window.__globe` is declared once, in ./globals.d.ts, as GlobeProbeHandle.
 
 const distance = (page: import('@playwright/test').Page) =>
   page.evaluate(() => window.__globe!.distance());

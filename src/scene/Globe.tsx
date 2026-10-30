@@ -183,9 +183,19 @@ export function Globe({ sst, sunDirection }: GlobeProps) {
     const t = state.clock.elapsedTime;
     const step = Math.min(1, delta * 2.5);
 
-    // Planet spin lives on the parent <EarthSystem> group so hotspot markers
-    // share the transform. Clouds drift a touch faster - parallax for free.
-    if (cloudRef.current) cloudRef.current.rotation.y += delta * 0.012;
+    // Planet spin lives on the parent <EarthSystem> group so hotspot markers share
+    // the transform. Clouds drift a touch faster - parallax for free. Both stop
+    // when `animate` is off, so a spec's baseline is the same scene on every load.
+    if (cloudRef.current) {
+      // Clouds own their drift so it can be reset independently of the planet: a
+      // freeze applied to the parent group alone still leaves this offset wherever
+      // the frames before the freeze accumulated to, which measured as 0.1-0.9 mean
+      // absolute luma drift inside the disc between loads (versus 0.000 in the sky,
+      // which the drift does not touch). Pinning it to 0 makes a baseline the same
+      // scene on every load.
+      if (look.animate) cloudRef.current.rotation.y += delta * 0.012;
+      else cloudRef.current.rotation.y = 0;
+    }
 
     const [r, g, b] = thermalVector(sst);
     const heat = Math.min(1, sst / 3);

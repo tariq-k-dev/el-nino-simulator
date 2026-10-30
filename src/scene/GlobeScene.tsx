@@ -178,7 +178,13 @@ export function GlobeScene({
   onLoaded,
 }: GlobeSceneProps) {
   const controlsRef = useRef<OrbitControlsImpl | null>(null);
-  const spin = useRef<SpinState>({ y: 0, paused: false });
+  const spin = useRef<SpinState>({
+    y: 0,
+    paused: false,
+    frozen: false,
+    frozenAt: 0,
+    cloudAngle: 0,
+  });
 
   /*
    * Layer switches, and the seam the acceptance specs write to.
@@ -293,6 +299,23 @@ export function GlobeScene({
               setSpinPaused: (paused: boolean) => {
                 spin.current.paused = paused;
               },
+              /*
+               * Freeze the planet at an absolute longitude, or release it.
+               *
+               * `frozen` is what makes a baseline reproducible: pausing alone
+               * stops the spin wherever the first frame landed, which differs
+               * between loads because `spin.y` accumulates from frame deltas.
+               * Measured before this: two loads of the same view differed by 17.4
+               * mean absolute luma inside the disc while the sky (unaffected by
+               * the spin) matched to 0.02.
+               */
+              setSpin: (frozen: boolean, angle: number) => {
+                spin.current.frozen = frozen;
+                if (frozen) {
+                  spin.current.frozenAt = angle;
+                  spin.current.y = angle;
+                }
+              },
             }),
             /*
              * `__lookToggles` — named, single-purpose toggles for ablation.
@@ -310,6 +333,89 @@ export function GlobeScene({
               reset: () => setLookFlags(DEFAULT_LOOK_FLAGS),
               /** The values an ablation has to attribute a change to. */
               look: () => GLOBE_LOOK,
+            },
+            /*
+             * `window.__look` — the STABLE look API the committed specs use.
+             *
+             * `__lookToggles` above is the raw flag store and its keys are the
+             * internal ones (`hotspotRings`, plus light flags a spec has no
+             * business touching). This is the narrow, documented surface:
+             * exactly the six layer booleans the specs are allowed to set, and
+             * the azimuth helper. Renaming or narrowing the internal flags must
+             * not break a spec, so the mapping lives here.
+             *
+             * Nothing here remounts the Canvas. `set` only writes the external
+             * store the scene already subscribes to, so a toggle is a re-render
+             * of the layers that read it, never a new WebGL context.
+             */
+            __look: {
+              /** Six booleans, default all true. */
+              set: (patch: {
+                stars?: boolean;
+                rings?: boolean;
+                atmosphere?: boolean;
+                clouds?: boolean;
+                pins?: boolean;
+                bloom?: boolean;
+              }) => {
+                const mapped: Partial<GlobeLookFlags> = {};
+                if (patch.stars !== undefined) mapped.stars = patch.stars;
+                if (patch.rings !== undefined) {
+                  mapped.hotspotRings = patch.rings;
+                  // The ring is also the click target's visible affordance; when
+                  // a spec says "rings off" it means the additive quad, not the
+                  // pin core.
+                }
+                if (patch.atmosphere !== undefined) mapped.atmosphere = patch.atmosphere;
+                if (patch.clouds !== undefined) mapped.clouds = patch.clouds;
+                if (patch.pins !== undefined) mapped.pins = patch.pins;
+                if (patch.bloom !== undefined) mapped.bloom = patch.bloom;
+                setLookFlags(mapped);
+                const f = getLookFlags();
+                return {
+                  stars: f.stars,
+                  rings: f.hotspotRings,
+                  atmosphere: f.atmosphere,
+                  clouds: f.clouds,
+                  pins: f.pins,
+                  bloom: f.bloom,
+                };
+              },
+              get: () => {
+                const f = getLookFlags();
+                return {
+                  stars: f.stars,
+                  rings: f.hotspotRings,
+                  atmosphere: f.atmosphere,
+                  clouds: f.clouds,
+                  pins: f.pins,
+                  bloom: f.bloom,
+                };
+              },
+              /**
+               * Camera azimuth in degrees around the globe; 0 = default view.
+               *
+               * Also pins the planet at longitude 0 and stops the scene clock, so
+               * a capture at a given azimuth is the same scene on every load
+               * rather than wherever the spin had got to. Reproducibility is the
+               * whole point of a pixel baseline; making it opt-in would leave the
+               * easy path flaky.
+               */
+              setAzimuth: (deg: number) => {
+                const probe = (
+                  window as unknown as {
+                    __globe: {
+                      setAzimuth(d: number): Promise<void>;
+                      setSpin(frozen: boolean, angle: number): void;
+                    };
+                  }
+                ).__globe;
+                probe.setSpin(true, 0);
+                setLookFlags({ animate: false });
+                return probe.setAzimuth(deg);
+              },
+              /** Release the scene clock and the spin (restores the live look). */
+              animate: (on: boolean) => setLookFlags({ animate: on }),
             },
           });
         }

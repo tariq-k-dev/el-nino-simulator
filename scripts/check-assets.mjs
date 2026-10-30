@@ -43,7 +43,7 @@ const REQUIRED = [
 const FORBIDDEN_HOOKS = [
   '__SCENE_GATE_TIMEOUT_OVERRIDE__',
   '__sceneGate',
-  // Screen-space globe probe: project/discRadiusPx/distance/insets.
+  // Screen-space globe probe: project/discRadiusPx/distance/insets/setAzimuth.
   '__globe',
   // Per-texture timeline: {requestStart, responseEnd, onLoad} per asset, plus the
   // gate-open reconciliation. Diagnostic only — a visitor has no use for it.
@@ -51,9 +51,13 @@ const FORBIDDEN_HOOKS = [
   '__engineStore',
   '__bootErrors',
   '__camera',
-  '__globe',
   // Per-light / per-layer ablation seam (3B-1a-LOOK2 Step 1).
   '__lookToggles',
+  // Stable look API the committed specs use: six layer booleans + setAzimuth.
+  // A word-boundary match, so this does NOT also catch `__lookToggles` — the
+  // two are listed separately on purpose (`\b` needs a non-word char after
+  // `__look`, and `T` is a word char).
+  '__look',
 ];
 
 /**

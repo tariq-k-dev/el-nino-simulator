@@ -252,6 +252,20 @@ export interface GlobeLookFlags {
   lightRim: boolean;
   lightAmbient: boolean;
   lightHemisphere: boolean;
+  /**
+   * Scene clock. `false` freezes the planet's spin and the cloud drift, which is
+   * what makes a pixel baseline reproducible across page loads.
+   *
+   * Not exposed through `window.__look` — the spec-facing flags are the six
+   * layers. This one is driven by `__look.setAzimuth` / `__globe.setSpin`, because
+   * freezing the spin without also fixing WHERE it is frozen would still leave the
+   * texture at a different longitude on every load: `spin.y` accumulates from
+   * `delta`, so two loads that reach the first screenshot at different times show
+   * different hemispheres. Measured: with only the spin paused, a disc-region
+   * comparison across two loads differed by 17.4 mean absolute luma; the sky
+   * beyond the limb, which the spin does not touch, differed by 0.02.
+   */
+  animate: boolean;
 }
 
 export const DEFAULT_LOOK_FLAGS: GlobeLookFlags = {
@@ -267,6 +281,7 @@ export const DEFAULT_LOOK_FLAGS: GlobeLookFlags = {
   lightRim: true,
   lightAmbient: true,
   lightHemisphere: true,
+  animate: true,
 };
 
 let current: GlobeLookFlags = DEFAULT_LOOK_FLAGS;

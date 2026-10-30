@@ -1,4 +1,4 @@
-import { useRef, type MutableRefObject } from 'react';
+import { useRef, useSyncExternalStore, type MutableRefObject } from 'react';
 import { useFrame } from '@react-three/fiber';
 import * as THREE from 'three';
 import type { RegionId } from '@/types/enso';
@@ -8,12 +8,25 @@ import { regionHeadline } from '@/lib/model';
 import { Globe } from '@/scene/Globe';
 import { SUN_DIRECTION } from '@/scene/constants';
 import { Hotspot } from '@/scene/Hotspot';
+import { getLookFlags, subscribeLookFlags } from '@/scene/globeLook';
 
 export interface SpinState {
   /** Current Y rotation of the earth group, in radians. */
   y: number;
   /** Continuous spin is paused while a region is focused. */
   paused: boolean;
+  /**
+   * Set the rotation to an absolute angle and stop accumulating.
+   *
+   * A spec that only paused the spin would freeze the planet at whatever
+   * longitude the first frame happened to reach, which still differs between
+   * loads. This pins it, so a pixel baseline is the same scene every time.
+   */
+  frozen: boolean;
+  /** Absolute angle applied when `frozen` is set. */
+  frozenAt: number;
+  /** Cloud drift offset, frozen alongside the planet. */
+  cloudAngle: number;
 }
 
 interface EarthSystemProps {
@@ -31,9 +44,12 @@ interface EarthSystemProps {
  */
 export function EarthSystem({ sst, metrics, activeRegion, onSelect, spin }: EarthSystemProps) {
   const groupRef = useRef<THREE.Group>(null);
+  const look = useSyncExternalStore(subscribeLookFlags, getLookFlags, getLookFlags);
 
   useFrame((_, delta) => {
-    if (!spin.current.paused) {
+    if (spin.current.frozen) {
+      spin.current.y = spin.current.frozenAt;
+    } else if (!spin.current.paused && look.animate) {
       spin.current.y += delta * 0.045;
       if (spin.current.y > Math.PI * 2) spin.current.y -= Math.PI * 2;
     }
