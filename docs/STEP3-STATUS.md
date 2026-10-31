@@ -554,3 +554,29 @@ is therefore expected and is not evidence about 3B, but it also cannot be used a
 S6 was not triggered. The drift control (BASE, run 7, 11 px) confirms the failure is not a property of
 the environment standing still either — the SAME commit produced 165, 189, 165 and then 11 px, which is
 the intermittency `docs/STEP3-DIAG.md` D9 records, now with the BASE commit failing 3 of 4.
+
+### 3B / A — audit and design memo (`docs/STEP3B-DESIGN.md`)
+
+Docs only. The full audit (fly-to, writer inventory, containment numbers, target design, state
+machine, allowlist) is in that file; the three findings a reader of this log needs:
+
+1. **The fly-to has no duration.** It is an exponential damp that stops on a convergence test
+   (`CameraRig.tsx:122-125`), ~0.8-1.2 s at 60 fps. `controls.target` DOES leave the origin
+   (`:54`), the end pose depends on `spin.current.y` at the moment of selection, and **close is a
+   fly-to back to the default pose** with the spin resumed (`:57-59`) — not a jump, not a no-op.
+   That fixes what `returning` must do in step D.
+2. **Six writers exist** and no others: the fly-to, OrbitControls' own input, `__globe.setCamera`,
+   `__look.setAzimuth` (**which writes the CAMERA, not the earth group**), `FrameRig`'s offset and
+   distance channels, and the initial Canvas `camera` prop.
+3. **The `d_contain` assumption breaks once a region is focused.** At 1440x900 live with the drawer
+   open, every focused region overflows the free rect: right edge **+250.4 to +462.2 px**, bottom
+   edge up to **+306.0 px**, while the aim point sits on the free centre to 0.0 px and the sphere
+   centre does not (91.6-331.6 px away). Closing restores containment on all four edges. Measured
+   with the existing `__globe.project`, `__globe.discRadiusPx` and `__frame` hooks
+   (`scripts/tmp-contain.mjs`, untracked; raw rows in `.cache/containment-probe.json`). Reported
+   only — the decision belongs to the next session.
+
+Two contradictions were found and written down rather than stopping on: item 4 puts `setViewOffset`
+under the director while item 5 makes `FrameRig` a pure provider (resolved by having the rig hand the
+offset up), and `userZoomed` must gate ONLY the distance channel or a wheel event would un-centre the
+globe. Neither changes behaviour, so no S-item triggers.
