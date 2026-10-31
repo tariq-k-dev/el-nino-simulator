@@ -308,3 +308,92 @@ exclusion for either: it landed at (768.2, 375.8), 89 px from the material lobe.
   visual illustration.
 
 Documented in `docs/globe-look/CLIPPED-FACTS.md` and `docs/globe-look/glint-diffs.md`.
+
+---
+
+# V0 FACTS — 2B-C2A (added by this session)
+
+Read-only. Everything here was measured against the **stamped E2E bundle**
+(`srcHash db4576f31e90`, `distHash c31b3baedcb8`, built from `053b21a`) after E0 closed the
+stale-dist trap. Sections a/b/d above were already correct and are **not repeated**; only the
+facts V0 asked for that were missing are recorded here.
+
+## V0(a) — the 3.5 semantic table, all 16 valid/invalid rows
+
+From `measurePinGates` at az {0, 90, 180, 270}. Validity = `n·cam >= 0.1 AND r/R <= 0.97`
+(`measure.ts:777`). **3.5 is GREEN** — every valid row satisfies P1–P4.
+
+| az | pin | side | r/R | n·cam | n·sun | n | median RGB | luma | sat | blown | P1 | P2 | P3 | P4 | verdict |
+|---:|---|---|---:|---:|---:|---:|---|---:|---:|---:|---:|---|---|---|---|---|
+| 0 | pacific | night | 1.100 | 0.46 | −0.34 | — | — | — | — | — | — | — | — | — | **INVALID** r/R > 0.97 |
+| 0 | us-west | day | 0.754 | 0.86 | 0.34 | 15 | (255,255,179) | 249.5 | 0.298 | 0 | ok | ok | ok | ok | valid |
+| 0 | se-asia | night | 0.373 | −0.89 | −0.84 | — | — | — | — | — | — | — | — | — | **INVALID** faces away |
+| 0 | horn-africa | term | 0.725 | −0.57 | 0.19 | — | — | — | — | — | — | — | — | — | **INVALID** faces away |
+| 90 | pacific | night | 0.466 | −0.82 | −0.34 | — | — | — | — | — | — | — | — | — | **INVALID** faces away |
+| 90 | us-west | day | 0.980 | −0.17 | 0.34 | — | — | — | — | — | — | — | — | — | **INVALID** faces away |
+| 90 | se-asia | night | 0.873 | −0.37 | −0.84 | — | — | — | — | — | — | — | — | — | **INVALID** faces away |
+| 90 | horn-africa | term | 0.938 | 0.74 | 0.19 | 9 | (255,255,183) | 249.8 | 0.282 | 0 | ok | ok | ok | ok | valid |
+| 180 | pacific | night | 0.797 | −0.48 | −0.34 | — | — | — | — | — | — | — | — | — | **INVALID** faces away |
+| 180 | us-west | day | 0.822 | −0.44 | 0.34 | — | — | — | — | — | — | — | — | — | **INVALID** faces away |
+| 180 | se-asia | night | 0.768 | 0.85 | −0.84 | 22 | (255,255,149) | 247.3 | 0.416 | 0 | ok | ok | ok | ok | valid |
+| 180 | horn-africa | term | 1.000 | 0.67 | 0.19 | — | — | — | — | — | — | — | — | — | **INVALID** r/R > 0.97 |
+| 270 | pacific | night | 0.857 | 0.80 | −0.34 | 15 | (255,255,148) | 247.3 | 0.420 | 0 | ok | ok | ok | ok | valid |
+| 270 | us-west | day | 1.058 | 0.58 | 0.34 | — | — | — | — | — | — | — | — | — | **INVALID** r/R > 0.97 |
+| 270 | se-asia | night | 1.113 | 0.33 | −0.84 | — | — | — | — | — | — | — | — | — | **INVALID** r/R > 0.97 |
+| 270 | horn-africa | term | 0.662 | −0.64 | 0.19 | — | — | — | — | — | — | — | — | — | **INVALID** faces away |
+
+5 valid of 16; **4 valid day-capable and 4 valid night-capable** in the union, but never both at
+one azimuth. The day-side classification is `n·sun > 0.2`, night `n·sun < −0.1`, so the only
+`day` rows here are us-west (0.34) and the only `night` rows are se-asia/pacific (−0.84/−0.34).
+`horn-africa` is always `terminator` at these azimuths and never counts as either.
+
+## V0(b) — pin render drift and the PNG size
+
+**max|delta| = 0 per channel** at HEAD vs `2e27939`, re-measured this session with
+`tests/e2e/look/pin-probe.mjs` against the stamped bundle. Four cores, identical to the table in
+section a above:
+
+| az | pin | core @ HEAD | core @ 2e27939 | delta |
+|---:|---|---|---|---:|
+| 0 | pacific | (255,255,159) | (255,255,159) | 0 |
+| 0 | us-west | (255,255,189) | (255,255,189) | 0 |
+| 180 | se-asia | (254,254,142) | (254,254,142) | 0 |
+| 180 | horn-africa | (255,255,147) | (255,255,147) | 0 |
+
+`docs/globe-look/pins-day-night.png` is **27,819 bytes**, committed by `19cc97c`. `git log
+b541b29..HEAD -- src/scene src/lib/look` is **empty**, so the render code has not moved since the
+PNG and the section-a table were written; the zero deltas are structural, not a coincidence.
+
+## V0(c) — valid DAY and NIGHT pins per azimuth, 12-azimuth scan
+
+**The four azimuths 3.5 uses cannot supply both.** Scanned az 0..330 in 30° steps:
+
+| az | valid pins | valid day | valid night | both? |
+|---:|---|---|---|---|
+| 0 | us-west | us-west | — | no |
+| 30 | — | — | — | no |
+| 60 | — | — | — | no |
+| 90 | horn-africa | — | — | no |
+| 120 | horn-africa | — | — | no |
+| 150 | horn-africa | — | — | no |
+| 180 | se-asia | — | se-asia | no |
+| 210 | se-asia | — | se-asia | no |
+| 240 | se-asia | — | se-asia | no |
+| 270 | pacific | — | pacific | no |
+| **300** | pacific, us-west | **us-west** | **pacific** | **YES** |
+| **330** | pacific, us-west | **us-west** | **pacific** | **YES** |
+
+`horn-africa` at az 90/120/150 is valid but `terminator` (`n·sun = 0.189`), so it is neither.
+**N7 and N8 must use az 300 or 330**, where `us-west` is a valid day pin (`n·sun 0.338`,
+`r/R 0.757`) and `pacific` is a valid night pin (`n·sun −0.342`, `r/R 0.570` at az 300 / `0.854`
+at az 330). az 300 has the smaller night `r/R`, so it leaves more headroom against the 0.97 bound.
+
+## V0(d) — why W5/W8 trip although 3.3 specifies clouds OFF
+
+Already answered in section c above and **confirmed in source**, so nothing changes:
+`src/scene/Globe.tsx:278` gates the cloud mesh on `{look.clouds && (…)}`, and
+`measureBlueCircle` calls `setLayers({ …, clouds: false })` before each capture. With the mesh
+unmounted the flag *is* applied. W5 sits at the disc centre (`r/R 0.000`) on the broad
+sigma-3-blurred highlight and W8 on the upper-centre highlight; their 8–20 px annuli are on the
+same bright content, so the ratio stays high with no clouds present. The "clouds explain W5/W8"
+story stays withdrawn. No flag bug exists to fix.
