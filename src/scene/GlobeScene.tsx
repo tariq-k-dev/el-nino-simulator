@@ -527,6 +527,50 @@ export function GlobeScene({
                 });
                 return found;
               },
+              /**
+               * Per pin, the WORLD position of both the core and the surface anchor,
+               * plus the outward normal. NEGATIVE-SUITE defect placement only.
+               *
+               * Why this exists, and why `__globe.pinAnchors()` was not enough: the
+               * previous N1 attempt put a point light at SCREEN pixel coordinates
+               * (291, 482) — a plausible-looking pair that is an (x, y) pair from
+               * `project()`, not a world position. A light at that point sits in a
+               * plane 291 units to the right and 482 units down, nowhere near the
+               * globe, and contributes nothing no matter how the program is rebuilt.
+               * The defect has to be placed in the SAME space the renderer uses.
+               *
+               * `core` is where the visible pin sphere is drawn
+               * (`anchorRadius × idleLift + coreOffset`); `surface` is the same
+               * direction at radius 1, which is the point a light meant to "glow on
+               * the surface under the pin" should use. Both are rotated by the live
+               * spin, so they agree with the current frame rather than the load frame.
+               */
+              pinsWorld: () =>
+                REGIONS.map((region) => {
+                  const coreR =
+                    GLOBE_LOOK.pins.anchorRadius * GLOBE_LOOK.pins.idleLift +
+                    GLOBE_LOOK.pins.coreOffset;
+                  const rawCore = latLonToVector3(region.lat, region.lon, coreR);
+                  const rawSurface = latLonToVector3(region.lat, region.lon, 1);
+                  const cos = Math.cos(spin.current.y);
+                  const sin = Math.sin(spin.current.y);
+                  const rot = (p: [number, number, number]): [number, number, number] => [
+                    p[0] * cos + p[2] * sin,
+                    p[1],
+                    -p[0] * sin + p[2] * cos,
+                  ];
+                  const core = rot(rawCore);
+                  const normal: [number, number, number] = (() => {
+                    const len = Math.hypot(core[0], core[1], core[2]) || 1;
+                    return [core[0] / len, core[1] / len, core[2] / len];
+                  })();
+                  return {
+                    name: region.id,
+                    core,
+                    surface: rot(rawSurface),
+                    normal,
+                  };
+                }),
             },
           });
         }

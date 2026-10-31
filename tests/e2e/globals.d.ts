@@ -131,6 +131,18 @@ declare global {
       surfaceReady(): boolean;
       /** Read (no arg) or set the surface material's specular intensity. */
       specularIntensity(v?: number): number | null;
+      /**
+       * Per pin: WORLD positions of the core and the surface anchor, plus the
+       * outward normal. Exists so the negative suite can place an injected light
+       * at the pin instead of at a screen pixel pair — the earlier N1 attempt used
+       * (291, 482), which is `project()` output and 291 world units off the globe.
+       */
+      pinsWorld(): Array<{
+        name: string;
+        core: [number, number, number];
+        surface: [number, number, number];
+        normal: [number, number, number];
+      }>;
     };
   }
 }
