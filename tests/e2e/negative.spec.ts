@@ -375,7 +375,7 @@ test.describe('negative tests: each check fails when its defect is present', () 
      *
      *   light      2e27939^  <directionalLight position={[-5.2,-2.2,-4.6]} intensity={0.32}
      *                        color="#2f6fb8" />
-     *   material   38aa091^  specularIntensity 0.18, roughness floor 0 (water = mirror)
+     *   material   38aa091^  specularIntensity 0.18 (PRE-FIX value; shipped is 0), roughness floor 0
      *
      * The 3.3 METRIC IS UNCHANGED. W1 stays at r/R 0.91, 180deg, size 40, sigma-3 blurred
      * ratio <= 1.15, excluded only by the measured specular mask. No threshold moves, and no

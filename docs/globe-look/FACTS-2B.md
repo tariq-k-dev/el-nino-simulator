@@ -295,8 +295,9 @@ exclusion for either: it landed at (768.2, 375.8), 89 px from the material lobe.
 
 - **Exists**: `docs/globe-look/glint-before-after.png`, **1288×810**, **240,349 bytes**,
   committed by `a2d0be5` (2026-10-30 00:21).
-- **Left panel** = the approved look (`specularIntensity` 0.18, overlay on). **Right panel**
-  = the current build (`specularIntensity` 0, overlay on). The bright lobe is present on the
+- **Left panel** = the **pre-fix** state (`specularIntensity` 0.18, overlay on), rejected for
+  clipping. **Right panel** = the shipped and **approved** build (`specularIntensity` 0,
+  overlay on) — Tariq accepted this attenuated look (V2). The bright lobe is present on the
   left and absent on the right at the same latitude/longitude, which is the si=0 signature.
 - **The right panel is the CURRENT build**: the only commit touching `src/scene/` since
   `a2d0be5` is `079726c`, which adds `window.__THREE` inside the `VITE_E2E` block

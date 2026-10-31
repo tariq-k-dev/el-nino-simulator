@@ -12,8 +12,10 @@ restored**. Measured as a difference image (B1, 2A2), the current build keeps on
 the 60% retention the task set. Two candidates were built and measured on the real
 render — both still clip — so nothing was adopted and `specularIntensity` stays **0**.
 
-Look at `glint-before-after.png`: left is the approved look (si 0.18), right is the
-current build. The bright lobe above and right of centre is the missing piece.
+Look at `glint-before-after.png`: left is the **pre-fix** state (si 0.18, since rejected for
+clipping), right is the shipped build (si 0). The bright lobe above and right of centre is the
+piece the attenuation removed — **Tariq accepted that loss** (verdict V2), so the right-hand
+panel is the approved look now.
 
 | candidate | default-view max | vs Dt | area6 | clipped (worst of 12 az) | largest blob | mean luma | verdict |
 |---|---|---|---|---|---|---|---|
@@ -26,8 +28,11 @@ thresholds were not relaxed and no grazing-falloff shader was shipped. The fallo
 patch was written and **never reached the GPU** — `onBeforeCompile` measured zero
 invocations because R3F only renders on invalidation, so the patch compiled nothing and
 the si=0.18 frame came back pixel-identical to the unpatched reference (max 164.07,
-area6 15469, clipped 49). Fixing that is the open work, and it is the prerequisite for
-reinstating the glint at all.
+area6 15469, clipped 49).
+
+**Resolved, not open:** reinstating the material lobe was abandoned rather than fixed. Tariq
+accepted the attenuated look (V2) on the measured numbers, so si 0 with the overlay alone is
+the shipped and approved state, guarded by spec 3.9.
 
 ---
 

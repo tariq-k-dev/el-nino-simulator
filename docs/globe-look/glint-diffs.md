@@ -1,5 +1,16 @@
 # Difference table (default view, clock frozen, R_fit 325.959, RMS 0.290, 360 rays)
 
+> **READ THIS FIRST — which row is the shipped look.**
+>
+> `Dt` and `Dm` were measured with **`specularIntensity` 0.18**, which is the **PRE-FIX** state.
+> Commit 38aa091 set the material specular to **0** and it has been 0 by design ever since: the
+> GGX lobe clipped at grazing angles (49 clipped px in the worst case).
+>
+> **The shipped state is si 0 + overlay on, so the glint the product actually shows is the `Do`
+> row** (max 88.52, area6 9594). Tariq accepted that attenuated look (verdict V2). The sentinel in
+> spec 3.9 guards `Do`, not `Dt`. Rows `Dt`/`Dm` are kept because they are the evidence for the
+> attenuation decision, not because they describe the current render.
+
 | diff | max | p99.9 | area>6 | area>3 | bbox | centroid | r/R |
 |---|---:|---:|---:|---:|---|---|---:|
 | Dt = F[0.18][on] - F[0][off] (approved total) | 164.07 | 105.46 | 15468 | 38024 | [608, 178, 964, 714] | [789.5, 347.8] | 0.4859 |

@@ -104,34 +104,36 @@ export const GLOBE_LOOK = {
     roughness: 0.9,
     metalness: 0,
     /**
-     * Dielectric specular intensity — **0.18**, i.e. the approved look's value,
-     * restored after SPECLOCK Step 1 zeroed it.
+     * Dielectric specular intensity — **0**, and 0 BY DESIGN since 38aa091.
      *
-     * STEP 1 had a correct diagnosis and an over-broad fix. `specularIntensity: 0`
-     * genuinely took the clipped pixel count at azimuths 150/210/240 from 49/24/38
-     * to 0/0/0, and the named cause was right: **grazing-angle sun glint on the
-     * ocean**, offenders at r/R 0.73-1.00, worst at the limb (az 240, r/R 0.998) —
-     * where a GGX lobe tightens into a point.
+     * The GGX lobe this scales was the clipping source: at si 0.18 it produced
+     * **49 clipped pixels** in the worst case (azimuth 240, at r/R 0.998 where the lobe
+     * tightens into a point); at si 0 the count is **0/0/0** at azimuths 150/210/240.
+     * three's own lighting model is therefore switched off entirely for the surface.
      *
-     * But the glint was not ONLY a clip. Measured as a difference image at the
-     * default view (B1 of 2A2, clock frozen, `si 0.18 - si 0`), this term
-     * contributed a peak of **162.93/255** at (805, 299); the additive overlay
-     * shader alone reaches only **88.52/255** at (782, 374). Zeroing the term kept
-     * 54% of the glint's peak — a visible loss, not a no-op.
+     * The visible glint comes ONLY from the surface overlay shader, i.e. the `specular`
+     * look flag. That shader is an additive lobe, not a clip source, and it is what the
+     * approved look actually shows.
      *
-     * So the term is back at 0.18 and the grazing behavior is handled where it
-     * actually misbehaves, by `grazingFalloff` below. Face-on the lobe is exactly the
-     * approved one; at the limb it is driven to zero before it can clip.
+     * This is an ACCEPTED ATTENUATED LOOK (Tariq, verdict V2): the overlay alone peaks at
+     * **88.52/255** with area6 **9594**, against the pre-fix total of 164.07/15469 that
+     * included the material term. The attenuation was signed off on those numbers.
+     *
+     * `grazingFalloff` below is retained because it still shapes the material term if the
+     * intensity is ever raised again, but with si 0 it contributes nothing.
+     *
+     * Do not describe 0.18 as the current value anywhere: it is the PRE-FIX state, and it
+     * survives only as the `Dt`/`Dm` columns of docs/globe-look/glint-diffs.md.
      */
     specularIntensity: 0,
     /**
      * Grazing-angle fade on the material's specular term.
      *
      * `smoothstep(inner, outer, dot(N, V))` multiplies `material.specularColor`, so
-     * the lobe survives face-on and vanishes before the silhouette. This is what let
-     * `specularIntensity` go back to 0.18 after Step 1 zeroed it: the clipping was
-     * always a grazing-incidence artifact (GGX tightening into a point at the limb,
-     * r/R 0.73-1.00, worst at 0.998), not a problem with the lobe in general.
+     * the lobe survives face-on and vanishes before the silhouette. It addresses the
+     * grazing-incidence artifact (GGX tightening into a point at the limb, r/R
+     * 0.73-1.00, worst at 0.998) rather than the lobe in general — but it is inert at
+     * the shipped `specularIntensity: 0`, which removes the term outright.
      *
      * 0.05 -> 0.35 corresponds to view angles 87deg -> 69deg, i.e. the outer ~20 deg
      * of the visible hemisphere. Narrower and the fade band is inside the limb where

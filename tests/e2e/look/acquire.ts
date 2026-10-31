@@ -457,9 +457,13 @@ const DEFECT_SOURCE = function installDefectEngine(): void {
        *
        * So the faithful defect restores BOTH halves, from git:
        *   - the light: 2e27939^, position (-5.2, -2.2, -4.6), intensity 0.32, #2f6fb8;
-       *   - the material: 38aa091^, specularIntensity 0.18 with the roughness map detached
-       *     so water is the mirror the roughness floor existed to prevent (floor 0 gave a
-       *     ~14 px blown disc at 0.037% clipped, per that commit's own message).
+       *   - the material: 38aa091^, specularIntensity 0.18 — the PRE-FIX value; the shipped
+       *     surface is 0 since 38aa091 — with the roughness map detached so water is the
+       *     mirror the roughness floor existed to prevent (floor 0 gave a ~14 px blown disc
+       *     at 0.037% clipped, per that commit's own message).
+       *
+       * The 0.18 defaults below are the DEFECT's restored state, not a claim about the shipped
+       * look. Nothing outside a negative test may set this value.
        *
        * `roughnessFloor: 0` is expressed as `roughnessMap = null` + `roughness = 0`, which is
        * what the probe did and what "no floor" means on the material.

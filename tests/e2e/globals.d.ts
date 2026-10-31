@@ -30,6 +30,9 @@ export interface GlobeProbeHandle {
   defaultOrbit(): { distance: number; elevationDeg: number };
   /** Flip internal look flags (the raw store; `__look.set` is the narrow API). */
   setLookFlags(patch: Record<string, boolean>): Record<string, boolean>;
+  /** Read the current look flags. Declared here since 2B-C2B: the glint sentinel has to know
+   * whether the `specular` overlay is ON before differencing two frames against it. */
+  lookFlags(): Record<string, boolean>;
 }
 
 /** Mirrors `SceneGateState` from src/lib/engine/sceneGate.ts (E2E builds only). */
