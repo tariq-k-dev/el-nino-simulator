@@ -7,6 +7,7 @@ import { thermalColor, thermalVector } from '@/lib/model';
 import { latLonToVector3 } from '@/lib/regions';
 import { hotspotFragment, hotspotVertex } from '@/scene/shaders';
 import { GLOBE_LOOK, getLookFlags, subscribeLookFlags } from '@/scene/globeLook';
+import { lookTime } from '@/scene/lookTime';
 
 interface HotspotProps {
   region: RegionDefinition;
@@ -55,7 +56,12 @@ export function Hotspot({ region, sst, active, headline, onSelect }: HotspotProp
   );
 
   useFrame((state, delta) => {
-    uniforms.uTime.value = state.clock.elapsedTime;
+    /*
+     * Same rule as the atmosphere: a pulsing shader ring is a function of this uniform, and a
+     * frozen scene is only frozen if every time-driven term stops. `animate:true` (the live
+     * product) leaves the value identical to the raw clock.
+     */
+    uniforms.uTime.value = lookTime(look.animate, state.clock.elapsedTime);
     const [r, g, b] = thermalVector(sst);
     (uniforms.uColor.value as THREE.Color).setRGB(r, g, b);
 

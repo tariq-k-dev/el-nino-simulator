@@ -11,6 +11,7 @@ import {
 } from '@/scene/shaders';
 import { SHELLS } from '@/scene/constants';
 import { GLOBE_LOOK, getLookFlags, subscribeLookFlags } from '@/scene/globeLook';
+import { lookTime } from '@/scene/lookTime';
 import { installTextureTracking } from '@/lib/engine/textureTimeline';
 
 // Instrument three's DefaultLoadingManager BEFORE any texture is requested.
@@ -221,7 +222,15 @@ export function Globe({ sst, sunDirection }: GlobeProps) {
       const targetIntensity = 0.6 + heat * 0.1;
       u.uIntensity.value += (targetIntensity - u.uIntensity.value) * step;
       u.uSunGlow.value += (0.75 + heat * 0.2 - u.uSunGlow.value) * step;
-      u.uTime.value = t;
+      /*
+       * `lookTime`, not `t`.
+       *
+       * The breathe term (`shaders.ts:114`) is a function of this uniform, so writing the raw
+       * clock kept the halo breathing while every other effect was frozen - the reference frame
+       * captured two frames of the same pose and found up to 3.0 luma of difference in 13608 px.
+       * With `animate:true` (the live product) this is `t` unchanged.
+       */
+      u.uTime.value = lookTime(look.animate, t);
     }
 
     if (overlayMat.current) {
