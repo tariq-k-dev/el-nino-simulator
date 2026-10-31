@@ -132,6 +132,23 @@ function runOnce(file, port) {
          */
         '--output',
         path.join('.cache', 'e2e-results', file.replace('.spec.ts', '')),
+        /*
+         * Traces OFF in the batched runner, and this is the actual fix for the ENOENT.
+         *
+         * The config sets `trace: 'retain-on-failure'`, so Playwright writes a trace stream to
+         * `.playwright-artifacts-<n>/traces/…` and finalises it on `browserContext.close`. Under
+         * SwiftShader on this machine the writer regularly loses the race and close throws
+         * `ENOENT ... traces/<id>-recording<N>.trace` — which Playwright reports as the test's
+         * failure, masking whatever the test actually did. It hit 3.2 here while 3.2 passed on
+         * its own moments earlier, so it is teardown noise, not a measurement.
+         *
+         * A per-file `--output` directory did not stop it, because the artifact subdirectory is
+         * numbered per worker and recreated regardless. The traces are a debugging aid that the
+         * failure screenshot already substitutes for; a suite whose verdict flips on a
+         * filesystem race is worth less than the traces. Turn them off here, keep them for
+         * `e2e:raw`, and never let teardown decide a result.
+         */
+        '--trace=off',
       ],
       {
         cwd: root,
