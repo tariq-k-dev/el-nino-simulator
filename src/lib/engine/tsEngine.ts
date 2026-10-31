@@ -19,7 +19,6 @@ import type {
   TimelinePoint,
 } from '@/types/enso';
 import { computeMetrics } from '@/lib/model';
-import { maxOf } from '@/lib/look/helpers';
 import type { HistoricalRow } from '@/lib/data/parse';
 import {
   ANALOG_LIMIT,
@@ -58,7 +57,26 @@ export function createTsEngine({ rows }: TsEngineOptions): DataEngine {
   const anomalies = ordered.map((row) => row.nino_34_anomaly);
   const source = ordered.length > 0 ? ordered[0].source : '';
 
-  const summaryFor = (sstAnomaly: number): HistoricalSummary => ({
+  /**
+ * Largest anomaly, by loop.
+ *
+ * NOT imported from `src/lib/look/helpers.ts`, and the reason is a real regression this
+ * file caused once: that module imports `pngjs`, which is Node-only. Importing it here put
+ * pngjs in the browser bundle and the app failed to boot at all — every e2e spec timed out
+ * on `window.__globe` never appearing. The measurement helpers are a test-side library and
+ * the app must not depend on them.
+ *
+ * `Math.max(...anomalies)` is the obvious form and is fine at the current ~1000 rows, but
+ * it passes one argument per element and the series length is data-driven. A loop costs
+ * nothing and cannot blow the argument cap if the dataset grows.
+ */
+function maxAnomalyOf(values: number[]): number {
+  let best = -Infinity;
+  for (const v of values) if (v > best) best = v;
+  return best === -Infinity ? 0 : best;
+}
+
+const summaryFor = (sstAnomaly: number): HistoricalSummary => ({
     // count(*)
     rowCount: ordered.length,
     // strftime(min(date), '%Y-%m') / max(...)
@@ -67,7 +85,7 @@ export function createTsEngine({ rows }: TsEngineOptions): DataEngine {
     // round(avg(nino_34_anomaly), 3)
     meanAnomaly: r3(mean(anomalies)),
     // round(max(nino_34_anomaly), 3)
-    maxAnomaly: r3(maxOf(anomalies)),
+    maxAnomaly: r3(maxAnomalyOf(anomalies)),
     // strftime(arg_max(date, nino_34_anomaly), '%Y-%m')
     maxAnomalyDate: monthKey(
       argMaxDate(ordered.map((row) => ({ date: row.date, value: row.nino_34_anomaly }))),

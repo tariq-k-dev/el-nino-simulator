@@ -208,3 +208,55 @@ describe('no Math.min/max spread over an unbounded array', () => {
     expect([three.x0, three.x1, three.y0, three.y1]).toEqual([0, 1, 0, 1]);
   });
 });
+
+// ------------------------------------------------------- app/bundle boundary ---
+
+describe('the app must not import the test-side measurement library', () => {
+  /**
+   * `src/lib/look/helpers.ts` imports `pngjs`, which is Node-only. Anything under `src/`
+   * that imports it drags pngjs into the browser bundle and the app stops booting — which
+   * is exactly what happened when `tsEngine.ts` imported `maxOf` from there: no page error,
+   * no build failure, every e2e spec timing out on `window.__globe` never appearing.
+   *
+   * The build cannot catch it (Rollup bundles pngjs happily) and the unit tests cannot
+   * catch it (they run in Node, where pngjs works). Only this can.
+   */
+  it('no src/ module imports src/lib/look/helpers', async () => {
+    const offenders: string[] = [];
+    for (const { abs, rel } of await sources()) {
+      if (!rel.startsWith('src/')) continue;
+      // The helpers module itself, and its own test, are the only legitimate holders.
+      if (rel === 'src/lib/look/helpers.ts' || rel === 'src/lib/look/helpers.test.ts') continue;
+      const src = await readFile(abs, 'utf8');
+      if (/from\s+['"][^'"]*lib\/look\/helpers['"]/.test(src)) offenders.push(rel);
+    }
+    expect(
+      offenders,
+      `These app modules import the test-side helpers (which pull pngjs into the bundle):\n  ` +
+        offenders.join('\n  '),
+    ).toEqual([]);
+  });
+
+  it('the production bundle contains no pngjs', async () => {
+    /*
+     * The functional half of the same rule, asserted on the artefact rather than the source.
+     * Skipped when dist/ has not been built, so the guard never fails for the wrong reason.
+     */
+    const assetsDir = path.join(REPO, 'dist', 'assets');
+    let files: string[];
+    try {
+      files = (await readdir(assetsDir)).filter((f) => /\.js$/.test(f));
+    } catch {
+      return; // no dist/ — nothing to assert
+    }
+    const leaks: string[] = [];
+    for (const f of files) {
+      const src = await readFile(path.join(assetsDir, f), 'utf8');
+      if (/PNG\.sync\.read|pngjs/.test(src)) leaks.push(f);
+    }
+    expect(
+      leaks,
+      `pngjs is in the browser bundle (the app will not boot):\n  ${leaks.join('\n  ')}`,
+    ).toEqual([]);
+  });
+});
