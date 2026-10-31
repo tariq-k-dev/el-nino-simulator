@@ -305,3 +305,21 @@ unrelated chrome changed.
 and cross-load on fresh contexts) found exact zeros everywhere, so it did not replicate the harness
 that showed the flip. The reference frame's three-process verification is the current evidence for
 cross-process reproducibility; the mechanism of the negative.spec flip remains an open question.
+
+#### 5.5 addendum (Step 3B) — N10's in-page floor at the 3A2 baseline
+
+No threshold, window or test body changed; this is measurement only. N10 alone (`negative.spec.ts`
+through the batched runner, one process per run) at **BASE `5db822c`** and **HEAD `f440814`**:
+
+| tag | runs | in-page `maxAbs` | in-page differing px | assertion reached | verdict |
+|---|---|---|---:|---|---|
+| BASE `5db822c` | 3 | 0.7152 each | 165, 189, 165 | `differing <= 50` | **3/3 red** |
+| HEAD `f440814` | 3 | 0.7152 each | 114, 95, 126 | `differing <= 50` | **3/3 red** |
+| BASE drift control | 1 | 0.7152 | **11** | — | green |
+
+The luma half of the tolerance (`<= 1.0`) never fails: `maxAbs` is 0.7152 — exactly one green level —
+in all seven runs. What fails is the PIXEL COUNT, at 95-189 px against a limit of 50, and the same
+commit also produced 11 px once. That is the intermittency D9 records, now measured five more times
+with the BASE commit failing three of four, which classifies the earlier full-run failure as **R2**
+(the baseline moved after D9), not as a 3A2 regression. The cross-load pair, printed only, read
+0.9278 luma over 2558 px in the run that reached it.

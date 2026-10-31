@@ -326,7 +326,9 @@ fetch genuinely pending and no progress events arrive — which is exactly what
 
 `look.spec.ts` **9**, `negative.spec.ts` **14**, `globe.spec.ts` **5** = **28** for `e2e:look`.
 Full suite: boot 10, determinism 2, **frame 20**, gate-clock 1, globe 5, harden 8, history-gate 1,
-limb 2, look 9, negative 14, scene-gate 2 = **74** (was 54 before Step 3A2 added `frame.spec.ts`).
+limb 2, look 9, negative 14, **ref 2**, scene-gate 2 = **76** (was 54 before Step 3A2 added
+`frame.spec.ts`; the 74 recorded earlier omitted `ref.spec.ts`'s two tests from the sum while the
+runner itself reported 76).
 The runner's `expectedCounts()` holds these and the summary fails on any mismatch, so a file that
 exits 0 having run fewer tests still fails the run. `frame.spec.ts` also carries a 5 min per-file
 backstop (2x its measured 125 s, rounded up).

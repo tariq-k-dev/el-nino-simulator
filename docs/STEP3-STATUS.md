@@ -499,3 +499,58 @@ Step 3A is **closed**. Final gate: **784 unit tests in 33 files**, `tsc -b` / `l
 artifact — see "Known load-sensitive test" in `docs/E2E.md`. Nothing was changed to make it pass: no
 threshold, timeout, retry or test body. Five commits carry the step: the uTime gates, the N10
 frame-identity re-spec, the strict-0 reference frame, the occluder registry, and this waiver.
+
+## Step 3B — N10 baseline gate (step N, read-only measurement)
+
+Pre-registered order: **BASE `5db822c` x3, HEAD `f440814` x3, BASE x1 as a drift control**. Each run
+is its own batched-runner process over `negative.spec.ts` only; the served bundle was rebuilt with
+`pnpm build:e2e` after each detached checkout, and the bundle stamp reported `built from <sha>` every
+time. The summary JSON was copied to `.cache/n10/<tag>-run<N>-<stamp>-summary.json` immediately after
+each run, before anything else ran.
+
+`git diff --stat 5db822c f440814 -- package.json pnpm-lock.yaml` is **empty** (N1 precondition, met).
+
+### The three earlier full-run failures (from `batched-summary-20261031-133622-full-a2.json`)
+
+| spec | test title | failing assertion |
+|---|---|---|
+| `look.spec.ts:246` | 3.4 terminator: visible on the real render, soft on the albedo-neutral one | `Error: the surface is still flattened AFTER a reload (null: map=false emissiveMap=false)` at `look/flatAlbedo.ts:141` |
+| `look.spec.ts:318` | 3.4 terminator: every evaluated azimuth, real visibility and flat softness | same `assertSurfaceRestored` throw, called from `look.spec.ts:352` |
+| `negative.spec.ts:579` | N10: the glint sentinel FAILS when si 1.0 and the roughness floor are restored | `expect(cc.differing).toBeLessThanOrEqual(IN_PAGE_MAX_DIFFERING_PX)` at `negative.spec.ts:729` — Expected <= 50, Received **73** |
+
+### What `6d5ac91` changed, and why it was not in the step plan
+
+`6d5ac91` changed **only `src/layout/frame.ts` and its unit test** (+45/-32 lines): the free rectangle
+became the INSET rectangle (`freeW = innerW`, no longer `innerW - 2 * padding`) and the padding moved
+into the radius formula (`rMax = 0.5 * min(freeW, freeH) - padding`), with `degenerate` re-expressed as
+`!(rMax > 0)`. That is the prompt's own definition of `r_max` from `step3-a2.md` step B, which the 3A2
+implementation had folded into `free`; the numbers `rMax`, `dContain`, `dTarget`, `dx` and `dy` are
+identical either way, only the REPORTED `free` changed. It was not in the step plan because step D
+(F3/F4) had already shipped against the folded definition and the difference was found while writing
+the docs table, so it landed as a refactor commit after the fact rather than as a planned step.
+
+### Measured readings — N10 alone
+
+| tag | commit | run | file | passed/failed/exp. | in-page `maxAbs` | in-page differing px | verdict |
+|---|---|---|---:|---:|---:|---|---|
+| BASE | `5db822c` | 1 | failed | 13/1/14 | 0.7152 | **165** | red |
+| BASE | `5db822c` | 2 | failed | 13/1/14 | 0.7152 | **189** | red |
+| BASE | `5db822c` | 3 | failed | 13/1/14 | 0.7152 | **165** | red |
+| HEAD | `f440814` | 1 | failed | 13/1/14 | 0.7152 | **114** | red |
+| HEAD | `f440814` | 2 | failed | 13/1/14 | 0.7152 | **95** | red |
+| HEAD | `f440814` | 3 | failed | 13/1/14 | 0.7152 | **126** | red |
+| DRIFT | `5db822c` | 1 | **passed** | 14/0/14 | 0.7152 | **11** | green |
+
+Every red run failed on the SAME assertion — `negative.spec.ts:729`, the differing-pixel count
+`<= 50` — and never on the luma assertion (`<= 1.0`), which read exactly 0.7152 in all seven runs.
+The other 13 tests in the file passed in every run, so the red is confined to N10's in-page noise
+floor. Because the count is only printed on a run that reaches the print before the assertion, the
+cross-load row is present only in the DRIFT run: `maxAbs = 0.9278` over **2558 px**, print-only.
+
+**Reading: R2.** BASE fails 3/3 on the same assertion, so this is **not** caused by 3A2 — the baseline
+moved after D9. Recorded, and step A proceeds. Consequence for this session:
+**N10 is red in isolation at the baseline** and stays red through 3A2; a red N10 in step F's full run
+is therefore expected and is not evidence about 3B, but it also cannot be used as a pass signal.
+S6 was not triggered. The drift control (BASE, run 7, 11 px) confirms the failure is not a property of
+the environment standing still either — the SAME commit produced 165, 189, 165 and then 11 px, which is
+the intermittency `docs/STEP3-DIAG.md` D9 records, now with the BASE commit failing 3 of 4.
