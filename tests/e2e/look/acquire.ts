@@ -660,7 +660,16 @@ const DEFECT_SOURCE = function installDefectEngine(): void {
             color: params.dayColor ?? 0xffffff,
             gradientMap,
           });
-          const mesh = o as unknown as { material: MatLike };
+          /*
+           * Record the ORIGINAL MATERIAL OBJECT on the mesh before replacing it.
+           *
+           * `uninstall()` resets material PROPERTIES; it cannot put back a material INSTANCE that was
+           * swapped out. Without this, N6d left the Earth as a toon surface for every later test —
+           * measured as N10 failing afterwards, because its defect searches for a
+           * `MeshPhysicalMaterial` and found none.
+           */
+          const mesh = o as unknown as { material: MatLike; userData: Record<string, unknown> };
+          if (!mesh.userData.__origMaterial) mesh.userData.__origMaterial = mesh.material;
           mesh.material = toon;
         });
         return;
@@ -772,6 +781,16 @@ const DEFECT_SOURCE = function installDefectEngine(): void {
        * never in `savedExtra`, and one rebuilt after the replay would keep the flat values. Applying
        * the pristine record to every MeshPhysicalMaterial present is idempotent and order-free.
        */
+      if (closing.name === 'toonTerminator') {
+        // Put back the material INSTANCE, not just its values.
+        scene.traverse((o) => {
+          const m = o as ObjLike & { userData?: Record<string, unknown> };
+          const orig = m.userData?.__origMaterial as MatLike | undefined;
+          if (!orig) return;
+          (o as unknown as { material: MatLike }).material = orig;
+          delete m.userData!.__origMaterial;
+        });
+      }
       if (closing.name === 'flatAlbedo' && pristineSurface) {
         const pr = pristineSurface;
         scene.traverse((o) => {

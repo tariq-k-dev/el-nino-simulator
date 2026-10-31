@@ -585,6 +585,39 @@ test.describe('negative tests: each check fails when its defect is present', () 
     const controlStats = measureGlint(control.current, control.off, control.geometry);
     expect(controlStats.valid, `control frames invalid: ${controlStats.invalidReason}`).toBe(true);
     expect(controlStats.max).toBeGreaterThanOrEqual(GLINT_GATE.maxMin);
+
+    /*
+     * INPUT VALIDITY, asserted at this test's own door.
+     *
+     * N10's defect only reaches a `MeshPhysicalMaterial`. A previous test that swapped the surface for
+     * another material type (N6d installs a MeshToonMaterial) and failed to restore the INSTANCE left
+     * nothing for this defect to act on, and the symptom was a 102.55 lift instead of 190.28 — which
+     * reads as "the glint metric is wrong". It was an earlier test's leak. Assert the precondition so
+     * the failure names its own cause.
+     */
+    const surfaceType = await page.evaluate(() => {
+      /*
+       * Count PHYSICAL materials rather than taking the last mesh's type.
+       *
+       * The first version reported the last non-shader mesh in traversal order, which is a PIN
+       * (`MeshStandardMaterial`) — so it accused N7 of a leak it had not caused. What N10 actually needs
+       * is that at least one `MeshPhysicalMaterial` exists for its defect to find.
+       */
+      let physical = 0;
+      const types: string[] = [];
+      (window.__scene as { traverse(fn: (o: unknown) => void): void }).traverse((o) => {
+        const m = o as { isMesh?: boolean; material?: { type?: string } };
+        if (!m.isMesh || !m.material?.type) return;
+        if (types.indexOf(m.material.type) < 0) types.push(m.material.type);
+        if (m.material.type === 'MeshPhysicalMaterial') physical += 1;
+      });
+      return { physical, types };
+    });
+    expect(
+      surfaceType.physical,
+      `no MeshPhysicalMaterial in the scene (found: ${surfaceType.types.join(', ')}) — an earlier test leaked ` +
+        `a material swap, so N10's defect cannot act. Fix the leak, not this test.`,
+    ).toBeGreaterThan(0);
     expect(controlStats.max, `control already over the upper bound: ${controlStats.max}`).toBeLessThanOrEqual(
       GLINT_GATE.maxMax,
     );
