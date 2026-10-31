@@ -4,6 +4,7 @@ import App from '@/App';
 import '@/index.css';
 import { initEngine } from '@/lib/engine/init';
 import { engineStore } from '@/lib/engine/store';
+import { startInsetsObserver } from '@/layout/useInsets';
 
 // Diagnostic hooks are E2E/dev-build only.
 //
@@ -52,6 +53,20 @@ if (!container) throw new Error('Root element #root not found');
 // StrictMode's double-invoked effects, and so an `idle` policy can wait for
 // `load` + visibility without a component having to stay mounted.
 initEngine();
+
+/*
+ * Start the occluder registry.
+ *
+ * Here rather than in a component because it is process-wide and must be running before the first
+ * camera frame that reads it: `FrameRig` reads `getInsets()` imperatively inside `useFrame`, so a
+ * registry that started in a mount effect would report zeros for the first frames and the globe
+ * would visibly jump into place once it caught up. `startInsetsObserver` measures synchronously
+ * before returning, and its own MutationObserver picks the panels up as React mounts them.
+ *
+ * It observes only — it reads rectangles and publishes numbers. Nothing here, and nothing in
+ * `layout/useInsets.ts`, writes to the camera, the scene or the DOM.
+ */
+startInsetsObserver(document, window);
 
 createRoot(container).render(
   <StrictMode>

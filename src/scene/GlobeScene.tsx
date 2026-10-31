@@ -15,6 +15,9 @@ import type { RegionId, ScenarioMetrics } from '@/types/enso';
 import { Starfield } from '@/scene/Starfield';
 import { EARTH_RADIUS, SUN_POSITION } from '@/scene/constants';
 import { CameraRig } from '@/scene/CameraRig';
+import { FrameRig } from '@/scene/FrameRig';
+import type { FrameProbeSink } from '@/layout/framing';
+import { createFrameProbe } from '@/lib/frameProbe';
 import { EarthSystem } from '@/scene/EarthSystem';
 import type { SpinState } from '@/scene/EarthSystem';
 import {
@@ -178,6 +181,14 @@ export function GlobeScene({
   onLoaded,
 }: GlobeSceneProps) {
   const controlsRef = useRef<OrbitControlsImpl | null>(null);
+  /**
+   * The slot `FrameRig` publishes its per-frame state into.
+   *
+   * A ref rather than state, for the same reason the insets are read imperatively: this is read
+   * once per poll by a spec and never by React, so storing it in state would re-render the scene
+   * subtree 60 times a second for nothing.
+   */
+  const frameProbe = useRef<FrameProbeSink | null>(null);
   const spin = useRef<SpinState>({
     y: 0,
     paused: false,
@@ -336,6 +347,19 @@ export function GlobeScene({
              * VITE_E2E gate as `__globe`; check-assets fails the production
              * build if it leaks.
              */
+            /*
+             * `__frame` — the framing probe (step 3A2).
+             *
+             * Same gate as `__globe` above: `VITE_E2E === '1' && ?debug`. That mismatch (build
+             * gated on the env var alone, probe on the env var AND the query string) is parked and
+             * REPORTED, not fixed here — changing it would change how every existing spec has to
+             * navigate. A framing spec therefore uses `?debug&framing=live`, exactly as it would
+             * need `?debug` for `__globe`.
+             *
+             * It reads through `frameProbe.current`, the ref `FrameRig` publishes into, so a locked
+             * page reports the locked truth rather than a stale live state.
+             */
+            __frame: createFrameProbe(() => frameProbe.current?.state ?? null, camera),
             __lookToggles: {
               set: (patch: Partial<GlobeLookFlags>) => setLookFlags(patch),
               get: () => getLookFlags(),
@@ -649,6 +673,14 @@ export function GlobeScene({
       </Suspense>
 
       <CameraRig activeRegion={activeRegion} spin={spin} controlsRef={controlsRef} focusNonce={focusNonce} />
+
+      {/*
+        Framing (step 3A2). Sits AFTER <CameraRig> for the same reason the rig above does: React runs
+        effects child-first, and the fly-to must be the writer that settles last inside a frame. In
+        locked mode this renders nothing and writes nothing, which is what keeps every legacy spec
+        byte-identical.
+      */}
+      <FrameRig controlsRef={controlsRef} probe={frameProbe} />
 
       {/*
         Zoom bounds are expressed against the globe RADIUS, not as magic numbers.
