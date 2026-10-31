@@ -43,7 +43,7 @@ import { checkGlare, checkLocalPeak, checkPins, checkRim, checkRingCast } from '
 import { requireValidPins } from './look/pinValidity';
 import { acquireGlintFrames } from './look/glintAcquire';
 import { measureGlint } from './look/glint';
-import { GLINT_GATE, GLINT_VIEW } from './look/glintConstants';
+import { GLINT_GATE, GLINT_RECORDED, GLINT_VIEW } from './look/glintConstants';
 import type { Bitmap, DiscGeometry } from '../../src/lib/look/helpers';
 import { focalPxFromFov, shellSilhouetteOffsetPx } from '../../src/lib/look/helpers';
 import { SHELLS } from '../../src/scene/constants';
@@ -517,11 +517,37 @@ test.describe('negative tests: each check fails when its defect is present', () 
      * INVALID measurement (max 0 => "the toggle did not take effect"). Either way the sentinel
      * must not pass: an invalid input cannot satisfy a numeric window.
      */
-    const passed = defectStats.valid && defectStats.max >= GLINT_GATE.maxMin && defectStats.max <= GLINT_GATE.maxMax;
+    const passed =
+      defectStats.valid && defectStats.max >= GLINT_GATE.maxMin && defectStats.max <= GLINT_GATE.maxMax;
     expect(passed, 'the 3.9 sentinel PASSED with the overlay off, so it is not measuring glint').toBe(false);
-    expect(defectStats.max, 'the overlay-off difference must collapse, not stay near 88').toBeLessThan(
-      GLINT_GATE.maxMin,
-    );
+
+    /*
+     * The signal, stated so that BOTH honest outcomes satisfy it.
+     *
+     * With the overlay off, `F_current` and `F_off` are the same render, so `measureGlint` has two
+     * legitimate answers depending on whether a rounding residual survives the round trip:
+     *
+     *   - `valid: false, max: NaN` — the frames are byte-identical and the toggle had no effect
+     *     (the common case; asserted as INVALID, never as a pass), or
+     *   - `max` small but finite — a 1-2/255 residual from the material/overlay re-render.
+     *
+     * An earlier version asserted `max < 70.8` unconditionally, which FAILED on NaN — the honest
+     * identical-frames outcome. The test was wrong, not the check: a NaN comparison is false, so
+     * the assertion reported a failure for the most collapsed measurement possible.
+     */
+    if (defectStats.valid) {
+      expect(
+        defectStats.max,
+        `the overlay-off difference must collapse, not stay near ${GLINT_RECORDED.max}`,
+      ).toBeLessThan(GLINT_GATE.maxMin);
+      expect(defectStats.area6, 'the overlay-off area6 must collapse too').toBeLessThan(GLINT_GATE.area6Min);
+    } else {
+      expect(
+        defectStats.invalidReason,
+        'an invalid measurement must say why, not be silently skipped',
+      ).toContain('identical');
+      expect(Number.isNaN(defectStats.max), 'an invalid measurement carries no max').toBe(true);
+    }
 
     // Restore the shipped overlay for whatever runs next.
     await page.evaluate(() => window.__globe!.setLookFlags({ specular: true }));
