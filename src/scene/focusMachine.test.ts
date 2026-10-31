@@ -254,3 +254,54 @@ describe('focus machine — helpers', () => {
     expect(s.context.regionId).toBeNull();
   });
 });
+
+/**
+ * Step 3B2 — the `userZoomed` semantics that changed.
+ *
+ * The flag used to mean "the fit must not write the distance", and anything that moved the distance
+ * (including the live fly-to) set it. It now means what its name says: the USER moved the distance.
+ * The live fly-to writes no distance at all, so the only writers left are the wheel/pinch (USER_ZOOM)
+ * and RESET, which clears it. These cases pin that from the machine's side — the director's side
+ * (that the live fly-to never dispatches USER_ZOOM) is what `singleWriter`/`frame-director` cover.
+ */
+describe('focus machine — userZoomed semantics (3B2)', () => {
+  it('CLOSE does not clear userZoomed: a zoomed close keeps the zoomed distance', () => {
+    const zoomed = at('focused', { userZoomed: true });
+    const returning = step(zoomed, { type: 'CLOSE' });
+    expect(returning.state).toBe('returning');
+    expect(returning.context.userZoomed).toBe(true);
+  });
+
+  it('RESET clears userZoomed from every state, including focused and returning', () => {
+    for (const state of FOCUS_STATES) {
+      const cleared = step(at(state, { userZoomed: true }), { type: 'RESET' });
+      expect(cleared.state, state).toBe('returning');
+      expect(cleared.context.userZoomed, state).toBe(false);
+      expect(cleared.context.regionId, state).toBeNull();
+    }
+  });
+
+  it('RESET then USER_ZOOM re-latches the flag (a zoom during the return still wins)', () => {
+    let s = step(at('focused', { userZoomed: true }), { type: 'RESET' });
+    expect(s.context.userZoomed).toBe(false);
+    s = step(s, { type: 'USER_ZOOM' });
+    expect(s.state).toBe('returning');
+    expect(s.context.userZoomed).toBe(true);
+  });
+
+  it('a full close cycle leaves userZoomed false when it started false', () => {
+    let s = step(initialFocus(), { type: 'SELECT', regionId: 'pacific' });
+    s = step(s, { type: 'ARRIVED' });
+    expect(s.context.userZoomed).toBe(false);
+    s = step(s, { type: 'CLOSE' });
+    s = step(s, { type: 'RETURNED' });
+    expect(s.state).toBe('idle');
+    expect(s.context.userZoomed).toBe(false);
+  });
+
+  it('USER_ZOOM is idempotent and allocates nothing the second time', () => {
+    const once = step(at('idle'), { type: 'USER_ZOOM' });
+    const twice = step(once, { type: 'USER_ZOOM' });
+    expect(twice).toBe(once);
+  });
+});
