@@ -647,3 +647,56 @@ flag from OrbitControls events; doing only that would have made the fit re-take 
 every close and ease 3.3534 → 3.7784, a visible zoom-out that does not happen today. `lastFit` was
 invalidated by any writer, so reproducing its behaviour requires the wider latch. Five smaller
 deviations are in §7.2-7.6, including an honest statement of what the source guard cannot catch.
+
+### 3B / F — the full batched run, and 3B closed
+
+One full run, `.cache/full3b/full-20261031-153356.log`, bundle stamp `srcHash 53451b321c19
+distHash 0f5e57d7b6fe (built from 784168a)`. Summary copied IMMEDIATELY on completion to
+`.cache/full3b/batched-summary-20261031-160157-full-3b.json`, before anything else ran.
+
+**14 files ran, 13 passed, 1 failed, 0 retried. 90 tests: 89 passed, 1 failed, 0 skipped, 90 expected**
+(the runner's own total reads `actual 90 / expected 90`, `mismatch false`). 24.8 min total.
+
+| file | status | passed | failed | skipped | expected | retries | wall |
+|---|---|---:|---:|---:|---:|---:|---:|
+| `boot.spec.ts` | passed | 10 | 0 | 0 | 10 | 0 | 404.1 s |
+| `camera-golden.spec.ts` | passed | 9 | 0 | 0 | 9 | 0 | 126.5 s |
+| `determinism.spec.ts` | passed | 2 | 0 | 0 | 2 | 0 | 15.8 s |
+| `frame-director.spec.ts` | passed | 5 | 0 | 0 | 5 | 0 | 42.1 s |
+| `frame.spec.ts` | passed | 20 | 0 | 0 | 20 | 0 | 119.3 s |
+| `gate-clock.spec.ts` | passed | 1 | 0 | 0 | 1 | 0 | 51.3 s |
+| `globe.spec.ts` | passed | 5 | 0 | 0 | 5 | 0 | 53.1 s |
+| `harden.spec.ts` | passed | 8 | 0 | 0 | 8 | 0 | 109.4 s |
+| `history-gate.spec.ts` | passed | 1 | 0 | 0 | 1 | 0 | 15.9 s |
+| `limb.spec.ts` | passed | 2 | 0 | 0 | 2 | 0 | 15.6 s |
+| `look.spec.ts` | passed | 9 | 0 | 0 | 9 | 0 | 317.5 s |
+| `negative.spec.ts` | **failed** | 13 | 1 | 0 | 14 | 0 | 193.0 s |
+| `ref.spec.ts` | passed | 2 | 0 | 0 | 2 | 0 | 13.3 s |
+| `scene-gate.spec.ts` | passed | 2 | 0 | 0 | 2 | 0 | 11.0 s |
+| **total** | **13/14** | **89** | **1** | **0** | **90** | **0** | **24.8 min** |
+
+Some summary entries carry `skipped: null`, not 0 — the runner's `parseCounts` only writes a skipped
+count when Playwright prints one, and this suite has no skipped tests. The arithmetic is
+89 + 1 + 0 = 90.
+
+**The one red test, in the full run and in isolation:**
+
+| run | test | assertion | in-page `maxAbs` | differing px |
+|---|---|---|---:|---:|
+| full run | `negative.spec.ts:579` N10 | `expect(cc.differing).toBeLessThanOrEqual(50)` at `:729` | 0.7152 | **236** |
+| isolated rerun (`.cache/full3b/isolated-negative-20261031-160108.log`) | same | same | 0.7152 | **242** |
+
+**N10 is classified by the step-N reading, which was R2**, and not re-derived here: the BASE commit
+`5db822c` failed 3 of 3 (165 / 189 / 165 px) while HEAD failed 3 of 3 (114 / 95 / 126 px), and the
+drift control at BASE passed at 11 px. The failure therefore predates 3A2 and is not evidence about
+3B; it also cannot be used as a pass signal. Nothing was edited to make it pass — no threshold,
+window, timeout, retry or test body (S2 not triggered).
+
+**What improved against the 3A2 full run:** `look.spec.ts` is **9/9** here, where 3A2's run had both
+3.4 terminator cases red on `assertSurfaceRestored` (`flatAlbedo.ts:141`, "the surface is still
+flattened AFTER a reload"). That failure did not reproduce, and nothing was changed to address it.
+
+**Step 3B closes** with: gate green at **848 unit tests / 38 files**, S1 at strict 0 with the sha
+unchanged in two processes, S3 at 5.55e-17 R against a 1e-5 tolerance, `frame.spec.ts` 20/20 unedited,
+globe/scene-gate/limb green, production bundle free of the locked marker, and one red test that the
+baseline gate already owned before this session started.
