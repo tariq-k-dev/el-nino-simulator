@@ -3,6 +3,11 @@
 Read-only investigation. Every number below is measured, and where a claim in the earlier
 prompts turns out to be wrong it is stated plainly rather than reconciled.
 
+Corrections applied in 2B-C1-FIX: section **b** replaces "a projection error, not a
+floating pin"; section **c** replaces the "(12, 12.8]" derivation; section **d** replaces
+the "GLINT REMOVED" verdict with the mechanical V1/V2 result. Each superseded sentence is
+quoted once, in place, so it cannot be re-quoted by accident.
+
 ## a) PIN RENDER DRIFT — the render never changed
 
 Two builds served side by side, same viewport (1280x800), same frozen clock, same flags,
@@ -45,54 +50,91 @@ Correct classification by `sun · normal` at az 0: pacific 0.457 and us-west 0.8
 
 ![pins day and night](pins-day-night.png)
 
-## b) PACIFIC PIN — a projection error, not a floating pin
+## b) PACIFIC PIN — the pin floats BY DESIGN; `project()` is correct
 
-At az 0, all four pins, straight from `pinAnchors()` and `project()`:
+**Verdict: a floating pin, not a harness error.** The core is lifted off the surface on
+purpose, so it genuinely projects outside the disc silhouette at some azimuths. Nothing in
+the scene or the projection helper needs fixing; what was wrong was the earlier sentence
+calling this a projection bug.
 
-| pin | world position | \|position\| | normal·camDir | proj (x,y) | r/R |
-|---|---|---:|---:|---|---:|
-| pacific | (-0.9541, -0.0385, 0.5509) | **1.10242** | 0.4574 | (291.03, 482.31) | **1.1013** |
-| us-west | (-0.4402, 0.6635, 0.7625) | **1.10242** | 0.8561 | (449.63, 243.57) | 0.7569 |
-| se-asia | (-0.4124, -0.0577, -1.0207) | **1.10242** | -0.8877 | (540.80, 328.83) | 0.3750 |
-| horn-africa | (0.8113, 0.1534, -0.7305) | **1.10242** | -0.5747 | (852.04, 296.86) | 0.7243 |
+### Where the float is defined
 
-At az 180 (`camDir` flips to (0, 0.3429, -0.9394)):
+| constant | value | file:line |
+|---|---:|---|
+| `GLOBE_LOOK.pins.anchorRadius` | 1.012 | `src/scene/globeLook.ts:41` |
+| `GLOBE_LOOK.pins.idleLift` | 1.035 | `src/scene/globeLook.ts:33` |
+| `GLOBE_LOOK.pins.coreOffset` | 0.055 | `src/scene/globeLook.ts:39` |
 
-| pin | proj (x,y) | r/R | facing |
-|---|---|---:|---|
-| pacific | (895.98, 359.01) | 0.7963 | false |
-| us-west | (759.39, 160.05) | 0.8232 | false |
-| se-asia | (818.00, 574.48) | 0.7656 | true |
-| horn-africa | (316.66, 442.40) | **1.0017** | true |
+`1.012 × 1.035 + 0.055 = **1.10242**` — exactly the |position| of every anchor.
+`anchorRadius × idleLift` is applied at `src/scene/GlobeScene.tsx:298-299` (and
+`Hotspot.tsx:32,71`); `coreOffset` offsets the core along the surface normal at
+`Hotspot.tsx:243`.
 
-**Which case it is: a wrong projection in the helper, NOT a floating pin.**
+### The manual check, Pacific at az 0
 
-1. All four anchors have **identical** |position| = 1.10242, so no pin has a larger world
-   radius than its siblings. A floating pin would show here and does not.
-2. 1.10242 is `anchorRadius (1.012) × idleLift (1.035) + coreOffset (0.055)`, read straight
-   from `GLOBE_LOOK.pins` — the documented core offset, not an accident.
-3. `rOverR_pin` equals `rOverR_proj` to 4 decimals on every pin, so the pin list and
-   `project()` agree with each other; the error is in the projected radius.
-4. The specified silhouette for a sphere seen from d = 3.3534 with R = 1 is **325.557 px**.
-   The core sits at 1.10242 R, i.e. 0.10242 R = **33.4 px** above the surface, so its
-   projection is legitimate for a point ABOVE the disc — it genuinely is outside the
-   silhouette in screen space.
-5. But `horn-africa` at az 180 measures r/R = **1.0017** while `|position|` is the same
-   1.10242: identical world radius, wildly different projected radius.
+Camera distance `d = 3.35336 R` (`__globe.defaultOrbit().distance`), disc radius
+`R_fit = 325.557 px`, `K = 1/sqrt(d² − 1) = 0.312424`, `|p| = 1.10242`, `n·cam = 0.4574`:
 
-Point 5 is the bug: **`project()` half-accepts a point that lies outside the sphere's
-depth range**. A correct projection of a point at 1.1024 R in the limb plane falls outside
-the tangent silhouette only near the limb, and the amount it falls out depends on the
-angle between the point and the view axis — which is what differs between pacific and
-horn-africa. The helper reports the pin's CORE (floating above the surface by design) and
-then downstream code treats that screen position as if it were a SURFACE position and
-divides by the limb radius.
+```
+lateral = |p| · sqrt(1 − (n·cam)²)   = 1.10242 · 0.88919    = 0.980339
+depth   = d   − |p| · (n·cam)        = 3.35336 − 0.504247   = 2.849113
+r/R     = (lateral / depth) / (1/sqrt(d²−1))
+        = (0.980339 / 2.849113) / 0.312424
+        = 0.344086 / 0.312424                              = 1.1013
+```
 
-**Not fixed here.** It is a harness/measurement-model error, not a scene error, but fixing
-it means deciding what `r/R` should mean for a point above the surface — the answer is
-"project the pin's SURFACE ANCHOR for the r/R test, keep the core for the pixel probe" —
-and that changes 3.6's validity rule. That is a design decision, and this step is
-read-only.
+The harness reports **1.1013** from `__globe.project()`, and the pixel distance agrees:
+`hypot(291.03 − 640, 482.31 − 400) = 358.55 px`, `358.55 / 325.557 = 1.1013`. The same
+closed form reproduces **all eight** rows below to 4 dp, so `project()` is not the problem.
+
+The surface point is the same direction re-normalised to radius 1.0:
+`r/R = (sqrt(1−n²)/(d−n)) / K = 0.9829`, i.e. 319.98 px from centre — inside the limb. The
+38.57 px gap to the core is the float, seen on screen.
+
+### Why one world radius gives two different r/R
+
+Projected radius depends on the angle **from the view axis**, not on the world radius alone.
+Two points at |p| = 1.10242 R sit at different depths and different lateral distances from
+that axis, so they cannot project to the same r/R. The earlier claim that they "cannot
+project to 1.1013 and 1.0017" was backwards: they must differ, and they do.
+
+### All four pins, core vs surface point
+
+`r/R of the CORE` is the harness value. `r/R of the SURFACE POINT` is the same direction at
+radius 1.0. `px lift` is the screen distance between them.
+
+| az | pin | proj (x, y) | n·cam | r/R core | surface (x, y) | r/R surface | px lift |
+|---:|---|---|---:|---:|---|---:|---:|
+| 0 | pacific | (291.03, 482.31) | 0.4574 | **1.1013** | (328.57, 473.46) | 0.9829 | 38.57 |
+| 0 | us-west | (449.63, 243.57) | 0.8561 | 0.7569 | (473.38, 263.08) | 0.6624 | 30.74 |
+| 0 | se-asia | (540.80, 328.83) | −0.8877 | 0.3750 | (548.08, 334.06) | 0.3475 | 8.97 |
+| 0 | horn-africa | (852.04, 296.86) | −0.5747 | 0.7243 | (835.22, 305.04) | 0.6668 | 18.70 |
+| 180 | pacific | (895.98, 359.01) | −0.4814 | 0.7963 | (875.19, 362.34) | 0.7316 | 21.06 |
+| 180 | us-west | (759.39, 160.05) | −0.4433 | 0.8232 | (749.60, 179.74) | 0.7557 | 21.99 |
+| 180 | se-asia | (818.00, 574.48) | 0.8518 | 0.7656 | (795.83, 552.75) | 0.6703 | 31.04 |
+| 180 | horn-africa | (316.66, 442.40) | 0.6702 | **1.0017** | (354.20, 437.48) | 0.8854 | 37.86 |
+
+Read the two extremes together: `pacific@0` and `horn-africa@180` both sit at
+|p| = 1.10242 R and read 1.1013 and 1.0017 — the correct projections of one lifted radius
+seen at two different angles from the view axis. 0.10242 R = 33.4 px at this camera, which is
+the order of the lifts measured.
+
+The surface point stays inside the disc everywhere (max 0.9829 = pacific@0), which is the
+opposite of the core's behaviour and is itself a proof that the lift — not the projection —
+is what puts the core outside.
+
+### Consequence for the 3.5 validity rule
+
+`r/R ≤ 0.97` (`measure.ts:777`, with `minFacingDot ≥ 0.1`) is a **conservative proxy, not a
+physical law**: a floating core can be visible outside the disc. Its purpose is to guarantee
+the core sample box lands on surface rather than sky, which is what `measureRingCast` needs.
+Pins rejected by it are reported INVALID and never counted as passes: `pacific@0` (1.100 R)
+and `horn-africa@180` (1.000 R) are the two that fall out, leaving 5 of 16 pin/azimuth pairs
+valid.
+
+**Not changed here.** Projecting the surface anchor for the r/R test, while keeping the core
+for the pixel probe, would change the validity rule; that is a design decision and this step
+is documentation plus read-only measurement.
 
 ## c) TERMINATOR AUDIT
 
@@ -113,62 +155,156 @@ read-only.
 6. **Cross-terminator step** = the largest adjacent 1 px luma step BETWEEN those two
    crossings, i.e. inside the terminator only.
 
-### 12-azimuth table (max adjacent 1 px step)
+### 12-azimuth table — full, with the offset of the maximum
 
-| az | night mean | cross step /255 | width px | width % R_fit |
-|---:|---:|---:|---:|---:|
-| 0 | 11.04 | 5.05 | 31.0 | 9.51% |
-| 30 | 19.09 | 3.73 | 176.5 | 54.20% |
-| 60 | 27.84 | 13.69 | 104.4 | 32.06% |
-| 90 | 15.72 | 9.31 | 117.8 | 36.18% |
-| 120 | 13.09 | 11.67 | 48.1 | 14.78% |
-| 150 | 9.88 | 6.55 | 30.9 | 9.49% |
-| 180 | 6.68 | 3.34 | 15.6 | 4.80% |
-| 210 | 5.58 | 2.95 | 12.0 | 3.68% |
-| 240 | 5.14 | 2.10 | 22.1 | 6.79% |
-| 270 | 5.35 | 2.58 | 18.0 | 5.54% |
-| 300 | 6.15 | 2.62 | 19.8 | 6.08% |
-| 330 | 8.04 | 6.53 | 75.7 | 23.23% |
+Regenerated against HEAD (`test-results/look/terminator-az<az>.json`). `t` is the profile
+coordinate along the sun axis, in px from the disc centre; it is where the largest adjacent
+step occurs, not a distance from the limb.
+
+| az | night mean | cross step /255 | step at t | width px | width % R_fit | night frac |
+|---:|---:|---:|---:|---:|---:|---:|
+| 0 | 11.04 | 5.05 | +163 | 31.0 | 9.51% | 15.40% |
+| 30 | 19.09 | 3.73 | +238 | 176.5 | 54.20% | 2.65% |
+| 60 | 27.84 | **13.69** | **−99** | 104.4 | 32.06% | 0.40% |
+| 90 | 15.72 | 9.31 | +109 | 117.8 | 36.18% | 4.97% |
+| 120 | 13.09 | 11.67 | +272 | 48.1 | 14.78% | 21.29% |
+| 150 | 9.88 | 6.55 | +243 | 30.9 | 9.49% | 36.77% |
+| 180 | 6.68 | 3.34 | +288 | 15.6 | 4.80% | 38.57% |
+| 210 | 5.58 | 2.95 | +134 | 12.0 | 3.68% | 37.55% |
+| 240 | 5.14 | 2.10 | −191 † | 22.1 | 6.79% | 36.41% |
+| 270 | 5.35 | 2.58 | −254 | 18.0 | 5.54% | 45.81% |
+| 300 | 6.15 | 2.62 | +301 | 19.8 | 6.08% | 50.33% |
+| 330 | 8.04 | 6.53 | +272 | 75.7 | 23.23% | 36.58% |
 
 **Exact max: 13.6900 /255 at az 60.**
 
-The locked gate is 16/255 = ceil(1.25 x max), which implies a measured max in (12, 12.8].
-**13.69 is inside that interval and it also EXCEEDS the 12/255 STOP rule**
-from the 2A3 prompt. That STOP was tripped, reported, and then the data-driven gate was
-adopted in 2A4 — the threshold was not tuned to pass; it was stated as a constant that
-already equalled the derivation.
+† Re-deriving the step from the stored 2-dp profile reproduces the stored value on 10 of 12
+rows; az 60 recomputes 13.68 vs 13.69 and az 240 recomputes 2.58 vs 2.10. That is 2-dp
+rounding of the saved profile, not a measurement disagreement. Az 240 is 7x below the gate
+either way and does not touch the maximum.
 
-### Why only W1 remains in 3.3
+### Where 16/255 came from — and why "13.69 is inside (12, 12.8]" is wrong
 
-W2–W8 were retired in 2A4 because measured on the real render they were not regressions:
-W5 (disc centre) 1.240, W8 (upper centre) 1.191, W6 excused by the specular mask, and
-W2/W3/W4/W7 within 0.12 of 1.0. A window that fires on the scene doing its job is a
-false-positive generator. W1 (0.91 R, 180 deg) stayed because it is the (344,392)
-regression window and it passes at 0.976.
+`ceil(1.25 × 13.69) = **18**, not 16`. So a gate of 16 does **not** imply a measured max in
+(12, 12.8], and 13.69 is not inside that interval. That sentence is withdrawn.
 
-### Were clouds really OFF for 3.3?
+The real origin, recovered from git — it is **not UNKNOWN**:
 
-**Yes — the flag was applied, and the cloud explanation for W5/W8 was wrong.** The
-measured cause of the W5/W8 local peaks is that they are **inside the disc's own bright
-body**: W5 sits at the exact centre (r/R 0.000) where the blurred luma is at its maximum,
-and its "surrounding annulus" at 8–20 px is still on the same broad highlight, so the
-ratio is high no matter what clouds do. `measureBlueCircle` calls
-`setLayers({ stars: false, pins: false, rings: false, clouds: false })` before every
-capture, and in 2A3 the W5/W8 readings were unchanged by that call.
+| step | commit | max cross step | derived gate |
+|---|---|---:|---:|
+| whole-disc 90→10% scan, 11 azimuths | `3a8c511` | **12.31/255** (az 30) | `ceil(1.25 × 12.31) = 16/255` |
+| width+step moved inside `terminatorFalloff` | `460e333` | **13.69/255** (az 60) | `ceil(1.25 × 13.69) = 18/255` |
 
-## d) GLINT STATUS
+`3a8c511`'s commit message states it plainly — *"max cross-terminator step is 12.31/255 at
+az 30 … the derived gate ceil(1.25 x max) would be 16/255"* — and its
+`docs/globe-look/terminator-12az.md` records the same derivation. `460e333` then changed the
+metric (az 30 fell 12.31 → 3.73, az 60 rose 2.90 → 13.69) and **carried the constant 16 over
+unchanged**, documented at `tests/e2e/look.spec.ts:332` as *"fixed 16/255 (2A4), equals the
+2A3 ceil(1.25 x max) derivation"*. That description is accurate about where 16 came from and
+wrong about the current max, which now gives 18.
 
-**Verdict: GLINT REMOVED — needs Tariq's decision.** The material's specular term is 0 and
-the overlay alone does not carry the approved look.
+**16 is kept**, because it is the tighter of the two readings, and lowering a gate after a
+metric change is how a threshold gets tuned to a render. But it is a
+**pre-`terminatorFalloff` derivation**, and the headroom is now measured against 13.69, not
+12.31.
 
-| quantity | max | area6 |
-|---|---:|---:|
-| **Dt** approved total (si 0.18, overlay on, minus all specular off) | 164.07 | 15468 |
-| **Do** what the overlay still draws (current build, minus all off) | 88.52 | 9594 |
+**Headroom at the current gate: 16 / 13.69 = 1.169.** The worst azimuth has 2.31/255 left
+before it fails. The gate is *tighter* than its own stated formula would give (16 vs 18),
+which is the safe direction — the opposite of tuning.
 
-`max(Do)/max(Dt)` = **0.5395** against a 0.60 floor; `area6(Do)/area6(Dt)` = 0.6202 against
-0.5. V1 fails on peak retention, so the material lobe was not redundant with the overlay.
-`tests/e2e/look/glint.spec.ts` **does not exist** — correctly, because the rule is to write
-it only when V1 passes or a candidate is adopted.
+### Default view, in full
 
-Documented in `docs/globe-look/CLIPPED-FACTS.md` with `glint-before-after.png`.
+| quantity | value |
+|---|---:|
+| day plateau (max of the median-of-5 profile inside the falloff) | **124.02** |
+| night plateau (min) | **69.43** |
+| 90% level = night + 0.9·(day − night) | **118.56** |
+| 10% level = night + 0.1·(day − night) | **74.89** |
+| measured width (sub-pixel crossings) | **31.0 px** |
+| as a fraction of R_fit (325.664, RMS 0.244) | **9.51%** (gate ≥ 6%) |
+| falloff window | t −158..+206 |
+
+### 3.3 covers W1 ONLY — and why
+
+3.3 is a **single** probe window: W1 at 0.91 R_fit, 180° clockwise from +x, and it passes at
+ratio 0.982. W2–W8 were retired in 2A4: W5 (disc centre) 1.240, W8 (upper centre) 1.191, W6
+excused by the measured specular mask, W2/W3/W4/W7 within 0.12 of 1.0.
+
+**W5 and W8 sit on the disc's own bright content, and clouds were OFF.** `measureBlueCircle`
+applies `setLayers({ stars: false, pins: false, rings: false, clouds: false })` before every
+capture, and in 2A3 the W5/W8 readings were **unchanged** by that call. W5 is at the exact
+centre (r/R 0.000) where the sigma-3-blurred luma is at its maximum, and its 8–20 px annulus
+is still on the same broad highlight, so the ratio is high whatever the clouds do. The
+"clouds explain W5/W8" story was wrong and is withdrawn.
+
+## d) GLINT STATUS — V2: ATTENUATED, not removed
+
+Applying the rule mechanically, no judgement calls:
+
+| test | measured | threshold | met? |
+|---|---:|---:|---|
+| `max(Do) / max(Dt)` — peak retention | **0.5395** | ≥ 0.60 | **no** |
+| `area6(Do) / area6(Dt)` — lobe area | **0.6202** | ≥ 0.50 | **yes** |
+
+**V1 is not met** (the peak floor fails), so `tests/e2e/look/glint.spec.ts` is still
+correctly absent — the rule is to write it only when V1 passes or a candidate is adopted.
+The **area** criterion is met and the peak is 54% retained, so the overlay is not gone; it is
+dimmer than the approved look. Verdict:
+
+> **V2: glint ATTENUATED, not removed.**
+
+The label **"GLINT REMOVED" is retired.** It overstated what happened: the material's
+specular lobe is at 0, but the additive overlay still draws **9594 px above 6/255 with a peak
+of 88.52/255** — 62% of the approved lobe's area. Nothing about the shader is changed by
+this step and no candidate was tried.
+
+### The overlay, named
+
+| item | value |
+|---|---|
+| file | `src/scene/Globe.tsx:321-334` |
+| component | `Globe`, inside the `<EarthSystem>` group, rendered after the surface `<mesh>` |
+| mesh | anonymous JSX `<mesh scale={SHELLS.overlay} renderOrder={3}>` — a `sphereGeometry(1, 128, 128)` shell; **no `name=` is set**, so it is found by order, not by name |
+| material | inline `<shaderMaterial>`, ref `overlayMat` (`Globe.tsx:54`), `transparent`, `depthWrite={false}`, `blending={THREE.AdditiveBlending}` |
+| shaders | `surfaceOverlayVertex` (`src/scene/shaders.ts:139`), `surfaceOverlayFragment` (`src/scene/shaders.ts:153`) |
+| uniforms | `uOceanMask`, `uSunDirection`, `uHeatColor`, `uHeat`, `uSpecularPower`, `uSpecularStrength`, `uSheen`, `uAlphaCap`, `uEmitCap`, `uSunGlow` (`Globe.tsx:166-180`) |
+| shell radius | `SHELLS.overlay = 1.0012` (`src/scene/constants.ts:41`) |
+| tuning constants | `GLOBE_LOOK.specular = { strength: 0.5, power: 160, sheen: 0.045, alphaCap: 0.72, emitCap: 0.92 }` (`src/scene/globeLook.ts:157-164`) |
+| enabled by | the `specular` look flag — `DEFAULT_LOOK_FLAGS.specular = true` (`globeLook.ts:295`), read as `look.specular` in the `{look.specular && …}` guard at `Globe.tsx:321`; togglable at run time via `__globe.setLookFlags({ specular })` |
+
+The material's own lobe is `specularIntensity: 0` (`globeLook.ts:126`);
+`__look.specularIntensity(v)` drives it for candidate comparisons.
+
+### Dt / Dm / Do at the default view (clock frozen, pins/rings/stars off)
+
+Re-measured against the current `build:e2e` bundle at HEAD. The committed table's numbers
+reproduce; p99.9 and area3 move in the third digit because two captures are two frames of a
+live renderer. Committed values in brackets.
+
+| diff | max | p99.9 | area>6 | area>3 | bbox | centroid | r/R |
+|---|---:|---:|---:|---:|---|---|---:|
+| **Dt** = F[0.18][on] − F[0][off] (approved total) | **164.07** | 105.87 *(105.46)* | **15469** *(15468)* | 38185 *(38024)* | [608,178,965,714] | (789.5, 347.8) | **0.4863** |
+| **Dm** = F[0.18][on] − F[0][on] (what si=0 removed) | **162.93** | 104.30 *(104.01)* | **5991** *(5991)* | 9601 *(9583)* | [701,178,859,714] | (803.7, 301.0) | **0.5876** |
+| **Do** = F[0][on] − F[0][off] (overlay today) | **88.52** | 73.96 *(73.89)* | **9594** *(9594)* | 22574 *(22571)* | [611,306,964,587] | (780.8, 376.0) | **0.4388** |
+
+The two centroids are 75 px apart — (803.7, 301) for the material's lobe vs (780.8, 376) for
+the overlay — which is why `sunGlintPoint`'s single orthographic point was never a valid
+exclusion for either: it landed at (768.2, 375.8), 89 px from the material lobe.
+
+### `glint-before-after.png`
+
+- **Exists**: `docs/globe-look/glint-before-after.png`, **1288×810**, **240,349 bytes**,
+  committed by `a2d0be5` (2026-10-30 00:21).
+- **Left panel** = the approved look (`specularIntensity` 0.18, overlay on). **Right panel**
+  = the current build (`specularIntensity` 0, overlay on). The bright lobe is present on the
+  left and absent on the right at the same latitude/longitude, which is the si=0 signature.
+- **The right panel is the CURRENT build**: the only commit touching `src/scene/` since
+  `a2d0be5` is `079726c`, which adds `window.__THREE` inside the `VITE_E2E` block
+  (`GlobeScene.tsx:244`). It changes no material, light, shader or camera — `src/scene/` is
+  identical apart from that one assignment — so the render it shows is still the current one.
+- The panels are **tight crops of the canvas**, not 1280×800 captures — the limb is outside
+  the frame top and bottom in both — so they cannot be matched pixel-for-pixel to a fresh
+  full-canvas render. The numeric Dt/Dm/Do table above is the authority; the image is the
+  visual illustration.
+
+Documented in `docs/globe-look/CLIPPED-FACTS.md` and `docs/globe-look/glint-diffs.md`.

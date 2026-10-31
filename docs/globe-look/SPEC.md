@@ -17,13 +17,59 @@ that is `fixme`, the delivery failure is recorded in `tests/e2e/negative.spec.ts
 | **3.4 width** | 90%->10% of (day plateau - night plateau), median of 5 parallel lines, measured ONLY inside the terminator's own locally monotonic falloff. | >= 6% of R_fit | **31.0 px = 9.51%** | — |
 | **3.4 night fraction** | Share of disc pixels with luma < 25% of the day mean. | 10-30% | **15.40%** | — |
 | **3.4 night mean** | Mean luma of those night pixels. | >= 4/255 | **11.04** (all 12 az) | — |
-| **3.4 hard step** | Max adjacent 1 px luma step between the 90% and 10% crossings, all 12 azimuths. | <= 16/255 | **13.69** (az 60) | — |
-| **3.5 pin core day** | Brightest pixel in the 13x13 core box of a day-side pin. | (255,255,185) +-12 | **[255, 255, 189]** | — |
-| **3.5 pin core night** | Same, night-side pin. | (255,255,182) +-12 | **[255, 255, 182]** | — |
-| **3.5 no blowout** | Pure-white pixels (R,G,B all >= 250) in the core. | == 0 | **0** on all four | — |
+| **3.4 hard step** | Max adjacent 1 px luma step between the 90% and 10% crossings, all 12 azimuths. | <= 16/255 (fixed constant; equals `ceil(1.25 x 12.31)` from the pre-`terminatorFalloff` scan, i.e. `ceil(1.25 x 13.69)` would now be 18) | **13.69** (az 60) — headroom 1.169 | — |
+| **3.5 P1 visible** | Median luma of the valid core pixels (circle of radius `coreFrac 0.6` x the measured core radius). | >= 180 | **247.3 .. 249.8** | N7 (pending C2) |
+| **3.5 P2 no blowout** | Count of core pixels with `min(R,G,B) >= 250`. | == 0 | **0** on every valid pin | N7 (pending C2) |
+| **3.5 P3 still tinted** | Median saturation `(max-min)/max` of the core pixels. | >= 0.15 | **0.282 .. 0.420** | N8 (pending C2) |
+| **3.5 P4 amber ordering** | Median `R >= 240`, `G >= 200`, `B <= G`. | all three | **[255,255,149] / [255,255,179] / [255,255,183]** | N8 (pending C2) |
+| **3.5 validity** | A pin is gated only if `n·cam >= 0.1`, `r/R <= 0.97` and `n >= 5` samples; otherwise INVALID, listed, never counted. | 4 of 16 pin/az pairs valid | pacific@0 1.100 R, horn-africa@180 1.001 R, us-west@90 0.980 R fall out on r/R; the rest face away | — |
+| **3.5 day/night coverage** | The suite fails if no valid DAY pin (`n·sun > 0.2`) or no valid NIGHT pin (`n·sun < -0.1`) is found across az {0,90,180,270}. | >= 1 of each | **1 day (us-west@0), 2 night (se-asia@180, pacific@270)** | — |
 | **3.6 no cast light** | Mean luma of the r 30..60 px annulus, pins ON vs OFF. | abs(delta) <= max(3%, 1.5 x noise%) | us-west 2.849%, se-asia 0.018%, horn-africa 0.002% | N1 (fixme) |
 | **3.7 console** | Warnings/errors and page errors from first navigation. | == 0 | **0** (3 driver notices filtered) | — |
 | **3.8 zoom** | The five globe.spec.ts zoom cases. | all pass | **5/5** | — |
+
+## 3.5 — the semantic gate, in full
+
+3.5 no longer measures a colour window. The four predicates hold whatever the exact pixel
+values drift to, and the measured medians are printed as **INFORMATION** so drift stays
+visible without a threshold having to be invented for it.
+
+- **P1 visible** — median core luma >= 180. The core must read against ocean, cloud and the
+  terminator at once.
+- **P2 no blowout** — zero core pixels with `min(R,G,B) >= 250`. Clipping is what 3.2 exists
+  to prevent on the disc; a pin core is no exception.
+- **P3 still tinted** — median saturation >= 0.15, i.e. `R = 255` implies `B <= 217`. A grey
+  or white core has lost the amber.
+- **P4 amber ordering** — median `R >= 240`, `G >= 200`, `B <= G`. Brightness plus tint is
+  not enough: the channel ORDER is what makes it amber rather than merely warm.
+
+**Validity rule** (checked before any verdict): `n·cam >= 0.1` (the core is on the visible
+hemisphere), `r/R <= 0.97` (the sample box is on surface, not sky) and `>= 5` pixels.
+Anything failing is reported INVALID and never counted as a pass. `r/R <= 0.97` is a
+conservative proxy — see `FACTS-2B.md` §b: the pin core floats 0.10242 R above the surface
+by design, so a *visible* core can sit outside the disc.
+
+**Day/night coverage assertion**: the suite fails if no valid day-side pin (`n·sun > 0.2`) or
+no valid night-side pin (`n·sun < -0.1`) is found across az {0, 90, 180, 270}. Without it the
+gate could silently pass on four day-side pins.
+
+**Measured, az {0, 90, 180, 270} — INFORMATIONAL, not gated:**
+
+| az | pin | side | n | median RGB | luma | saturation | P1 | P2 | P3 | P4 |
+|---:|---|---|---:|---|---:|---:|---|---|---|---|
+| 0 | us-west | day | 15 | (255, 255, 179) | 249.5 | 0.298 | ok | ok | ok | ok |
+| 90 | horn-africa | terminator | 9 | (255, 255, 183) | 249.8 | 0.282 | ok | ok | ok | ok |
+| 180 | se-asia | night | 22 | (255, 255, 149) | 247.3 | 0.416 | ok | ok | ok | ok |
+| 270 | pacific | night | 15 | (255, 255, 148) | 247.3 | 0.420 | ok | ok | ok | ok |
+
+Twelve of the sixteen pin/azimuth pairs are INVALID and reported as such: nine face away
+(`n·cam < 0.1`) and three project outside 0.97 R (pacific@0 1.100, horn-africa@180 1.001,
+us-west@90 0.980).
+
+**Negative tests N7 / N8 — pending C2.** N7 will force the core to pure white (P2 and P4 must
+go RED); N8 will desaturate it to grey (P3 must go RED while P1 stays green, which is the
+only way to prove P3 is not redundant with P1). Neither exists yet, and the two existing
+3.5 rows that used to claim "—" for a negative test now name them.
 
 ## What changed versus the earlier proxies
 
@@ -47,6 +93,8 @@ that is `fixme`, the delivery failure is recorded in `tests/e2e/negative.spec.ts
   included `(300, 392)` at 1.045 R — outside the disc, in pure atmosphere halo — which
   produced a 3.7x "local peak" that was the halo behaving correctly.
 - **Specular is removed from the material.** `specularIntensity` is 0; the visible glint is
-  the overlay shader alone. Measured as a difference image, that keeps 53.95% of the
-  approved look's glint peak, which is why `CLIPPED-FACTS.md` carries
-  "GLINT REMOVED - needs Tariq's decision".
+  the overlay shader alone. Measured as a signed difference image that keeps **53.95%** of
+  the approved look's glint peak but **62.0%** of its `area6` lobe, so the verdict is
+  **V2: glint ATTENUATED, not removed** — the earlier "GLINT REMOVED" label overstated it.
+  `tests/e2e/look/glint.spec.ts` stays absent: the rule is to write it only when V1 passes
+  (peak >= 60%) or a candidate is adopted, and neither happened.

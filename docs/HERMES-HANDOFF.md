@@ -188,7 +188,7 @@ No `.skip` and no `.only` anywhere in `tests/e2e`.
 | **3.6 ring cast** | `look.spec.ts:412` | **passing** | `|delta%| ≤ Math.max(3, 1.5 × noise%)` (`measure.ts:1010`) | `c73578f` |
 | **3.7 console** | `look.spec.ts:455` | **passing** | app warnings/errors + pageerrors == 0 | `3b63953` |
 | **3.8 zoom** | `globe.spec.ts` | **passing (5/5)** | unchanged since `9757015` | `9757015` |
-| **glint spec** | — | **MISSING (correctly)** | `tests/e2e/glint.spec.ts` does not exist; the rule says write it only if verdict V1 passes or a candidate is adopted, and the verdict was GLINT REMOVED | n/a |
+| **glint spec** | — | **MISSING (correctly)** | `tests/e2e/glint.spec.ts` does not exist; the rule says write it only if verdict V1 passes or a candidate is adopted, and the verdict is **V2: ATTENUATED, not removed** (peak 0.5395 < 0.60; area6 0.6202 >= 0.50) | n/a |
 | **N1** pointLight → 3.6 | `negative.spec.ts:137` | **fixme** | expects 3.6 delta% to exceed `max(3, 1.5×noise)` | `079726c` |
 | **N2** si=1.0 + roughness 0 → 3.2 | `negative.spec.ts:190` | **passing** | expects clipped > 0 or blob > 12 | `079726c` |
 | **N3** atmosphere opaque → 3.1 | `negative.spec.ts:223` | **fixme** | expects shell-vs-bg > 2 | `079726c` |

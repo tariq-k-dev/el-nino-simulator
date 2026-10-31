@@ -1,4 +1,10 @@
-# GLINT REMOVED - needs Tariq's decision
+# GLINT ATTENUATED (V2) - needs Tariq's decision
+
+**Verdict, applied mechanically in 2B-C1-FIX: V2 — the glint is ATTENUATED, not removed.**
+V1 does not pass (peak retention `max(Do)/max(Dt)` = 0.5395 against a 0.60 floor), but the
+area criterion does (`area6(Do)/area6(Dt)` = 0.6202 against 0.50). The earlier heading said
+"GLINT REMOVED", which overstated it: the material's lobe is gone, the additive overlay
+still draws 62% of the approved lobe's area. Numbers: `FACTS-2B.md` §d.
 
 The material's own sun glint was zeroed in SPECLOCK Step 1 and **has not been
 restored**. Measured as a difference image (B1, 2A2), the current build keeps only
