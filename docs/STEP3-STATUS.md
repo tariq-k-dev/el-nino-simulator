@@ -1,13 +1,139 @@
 # STEP 3 status
 
-Session log for the Step 3 framing work. One row per step; the prompt for each step lives
-in `docs/prompts/`.
+Session log for the Step 3 framing work. One row per step; each prompt lives in `docs/prompts/`.
 
 | step | state | commit | notes |
 |---|---|---|---|
-| 2B-STEP3-A | **PARTIAL — stopped at B, red gate** | see below | preflight + A done; B blocked, C not started |
+| 2B-STEP3-A | PARTIAL — stopped at B, red gate | `8f9e1aa`, `01d0f83` | audit + status only; B was red |
+| 2B-STEP3-A-FIX | **STOPPED at B2 — legacy verification red** | `4c7801d`, `01d0f83`, `70ca2b5` | uTime fix landed; N10 fails as a direct result |
 
-## 2B-STEP3-A
+---
+
+## 2B-STEP3-A-FIX (current session)
+
+### P0 preflight — done
+
+- HEAD `8f9e1aa`; `git status` showed exactly the four expected untracked files plus the prompt.
+- Orphan sweep clean: no `node.exe`, no `ms-playwright` chromium, no Brotli listener. The
+  `chrome.exe` entries resolve to `C:\Program Files\Google\Chrome\Application\chrome.exe` —
+  the user's own browser, not this repo's.
+- Prompt committed alone as `4c7801d`.
+
+### A audit commit — done (`01d0f83`)
+
+`docs/STEP3-AUDIT.md` + `docs/STEP3-STATUS.md`, docs only, by explicit path.
+
+### B1 the uTime fix — done, gate green (`70ca2b5`)
+
+Helper `src/scene/lookTime.ts`:
+
+```ts
+export const FROZEN_LOOK_TIME = 0;
+export function lookTime(animate: boolean, elapsed: number): number {
+  return animate ? elapsed : FROZEN_LOOK_TIME;
+}
+```
+
+- `animate` true returns `elapsed` unchanged, so the live product is byte-identical.
+- `animate` false returns the constant **0** — the same value `Starfield.tsx:109` already froze at,
+  chosen so the whole frozen scene shares one number. Not "the last clock value": that differs per
+  load, which is the failure `Starfield.tsx:101-108` documents.
+- Call sites: `Globe.tsx:224` (atmosphere breathe), `Hotspot.tsx:58` (pin ring pulse).
+
+Formulas, for the record:
+
+| term | formula | at `uTime = 0` |
+|---|---|---|
+| atmosphere breathe (`shaders.ts:114`) | `1 - uBreatheAmp + uBreatheAmp * sin(uTime * 0.6)` | `1 - 0.015 = 0.985` (the trough) |
+| pin ring pulse (`shaders.ts:227`) | `fract(uTime * 0.45 + uPhase)` | `fract(uPhase)` |
+
+Unit tests: 6 in `src/scene/lookTime.test.ts`. Gate (one cell): `tsc -b`, `lint`, `test`
+(**760** = 754 + 6), `build` — all green, exit 0.
+
+### B3 residual matrix — done, every pair exactly 0, no tolerance
+
+Three fresh page loads x three captures each, plus cross-load pairs (`scripts/tmp-refmatrix.mjs`,
+untracked):
+
+| scope | loads | pairs | max \|dLuma\| | pixels > 1/255 |
+|---|---|---|---:|---:|
+| in-page | A, B, C | 9 (#0~#1, #1~#2, #0~#2 each) | **0** | **0** |
+| cross-load | A~B, A~C, B~C | 6 (#0 and #2 each) | **0** | **0** |
+
+Pre-registered rule applied: **every pair exactly 0 ⇒ the equivalence test requires exactly 0.**
+No fallback tolerance was invoked and none is needed. The previous session's residual is gone,
+which is the B1 fix working.
+
+### B2 legacy verification — **RED. STOPPED HERE.**
+
+`pnpm e2e:look` through the batched runner: **27/28, not 28/28**. `negative.spec.ts` N10 fails.
+
+| test | control | defect | verdict |
+|---|---|---|---|
+| N9 (overlay off) | max 88.52, area6 9594 | identical frames, 0 differing px | ok |
+| **N10 (si 1.0, no roughness floor)** | max 88.52, area6 9594 | **max 87.52, maxAbs 87.52, area6 9401** | **FAIL** |
+
+N10 requires `defect.max > 110.7` (or `area6 > 12472`) and that the defect *adds* specular. It
+measures 87.52 / 9401 — the defect now *lowers* the peak by 1.0.
+
+**Caused by the B1 fix, and the bisection is unambiguous.** Same tree, same bundle pipeline, one
+file reverted per build, N10 run in isolation each time:
+
+| Globe.tsx | Hotspot.tsx | N10 defect | verdict |
+|---|---|---|---|
+| parent `01d0f83` | parent | max 136.96, maxAbs 218.66, area6 10523 | **pass** |
+| fixed | fixed | max 87.52, maxAbs 87.52, area6 9401 | **fail** |
+| parent | fixed | max 87.52, maxAbs 87.52, area6 9401 | **fail** |
+| fixed | parent | max 122.74, maxAbs 196.83, area6 10754 | **pass** |
+
+So it is the **atmosphere** gate specifically, not the hotspot gate. Both files were restored to
+HEAD afterwards.
+
+Why an atmosphere change moves a specular difference image: 3.9 is a difference of two frames
+that differ only in the specular contribution, and the additive atmosphere shell is composited
+over the disc. Freezing the breathe at 0 (its trough) makes the halo ~1.5 % dimmer than the phase
+the baselines were recorded at, shifting every compared pixel — so the defect's difference is
+taken against a slightly different base. Measured live (`scripts/tmp-n10-phase.mjs`, frozen
+`uTime = 1.962` in this build): the control on-vs-off pair is still 88.52 / 9594, i.e. **the
+sentinel itself is intact**, and the defect's absolute contribution against the control is still
+large (max 195.77 at (807,294), area6 5217). What collapsed is N10's specific defect response
+after differencing.
+
+Honest reading: **the frozen phase moved a raw number that N10's defect is tuned against, without
+touching any threshold.** Every bound, window and defect definition is untouched, and I changed
+none of them.
+
+Consequences:
+
+- **No threshold, window, bound, gate or defect was modified.**
+- **B2's disclosure commit has not been made** — there is no green run to disclose against.
+- **B3's PNG and registration commits are blocked** behind B2's green run.
+- **C (insets registry) and the final full e2e were not started.**
+
+### Deviations / process notes
+
+1. Two of the initial failures were infrastructure, not product: 3.9 and 3.7 died with
+   `net::ERR_CONNECTION_REFUSED` after the runner killed a slow file's tree, and
+   `negative.spec.ts` was killed at its 480 s `FILE_TIMEOUTS_MS` cap. Both were re-run; N9 passed,
+   N10 failed in isolation too.
+2. `terminal(notify=...)` is rejected by the tool schema on this host, so E2E runs were driven with
+   `Popen` + argv lists from `execute_code`, polling under 240 s, per `docs/E2E.md`.
+3. `scripts/tmp-refmatrix.mjs` and `scripts/tmp-n10-phase.mjs` are untracked probes and are **not
+   committed**; they are the evidence for the tables above.
+
+### Exact resumption point
+
+One decision, then B2 can go green. I did not pick one:
+
+| option | what it means |
+|---|---|
+| A. freeze the atmosphere at the phase the baselines were recorded at | keeps N10's defect response; needs that phase value justified from recorded evidence, not chosen to pass |
+| B. exclude the atmosphere from the glint acquisition | changes what 3.9 measures — a look-owner decision, not mine |
+| C. re-baseline N10's defect expectation | a threshold change, explicitly forbidden by this prompt |
+
+---
+
+## 2B-STEP3-A (previous session, kept for the record)
 
 ### P0 preflight — done
 
