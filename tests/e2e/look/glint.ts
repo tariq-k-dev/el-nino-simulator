@@ -153,6 +153,103 @@ export function maxRawChannelDelta(a: Bitmap, b: Bitmap, geom: DiscGeometry): nu
   return max;
 }
 
+/**
+ * Frame-identity statistics — the N10 detector.
+ *
+ * N10 used to ask whether the amp metric 3.9 went over its upper bound under a defect. In a
+ * DETERMINISTIC frozen frame it does not: measured over an exact N10 reproduction, the defect's
+ * contribution lands at [344,390] (249.9 luma, 8470 px) while the diff's maximum stays on the
+ * shipped glint at [781,374], and `max` there is the control's 88.52 minus one 8-bit step because
+ * the OFF frame moves by one, not because the defect does anything. 3.9 measures overlay
+ * AMPLITUDE; this defect changes the SURFACE. So N10's pass criterion for that defect was an
+ * artifact of an earlier non-deterministic frame, and the fix is to detect the defect by the thing
+ * it actually does: change the frame.
+ *
+ * These are computed over the fitted disc, the same ROI `diffStats` uses, so they are
+ * *distribution* statistics of the whole change rather than a single maximum that a brighter
+ * neighbouring feature can mask.
+ */
+export interface FrameDeltaStats {
+  /** Largest per-pixel luma change, either direction. 0 iff the frames are luma-identical. */
+  maxAbs: number;
+  /** Largest increase. */
+  maxGain: number;
+  /** Largest decrease, as a positive number. */
+  maxDrop: number;
+  /** Pixels whose luma changed by more than `threshold`. */
+  gt6: number;
+  /** Pixels whose luma changed by more than 1/255 in either direction. */
+  differing: number;
+  /** Where the largest absolute change sits. */
+  maxAbsAt: [number, number] | null;
+  /** Pixels inside the disc that were sampled. */
+  sampled: number;
+}
+
+/** Frame-identity statistics between two captures, over a disc. Pure. */
+export function frameDelta(a: Bitmap, b: Bitmap, geom: DiscGeometry): FrameDeltaStats {
+  if (a.width !== b.width || a.height !== b.height) {
+    // Never let a size mismatch read as "identical".
+    return { maxAbs: Infinity, maxGain: Infinity, maxDrop: Infinity, gt6: Infinity, differing: Infinity, maxAbsAt: null, sampled: 0 };
+  }
+  const r2 = geom.r * geom.r;
+  let maxAbs = 0;
+  let maxGain = 0;
+  let maxDrop = 0;
+  let gt6 = 0;
+  let differing = 0;
+  let sampled = 0;
+  let maxAbsAt: [number, number] | null = null;
+  for (let y = 0; y < a.height; y += 1) {
+    for (let x = 0; x < a.width; x += 1) {
+      if ((x - geom.cx) ** 2 + (y - geom.cy) ** 2 > r2) continue;
+      sampled += 1;
+      const o = (y * a.width + x) * 4;
+      const la = luma(a.data[o], a.data[o + 1], a.data[o + 2]);
+      const lb = luma(b.data[o], b.data[o + 1], b.data[o + 2]);
+      const d = la - lb;
+      if (d > maxGain) maxGain = d;
+      if (-d > maxDrop) maxDrop = -d;
+      if (Math.abs(d) > maxAbs) {
+        maxAbs = Math.abs(d);
+        maxAbsAt = [x, y];
+      }
+      if (Math.abs(d) > 6) gt6 += 1;
+      if (d !== 0) differing += 1;
+    }
+  }
+  return { maxAbs, maxGain, maxDrop, gt6, differing, maxAbsAt, sampled };
+}
+
+/**
+ * Where two frames differ, for DIAGNOSIS ONLY. Never used to relax a gate.
+ *
+ * The in-page control pair is allowed a 1.0 / 50 px noise floor, and a tolerance with no stated
+ * location is a tolerance nobody can challenge. This returns the differing pixels — largest first,
+ * at most `limit` — so the spec can print their r/R, band, distance to the glint peak and nearest
+ * pin, and a later reader can tell limb shimmer from an actual scene change.
+ */
+export function locateDiffering(
+  a: Bitmap,
+  b: Bitmap,
+  geom: DiscGeometry,
+  limit = 20,
+): Array<{ x: number; y: number; d: number }> {
+  if (a.width !== b.width || a.height !== b.height) return [];
+  const r2 = geom.r * geom.r;
+  const hits: Array<{ x: number; y: number; d: number }> = [];
+  for (let y = 0; y < a.height; y += 1) {
+    for (let x = 0; x < a.width; x += 1) {
+      if ((x - geom.cx) ** 2 + (y - geom.cy) ** 2 > r2) continue;
+      const o = (y * a.width + x) * 4;
+      const d = luma(a.data[o], a.data[o + 1], a.data[o + 2]) - luma(b.data[o], b.data[o + 1], b.data[o + 2]);
+      if (d !== 0) hits.push({ x, y, d: +d.toFixed(4) });
+    }
+  }
+  hits.sort((p, q) => Math.abs(q.d) - Math.abs(p.d));
+  return hits.slice(0, limit);
+}
+
 /** What N9 measured, as one of a small closed set. */
 export type GlintCollapseKind =
   /** Both frames byte-identical: the toggle genuinely had no effect. */
