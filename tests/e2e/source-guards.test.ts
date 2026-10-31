@@ -311,6 +311,13 @@ describe('the app must not import the test-side measurement library', () => {
       if (!rel.startsWith('src/')) continue;
       // The helpers module itself, and its own test, are the only legitimate holders.
       if (rel === 'src/lib/look/helpers.ts' || rel === 'src/lib/look/helpers.test.ts') continue;
+      /*
+       * TEST FILES under src/ are not app modules — they are never bundled. `terminatorGeometry
+       * .test.ts` legitimately imports the helpers, because that is what it tests. The rule this
+       * guard enforces is about what ships to a browser (pngjs in the bundle), and a *.test.ts
+       * cannot ship. Excluding them keeps the guard about its actual subject.
+       */
+      if (/\.test\.tsx?$/.test(rel)) continue;
       const src = await readFile(abs, 'utf8');
       if (/from\s+['"][^'"]*lib\/look\/helpers['"]/.test(src)) offenders.push(rel);
     }

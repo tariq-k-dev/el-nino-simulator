@@ -996,6 +996,176 @@ export interface DiffStats {
  * Signed, not absolute: the question is "how much BRIGHTER did this layer make the
  * pixel", and an absolute value would count a darkening as a glint.
  */
+// ------------------------------------------------ analytic surface lighting (n·L)
+
+/**
+ * Everything the analytic `n·L` needs: the camera, the sun, the projection, the fitted disc.
+ *
+ * All of it is a snapshot of one frozen frame, so the lighting function below is a pure
+ * function of this object. That is what makes `n·L(t)` available offline — for the terminator
+ * audit, the F5 applicability set, and the per-pixel mutations in N6/N6b — without touching a
+ * scene or a page.
+ */
+export interface SunCameraGeometry {
+  /** Camera position, scene units. The camera looks at the origin. */
+  cam: [number, number, number];
+  /** Unit sun direction, scene units. */
+  sun: [number, number, number];
+  /** three's VERTICAL fov, degrees. */
+  fov: number;
+  /** Canvas CSS height, px — the `focalPxFromFov` denominator. */
+  heightPx: number;
+  /** Disc centre, CSS px. */
+  cx: number;
+  cy: number;
+  /** Fitted disc radius, px (`R_fit`). */
+  r: number;
+  /** Earth radius in scene units. 1 everywhere in this app. */
+  radius?: number;
+}
+
+/** A surface sample: the hit point's normal dotted with the sun, plus where it landed. */
+export interface SurfaceSample {
+  /** `n · L` at the hit, in [-1, 1]. NaN when the ray misses the sphere. */
+  nDotL: number;
+  /** Hit-point distance from the disc centre, over `R_fit`. */
+  rOverR: number;
+  /** True when the ray actually intersected the globe. */
+  hit: boolean;
+}
+
+/**
+ * The surface normal at a CSS pixel, from the EXACT perspective ray-sphere intersection.
+ *
+ * Why exact rather than the orthographic shortcut. The orthographic form (`n·L = cos(phi - theta)`
+ * with `x = R sin phi`) is a fine sanity check but it is not what the renderer does: the app uses
+ * a 42 deg perspective camera, and near the limb the difference between "where a pixel's ray hits"
+ * and "the orthographic point at that screen offset" is several degrees of normal, i.e. a visible
+ * shift in where `n·L = 0` sits. Every threshold in 3.4 is a claim about where the day side ends,
+ * so the geometry behind it has to be the renderer's, not an approximation of it.
+ *
+ * The ray is built the way three builds it: camera looks down its local -Z at the origin, so a
+ * pixel at offsets (sx, sy) from the principal point casts
+ * `dir = normalize(right*sx + up*(-sy) + forward*focal)`, with `forward` pointing at the origin
+ * and `sy` negated because screen y grows downward.
+ *
+ * @returns `{ nDotL, rOverR, hit }`; `nDotL` is NaN and `hit` false when the ray misses.
+ */
+export function nDotLAt(geom: SunCameraGeometry, px: number, py: number): SurfaceSample {
+  const R = geom.radius ?? 1;
+  const focal = focalPxFromFov(geom.fov, geom.heightPx);
+
+  const cl = Math.hypot(geom.cam[0], geom.cam[1], geom.cam[2]) || 1;
+  // forward: from the camera toward the origin.
+  const f: [number, number, number] = [-geom.cam[0] / cl, -geom.cam[1] / cl, -geom.cam[2] / cl];
+  // right/up complete a right-handed frame with forward; same convention as cameraBasis.
+  /*
+   * Handedness matters and is easy to get backwards. For a camera at +Z looking toward -Z,
+   * screen-right must be world +X: cross(f, worldUp) = cross([0,0,-1],[0,1,0]) = (1,0,0) ✓,
+   * whereas cross(worldUp, f) gives (-1,0,0) — a MIRRORED field, which quietly samples the night
+   * side where the day side is wanted and swaps the ±0.25 bands.
+   */
+  const worldUp: [number, number, number] = [0, 1, 0];
+  const right = norm3(cross3(f, worldUp));
+  const up = norm3(cross3(right, f));
+
+  const sx = px - geom.cx;
+  const sy = py - geom.cy;
+  const dir = norm3([
+    right[0] * sx + up[0] * -sy + f[0] * focal,
+    right[1] * sx + up[1] * -sy + f[1] * focal,
+    right[2] * sx + up[2] * -sy + f[2] * focal,
+  ]);
+
+  // Ray-sphere at the origin: |C + t*dir|^2 = R^2.
+  const b = dir[0] * geom.cam[0] + dir[1] * geom.cam[1] + dir[2] * geom.cam[2];
+  const c = geom.cam[0] ** 2 + geom.cam[1] ** 2 + geom.cam[2] ** 2 - R * R;
+  const disc = b * b - c;
+  if (disc < 0) {
+    return { nDotL: Number.NaN, rOverR: Math.hypot(sx, sy) / geom.r, hit: false };
+  }
+  const root = Math.sqrt(disc);
+  // Nearest positive root: the visible surface.
+  const t = -b - root > 1e-9 ? -b - root : -b + root;
+  const p: [number, number, number] = [
+    geom.cam[0] + dir[0] * t,
+    geom.cam[1] + dir[1] * t,
+    geom.cam[2] + dir[2] * t,
+  ];
+  const pl = Math.hypot(p[0], p[1], p[2]) || 1;
+  const n: [number, number, number] = [p[0] / pl, p[1] / pl, p[2] / pl];
+  const s = norm3(geom.sun);
+  return {
+    nDotL: n[0] * s[0] + n[1] * s[1] + n[2] * s[2],
+    rOverR: Math.hypot(sx, sy) / geom.r,
+    hit: true,
+  };
+}
+
+/**
+ * The angle between the sun and the view axis, degrees — the one number that decides where the
+ * terminator sits for a given camera.
+ */
+export function sunViewAngleDeg(geom: Pick<SunCameraGeometry, 'cam' | 'sun'>): number {
+  /*
+   * The axis points from the globe TOWARD THE VIEWER, i.e. +normalize(cam), not the direction the
+   * camera looks. That is the convention the brief's sanity relation uses:
+   *
+   *     n·L(disc centre) = cos θ        crossing at r/R = |cos θ|
+   *
+   * so θ = 0 is a fully lit face (sun behind the camera) and θ = 180 is full night. Using
+   * `-normalize(cam)` inverts it: the first F4 audit reported θ = 132.8° at the default view,
+   * which is 180 − 47.2° — the brief's value, flipped.
+   */
+  const cl = Math.hypot(geom.cam[0], geom.cam[1], geom.cam[2]) || 1;
+  const toViewer: [number, number, number] = [geom.cam[0] / cl, geom.cam[1] / cl, geom.cam[2] / cl];
+  const s = norm3(geom.sun);
+  const dot = toViewer[0] * s[0] + toViewer[1] * s[1] + toViewer[2] * s[2];
+  return (Math.acos(Math.max(-1, Math.min(1, dot))) * 180) / Math.PI;
+}
+
+/**
+ * Where along the projected-sun axis a target `n·L` occurs, in CSS px from the disc centre.
+ *
+ * Scans the axis at 1 px and bisects the bracket. Returns `null` when the axis line never reaches
+ * that `n·L` inside the disc — which is the honest answer when the terminator is off the planet.
+ */
+export function findAxisNDotL(
+  geom: SunCameraGeometry,
+  axis: { ax: number; ay: number },
+  target: number,
+): { t: number; px: number; py: number; rOverR: number } | null {
+  const at = (t: number): number => nDotLAt(geom, geom.cx + axis.ax * t, geom.cy + axis.ay * t).nDotL;
+  const tMax = Math.floor(geom.r * 0.995);
+  let prevT = -tMax;
+  let prevV = at(prevT);
+  for (let t = -tMax + 1; t <= tMax; t += 1) {
+    const v = at(t);
+    if (Number.isFinite(prevV) && Number.isFinite(v) && (prevV - target) * (v - target) <= 0 && prevV !== v) {
+      // Bisect the 1 px bracket so the reported position is not quantised to a whole pixel.
+      let lo = prevT;
+      let hi = t;
+      for (let i = 0; i < 40; i += 1) {
+        const mid = (lo + hi) / 2;
+        const mv = at(mid);
+        if (!Number.isFinite(mv)) break;
+        if ((at(lo) - target) * (mv - target) <= 0) hi = mid;
+        else lo = mid;
+      }
+      const tc = (lo + hi) / 2;
+      return {
+        t: tc,
+        px: geom.cx + axis.ax * tc,
+        py: geom.cy + axis.ay * tc,
+        rOverR: Math.abs(tc) / geom.r,
+      };
+    }
+    prevT = t;
+    prevV = v;
+  }
+  return null;
+}
+
 export function diffStats(a: Bitmap, b: Bitmap, geom: DiscGeometry): DiffStats {
   const n = Math.min(a.width * a.height, b.width * b.height);
   const vals: number[] = [];
