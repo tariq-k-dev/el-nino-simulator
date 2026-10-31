@@ -301,3 +301,53 @@ fetch genuinely pending and no progress events arrive — which is exactly what
   reused; CI always starts a fresh one.
 - Failure screenshots and traces land in `.cache/` (gitignored) and are never
   committed.
+
+### Runner invariants (C1-C3), verified
+
+| | invariant | how it is enforced |
+|---|---|---|
+| **C1** | The runner owns the server lifecycle | `startServer()` spawns `tests/e2e/brotli-server.mjs dist-e2e <port>` directly from the runner, so the server is a **sibling** of the Playwright process, never a descendant. Playwright is told to stand down via `E2E_EXTERNAL_SERVER=1` in `playwright.config.ts`. Each file's server is torn down in the same `close` handler that ends the file. |
+| **C2** | `killTree` targets only the spawned Playwright pid | `validateKillTarget()` in `scripts/lib/e2e-batch-core.mjs` refuses the runner's own pid, the server's pid, pid 0, non-integers, and any pid that is not the one this run spawned. A refusal is logged. Unit-tested. |
+| **C3** | Per-file timeouts are a backstop | `FILE_TIMEOUTS_MS` with >= 1.5x margin on measured durations, overridable by `E2E_FILE_TIMEOUT_MS_OVERRIDE` for testing. A timeout kills only that file's tree, marks it **TIMEOUT**, tears down its server, and the next file gets a fresh server on a fresh port. |
+
+### Timeout table (measured -> budget)
+
+| file | measured | budget |
+|---|---:|---:|
+| look.spec.ts | 10.0 min raw / 320-324 s batched | 15 min |
+| negative.spec.ts | 4.7 min raw / 192 s batched | 8 min |
+| boot.spec.ts | 403-406 s | 10 min |
+| harden.spec.ts | 110 s | 4 min |
+| globe.spec.ts | 54-61 s | 3 min |
+| gate-clock.spec.ts | 52 s | 2 min |
+| determinism, history-gate, limb, scene-gate | 12-17 s | 2 min each |
+
+### Expected counts
+
+`look.spec.ts` **9**, `negative.spec.ts` **14**, `globe.spec.ts` **5** = **28** for `e2e:look`.
+Full suite: boot 10, determinism 2, gate-clock 1, globe 5, harden 8, history-gate 1, limb 2, look 9,
+negative 14, scene-gate 2 = **54**. The runner's `expectedCounts()` holds these and the summary fails on
+any mismatch, so a file that exits 0 having run fewer tests still fails the run.
+
+### The launch and poll method that works on this machine
+
+```js
+subprocess.Popen(["node","scripts/e2e-batched.mjs"], stdout=fh, stderr=subprocess.STDOUT)
+```
+then poll in cells of **under 300 s**. Anything longer kills the kernel and takes the child tree with it,
+which reads as a product failure. Do **not** use a shell `>` redirect inside a tracked background wrapper:
+it produces a 19-byte `stdin is not a tty` log and the command never runs.
+
+### Known cost of the 12-az 3.4 test
+
+`3.4 terminator: every evaluated azimuth` takes **3.3 min** inside the file (6.4 min when the whole file
+runs alone), because each of the 7 evaluated azimuths needs a real capture, a flat capture, and — at
+present — a **page reload** to restore the surface. That is 7 reloads. `look.spec.ts` therefore carries a
+600 s budget of its own rather than the suite's 240 s.
+
+### Verified runs
+
+| run | result | wall |
+|---|---|---|
+| `e2e:look` (batched) | **3/3 files, 28/28 tests, 0 retries** | 9.4 min |
+| full `pnpm e2e` (batched) | **10/10 files, 54/54 tests, 0 retries** | 20.0 min |

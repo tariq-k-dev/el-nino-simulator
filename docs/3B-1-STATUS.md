@@ -293,10 +293,37 @@ The flat mutation does not restore in place — `fitLimb` swaps the material and
 React. `assertSurfaceRestored` reloads the page when needed and reports it: **7 of 7** cycles in the
 12-az test. That is why that test carries a 600 s budget instead of the suite's 240 s.
 
+## 2B-C2B-P4 — spec lock CLOSED
+
+- **A1 resolved**: the suite is **54 tests / 10 files**; `e2e:look` is **28** (look 9 + negative 14 +
+  globe 5). Pre-P3 was 23 (look 9 + negative 9 + globe 5); the delta is exactly the five N6 tests, with
+  the two 3.4 titles rewritten in place. My P3 sentence "25 tests: 10 look + 14 negative + 5 globe" was
+  **wrong twice**: look is 9, not 10, and 10+14+5 = 29 is not 25. The 25 was Playwright's **running
+  counter** at harden's last test (boot 1-10, determinism 11-12, gate-clock 13, globe 14-18, harden 19-25),
+  not a suite total.
+- **A2 resolved**: N10 asserts `.max` (signed) both before and after P3, so the metric-field hypothesis is
+  **ruled out**. N10's defect `max` is **not bit-stable** — 181.93 / 156.03 / 166.24 over three isolated
+  runs, with `maxAbs` 212.50 / 203.92 / 237.38 and the control `max` pinned at 88.52 every time. 190.28,
+  183.08 and 166.24 are draws from that distribution; 102.55 was the N6d material leak, since fixed.
+- **B resolved**: the runner had **no timeout and no timer at all**, and `killTree` fires only in
+  `child.on('close')`, i.e. after Playwright exits. An instrumented batched run of `look.spec.ts` passed
+  **9/9 in 320.4 s with zero ECONNREFUSED** and one `[kill]` at t=318.1 s whose target was already GONE with
+  `servers=none`. H-T, H-S and H-C are therefore **falsified**; my P3 claim that this was an F6 regression
+  is **withdrawn**. The single P3 failure is best explained by an external kill (my own poll cell).
+- **C done**: server ownership, validated kill target, per-file timeouts, summary JSON, 18 new unit tests
+  (both guards shown to bite when reverted). Control verified: `globe` TIMEOUT at 21.7 s on port 4300,
+  `limb` passed 2/2 on 4301, exit 1.
+- **D done**: `e2e:look` **3/3 files, 28/28 tests, 0 retries, 9.4 min**; full `pnpm e2e` **10/10 files,
+  54/54 tests, 0 retries, 20.0 min**, exit 0.
+
+**SPEC LOCK: CLOSED.** Both D2 and D3 green.
+
 ## Still NOT DONE
 
 - **Coastline contrast inside the terminator strip is out of scope** for 3.4 (SPEC.md section 3). SOFT
   now asks a question about the lighting function; the catastrophe bound catches only severe edges.
+- N10's defect `max` is non-deterministic (156-190 across runs). It fails the bound by a wide margin every
+  time, but a single N10 number is not reproducible to the last luma unit — recorded, not hidden.
 - Nothing else: 3.1-3.9 are all green with negative evidence, and N1-N10 (including N6, N6r, N6b, N6c,
   N6d) all go red under their defects.
 
