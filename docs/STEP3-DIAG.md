@@ -405,3 +405,97 @@ cluster at the same coordinates:
 All on the disc at r/R 0.71–0.88 — **not** limb shimmer, **not** in the rim band, and nowhere near a
 pin or the glint. Time between the two acquisitions: **10 164–10 228 ms**. Recorded, not fixed, and
 not used to relax anything.
+---
+
+# D9 — the one-green-level flip, read-only diagnostic
+
+Asked to explain why N10's cross-load control pair differs by **0.7152 luma** (exactly one green
+level, `1/255 × 0.7152`) over 213–221 px, when the D8 standalone matrix showed exact zeros. **Nothing
+was fixed and nothing under `src/` or `tests/` was changed.**
+
+## D9.1 — source search for per-frame / wall-clock terms
+
+| file:line | term | verdict |
+|---|---|---|
+| `src/scene/Hotspot.tsx:53` | `uPhase: { value: Math.random() }` | **CAN affect disc pixels.** A shader uniform seeded per load; `shaders.ts:227` computes `t = fract(uTime * 0.45 + uPhase)`, so the ring's phase is load-dependent. With the uTime gate it is a *still* image, but a *different still* per load. |
+| `src/scene/Globe.tsx:224` | `uTime = lookTime(look.animate, t)` | cannot — gated, and unit-tested to return 0 when frozen |
+| `src/scene/Hotspot.tsx:58` | `uTime = lookTime(...)` | cannot — gated |
+| `src/scene/Starfield.tsx:109` | `uTime = look.animate ? elapsed : 0` | cannot — gated (and stars are OFF in the glint view) |
+| `src/scene/shaders.ts` (whole file) | no `dither`, `noise`, `hash`, `rand`, `jitter`, `fract(sin` | cannot — no stochastic term in any fragment shader |
+| `src/scene/starfieldData.ts` | `mulberry32(STAR_SEED)` | cannot — seeded and deterministic |
+| `src/lib/engine/store.ts:121,145,162,164` | `Date.now()` | cannot — engine status bookkeeping, never reaches a uniform |
+| `src/lib/engine/sceneGate.ts:155`, `textureTimeline.ts:102` | `performance.now()` | cannot — boot timing only |
+| `src/lib/duckdb.ts:578,674,763` | `performance.now()` | cannot — query timing only |
+| `src/lib/report.ts:53,87` | `new Date()` | cannot — export/HTML generation only |
+| `src/components/EngineBadge.tsx:88` | `Date.now()` default prop | cannot — DOM text, not canvas |
+
+**Only one candidate survives: `Hotspot.tsx:53`.** It is the only per-load random value that reaches a
+shader affecting the disc.
+
+## D9.2 — N10 alone, two separate processes
+
+| run | in-page (noise floor) | cross-load (print-only) |
+|---|---|---|
+| 1 | max 0.7152, **10 px** | (not reached in that capture) |
+| 2 | max 0.7152, **25 px** | (not reached in that capture) |
+| 3 (re-run, full output) | max 0.7152, **28 px** | **max 0.7152, 213 px** |
+
+**The cross-load flip reproduces with N10 ALONE.** It does not need `negative.spec.ts` running
+thirteen other tests first, which rules out sequence state as a necessary condition.
+
+## D9.4 — Delta-t sweep (N10's own acquisition path)
+
+| condition | max luma | differing px |
+|---|---:|---:|
+| in-page, Δt = 1 s | 0.7152 | 17 |
+| in-page, Δt = 5 s | 0.7152 | 3 |
+| in-page, Δt = 10 s | 0.7152 | 24 |
+| in-page, Δt = 30 s | 0.7152 | 7 |
+| **cross-load (fresh page)** | **0.7152** | **213** |
+
+**The count does NOT grow with Δt** — 17 → 3 → 24 → 7 at 1/5/10/30 s is noise around a small
+constant, not accumulation. So **reading (1) does NOT apply**: there is no wall-clock accumulator
+still running.
+
+## D9.5 — defect install/restore cycle
+
+| | before | after |
+|---|---|---|
+| `specularIntensity` | 0 | 0 |
+| `roughness` | 0.9 | 0.9 |
+| `roughnessMap` | object | object (**same identity — true**) |
+| material `version` | 2 | **4** (bumped twice) |
+| enumerable keys | 114 | 114 |
+
+Cycle diff: **max 0.7152, 18 px** — indistinguishable from the in-page noise floor (17/3/24/7 px).
+The restore is **not bit-identical in `version`**, but `version` is a `needsUpdate` counter, not a
+rendered value, and no property that affects shading differed.
+
+## Which pre-registered reading applied
+
+**Reading (5): nothing reproduces the *magnitude*.**
+
+The 0.7152 luma value appears in *every* arm, including the in-page pairs that N10 already tolerates.
+What no arm reproduced is the **213-pixel extent** on a cross-load pair except D9.4's own cross-load
+arm — which did reproduce it (213 px). So the honest summary is narrower than any of the five
+readings anticipated:
+
+- 0.7152 luma is a **ubiquitous one-LSB quantisation** that appears whenever any two acquisitions are
+  compared, in-page or cross-load. It is not cross-load-specific.
+- The **213-px cross-load extent** reproduced in D9.4 (fresh context) and in D9.2 (N10 alone), so it
+  is a property of `acquireGlintFrames` on a *fresh page load*, not of `negative.spec.ts`'s sequence.
+- The in-page pairs differ in only 3–28 px, which is why N10's 50 px tolerance holds.
+
+The candidate mechanism consistent with all of this is **`Hotspot.tsx:53`'s `uPhase`**: a per-load
+random phase that makes each load's frozen ring a slightly different still image. That predicts
+exactly what was observed — in-page pairs agree closely (same `uPhase`), cross-load pairs differ more
+(different `uPhase`), and every difference is a rounding-level LSB because the ring is a low-amplitude
+additive layer. **This is a hypothesis consistent with the data, not a proven cause** — proving it
+needs a seeded `uPhase`, which is a `src/` change and therefore out of scope here.
+
+## Consequences
+
+| consumer | effect |
+|---|---|
+| **N10** | unaffected — its cross-load pair is *printed, not asserted*; the in-page tolerance (1.0 luma / 50 px) covers the 3–28 px it actually sees |
+| **`ref.spec`** | **unaffected and still strict 0** — three separate runner processes each measured 0 on both pairs, because the reference pose has rings OFF, so `uPhase` never reaches a pixel |
