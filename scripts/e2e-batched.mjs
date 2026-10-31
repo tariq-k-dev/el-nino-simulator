@@ -67,7 +67,83 @@ function waitForExit(pid, timeoutMs = 15_000) {
   }
 }
 
-function killTree(pid) {
+/**
+ * Diagnostics for the kill path, gated on E2E_DEBUG_KILL=1.
+ *
+ * Written because a batched run failed with ERR_CONNECTION_REFUSED on every test after the first two of
+ * look.spec.ts, and the cause had to be measured rather than guessed. Logs, for every killTree call:
+ * the target pid, the reason, seconds since that file started, and the process tree before and after.
+ */
+const DEBUG_KILL = process.env.E2E_DEBUG_KILL === '1';
+
+/** Snapshot of every process: pid, parent, name. Used to see what a kill actually took. */
+function processSnapshot() {
+  if (process.platform !== 'win32') return [];
+  const q = spawnSync(
+    'powershell',
+    [
+      '-NoProfile',
+      '-Command',
+      'Get-CimInstance Win32_Process | ForEach-Object { "$($_.ProcessId)|$($_.ParentProcessId)|$($_.Name)|$($_.CommandLine)" }',
+    ],
+    { encoding: 'utf8' },
+  );
+  if (!q.stdout) return [];
+  return q.stdout
+    .split(/\r?\n/)
+    .map((l) => l.trim())
+    .filter(Boolean)
+    .map((l) => {
+      const [pid, ppid, name, ...rest] = l.split('|');
+      return { pid, ppid, name, cmd: rest.join('|') };
+    });
+}
+
+/** True when `pid` appears in a snapshot. */
+function aliveIn(snapshot, pid) {
+  return snapshot.some((p) => p.pid === String(pid));
+}
+
+/** Log a kill event, with the tree before and after. */
+function logKill(pid, reason, fileStartedAt, file) {
+  if (!DEBUG_KILL) return;
+  const secs = ((Date.now() - fileStartedAt) / 1000).toFixed(1);
+  const before = processSnapshot();
+  const target = before.find((p) => p.pid === String(pid));
+  const children = before.filter((p) => p.ppid === String(pid));
+  const server = before.filter((p) => /brotli-server/.test(p.cmd));
+  console.log(
+    `[kill] t=${secs}s file=${file} target=${pid} reason=${reason} ` +
+      `targetName=${target ? target.name : 'GONE'} children=${children.length} ` +
+      `servers=${server.map((p) => `${p.pid}:${p.name}`).join(',') || 'none'}`,
+  );
+  if (target) console.log(`[kill]   target cmd: ${target.cmd.slice(0, 140)}`);
+  for (const c of children.slice(0, 8)) console.log(`[kill]   child ${c.pid} ${c.name} ${c.cmd.slice(0, 110)}`);
+}
+
+/** Log the tree after the kill, and whether the server survived. */
+function logKillAfter(pid, fileStartedAt, file) {
+  if (!DEBUG_KILL) return;
+  const secs = ((Date.now() - fileStartedAt) / 1000).toFixed(1);
+  const after = processSnapshot();
+  const server = after.filter((p) => /brotli-server/.test(p.cmd));
+  console.log(
+    `[kill] t=${secs}s file=${file} AFTER target=${pid} stillAlive=${aliveIn(after, pid)} ` +
+      `servers=${server.map((p) => `${p.pid}:${p.name}`).join(',') || 'none'}`,
+  );
+}
+
+function killTree(pid, reason = 'unknown', ctx = {}) {
+  if (!pid) return;
+  if (ctx.file) logKill(pid, reason, ctx.fileStartedAt ?? Date.now(), ctx.file);
+  try {
+    return killTreeUnlogged(pid);
+  } finally {
+    if (ctx.file) logKillAfter(pid, ctx.fileStartedAt ?? Date.now(), ctx.file);
+  }
+}
+
+function killTreeUnlogged(pid) {
   if (!pid) return;
   if (process.platform === 'win32') {
     spawnSync('taskkill', ['/PID', String(pid), '/T', '/F'], { stdio: 'ignore' });
@@ -182,7 +258,7 @@ function runOnce(file, port) {
        * next file deletes and recreates its own artifacts dir, and a lingering process from this
        * one is what produced the trace ENOENT.
        */
-      killTree(child.pid);
+      killTree(child.pid, 'child-close', { file, fileStartedAt: started });
       waitForExit(child.pid);
       resolve({
         file,
