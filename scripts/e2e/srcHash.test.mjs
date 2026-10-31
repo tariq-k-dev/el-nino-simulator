@@ -9,11 +9,12 @@
  * exists to correct. So the tests assert both directions: same tree => same hash,
  * any change => different hash, and "cannot tell" => failure.
  */
-import { mkdtemp, mkdir, rm, writeFile } from 'node:fs/promises';
+import { mkdtemp, mkdir, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import {
+  E2E_DIST,
   STALE_BUNDLE_MESSAGE,
   checkStamp,
   hashDistAssets,
@@ -31,18 +32,24 @@ const SRC = {
   'lib/nested/deep.ts': 'export const c = 3;\n',
 };
 
-/** Lay down a fake repo with the given src/ and dist/assets/ files. */
+/**
+ * Lay down a fake repo with the given src/ and instrumented-bundle files.
+ *
+ * The bundle lives in E2E_DIST, not `dist/`: the instrumented build and the production
+ * build have separate output directories since E0, and a fixture that put the assets in
+ * `dist/` would pass while the real guard read an empty directory.
+ */
 async function makeRepo(srcFiles = SRC, assetFiles = { 'index-abc.js': 'console.log("e2e");\n' }) {
   const dir = await mkdtemp(path.join(tmpdir(), 'srchash-'));
   await mkdir(path.join(dir, 'src'), { recursive: true });
-  await mkdir(path.join(dir, 'dist', 'assets'), { recursive: true });
+  await mkdir(path.join(dir, E2E_DIST, 'assets'), { recursive: true });
   for (const [rel, contents] of Object.entries(srcFiles)) {
     const full = path.join(dir, 'src', rel);
     await mkdir(path.dirname(full), { recursive: true });
     await writeFile(full, contents, 'utf8');
   }
   for (const [rel, contents] of Object.entries(assetFiles)) {
-    const full = path.join(dir, 'dist', 'assets', rel);
+    const full = path.join(dir, E2E_DIST, 'assets', rel);
     await mkdir(path.dirname(full), { recursive: true });
     await writeFile(full, contents, 'utf8');
   }
@@ -105,9 +112,9 @@ describe('hashSrcTree', () => {
     }
   });
 
-  it('ignores dist/, so a rebuilt bundle does not change srcHash', async () => {
+  it('ignores the bundle directories, so a rebuilt bundle does not change srcHash', async () => {
     const before = await hashSrcTree(root);
-    await writeFile(path.join(root, 'dist', 'assets', 'index-abc.js'), 'console.log("prod");\n', 'utf8');
+    await writeFile(path.join(root, E2E_DIST, 'assets', 'index-abc.js'), 'console.log("prod");\n', 'utf8');
     expect(await hashSrcTree(root)).toBe(before);
   });
 });
@@ -119,27 +126,27 @@ describe('hashDistAssets', () => {
 
   it('changes when the served bundle is replaced by a production build', async () => {
     const e2e = await hashDistAssets(root);
-    // The real sequence: `pnpm build` overwrites dist/ after build:e2e and
-    // dead-code-eliminates the VITE_E2E hooks. srcHash still matches; distHash must not.
-    await writeFile(path.join(root, 'dist', 'assets', 'index-abc.js'), 'console.log("prod");\n', 'utf8');
+    // What this still guards after E0: something emptied or rewrote dist-e2e/ while
+    // the stamp claims a fresh build. srcHash still matches; distHash must not.
+    await writeFile(path.join(root, E2E_DIST, 'assets', 'index-abc.js'), 'console.log("prod");\n', 'utf8');
     expect(await hashDistAssets(root)).not.toBe(e2e);
   });
 
   it('changes when the emitted filename changes (content-hashed assets)', async () => {
     const before = await hashDistAssets(root);
-    await rm(path.join(root, 'dist', 'assets', 'index-abc.js'));
-    await writeFile(path.join(root, 'dist', 'assets', 'index-xyz.js'), 'console.log("e2e");\n', 'utf8');
+    await rm(path.join(root, E2E_DIST, 'assets', 'index-abc.js'));
+    await writeFile(path.join(root, E2E_DIST, 'assets', 'index-xyz.js'), 'console.log("e2e");\n', 'utf8');
     expect(await hashDistAssets(root)).not.toBe(before);
   });
 
   it('ignores non-JS assets, so a texture swap is not a stale bundle', async () => {
     const before = await hashDistAssets(root);
-    await writeFile(path.join(root, 'dist', 'assets', 'earth_day.jpg'), 'not really a jpeg', 'utf8');
+    await writeFile(path.join(root, E2E_DIST, 'assets', 'earth_day.jpg'), 'not really a jpeg', 'utf8');
     expect(await hashDistAssets(root)).toBe(before);
   });
 
-  it('returns empty string when dist/ is absent', async () => {
-    await rm(path.join(root, 'dist'), { recursive: true, force: true });
+  it('returns empty string when the instrumented bundle is absent', async () => {
+    await rm(path.join(root, E2E_DIST), { recursive: true, force: true });
     expect(await hashDistAssets(root)).toBe('');
   });
 });
@@ -190,17 +197,17 @@ describe('checkStamp', () => {
 
   it('fails when dist/ was replaced even though src/ is untouched', async () => {
     const stamp = await makeStamp(root, 'abc1234');
-    await writeFile(path.join(root, 'dist', 'assets', 'index-abc.js'), 'console.log("prod");\n', 'utf8');
+    await writeFile(path.join(root, E2E_DIST, 'assets', 'index-abc.js'), 'console.log("prod");\n', 'utf8');
     const verdict = checkStamp(stamp, await currentOf());
     expect(verdict.ok).toBe(false);
-    expect(verdict.reason).toContain('dist/ was replaced');
+    expect(verdict.reason).toContain(`${E2E_DIST}/ was replaced`);
     expect(verdict.reason).toContain('VITE_E2E');
   });
 
   it('reports the src/ cause first when both moved', async () => {
     const stamp = await makeStamp(root, 'abc1234');
     await writeFile(path.join(root, 'src', 'main.tsx'), 'export const a = 9;\n', 'utf8');
-    await writeFile(path.join(root, 'dist', 'assets', 'index-abc.js'), 'console.log("prod");\n', 'utf8');
+    await writeFile(path.join(root, E2E_DIST, 'assets', 'index-abc.js'), 'console.log("prod");\n', 'utf8');
     expect(checkStamp(stamp, await currentOf()).reason).toContain('src/ changed');
   });
 
@@ -222,6 +229,20 @@ describe('checkStamp', () => {
     const verdict = checkStamp({ srcHash: current.srcHash }, current);
     expect(verdict.ok).toBe(false);
     expect(verdict.reason).toContain('distHash');
+  });
+
+  it('E2E_DIST matches the directory the build writes and Playwright serves', async () => {
+    /*
+     * Three files have to agree on one directory name: the builder (`--outDir`), the
+     * server (`webServer.command`), and this hasher. A rename in one place is silent —
+     * the hasher would return '' for a bundle that exists and every run would read
+     * "distHash is absent", or worse, hash an empty directory and pass.
+     */
+    const repoRoot = path.resolve(path.dirname(new URL(import.meta.url).pathname.replace(/^\/([A-Za-z]:)/, '$1')), '../..');
+    const buildScript = await readFile(path.join(repoRoot, 'scripts', 'build-e2e.mjs'), 'utf8');
+    const pw = await readFile(path.join(repoRoot, 'playwright.config.ts'), 'utf8');
+    expect(buildScript).toContain(`const E2E_OUT_DIR = '${E2E_DIST}'`);
+    expect(pw).toContain(`brotli-server.mjs ${E2E_DIST} `);
   });
 
   it('the guard message the global setup throws is a stable literal', () => {

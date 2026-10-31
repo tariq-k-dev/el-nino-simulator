@@ -13,7 +13,17 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
-const dist = path.join(root, 'dist');
+
+/**
+ * Which directory to audit. `--dir <name>` selects it; default `dist`.
+ *
+ * Needed because there are now two bundles. `build:e2e` emits the instrumented one into
+ * `dist-e2e/`, and auditing `dist/` after that build would report on a directory the E2E
+ * build never touched — a green audit of the wrong artefacts.
+ */
+const dirFlagIndex = process.argv.indexOf('--dir');
+const TARGET = dirFlagIndex >= 0 ? process.argv[dirFlagIndex + 1] : 'dist';
+const dist = path.resolve(root, TARGET);
 
 const PAGES_FILE_LIMIT = 25 * 1024 * 1024;
 const WARN_AT = 5 * 1024 * 1024;
@@ -71,7 +81,7 @@ const FORBIDDEN_HOOKS = [
 const isAppBundle = (rel) => rel.startsWith('assets/') && /\.(js|mjs)$/.test(rel);
 
 /**
- * Files that must NOT appear in dist/.
+ * Files that must NOT appear in the audited directory.
  *
  * The parquet is now a repo-only source of truth in data/. Shipping it would
  * mean either a second fetch the app does not use, or a silent regression back
@@ -125,7 +135,7 @@ async function main() {
   console.log(`  ${'TOTAL'.padEnd(46)} ${MB(total).padStart(7)} MB`);
 
   for (const rel of REQUIRED) {
-    if (!rows.some((r) => r.rel === rel)) fail(`required asset missing from dist/: ${rel}`);
+    if (!rows.some((r) => r.rel === rel)) fail(`required asset missing from ${TARGET}/: ${rel}`);
   }
 
   // 25 MiB single-file ceiling.
@@ -165,14 +175,14 @@ async function main() {
   const forbidden = rows.filter((r) => FORBIDDEN.some((f) => f.test(r.rel)));
   for (const { rel } of forbidden) {
     const rule = FORBIDDEN.find((f) => f.test(rel));
-    fail(`forbidden file in dist/: ${rel} — ${rule?.why}`);
+    fail(`forbidden file in ${TARGET}/: ${rel} — ${rule?.why}`);
   }
 
   // A local .wasm in dist means the CDN split was reverted by accident.
   const strayWasm = rows.filter((r) => r.rel.endsWith('.wasm'));
   if (strayWasm.length > 0) {
     fail(
-      `dist/ contains ${strayWasm.length} .wasm file(s) - DuckDB wasm must come from the CDN, not dist/. Found: ${strayWasm
+      `${TARGET}/ contains ${strayWasm.length} .wasm file(s) - DuckDB wasm must come from the CDN, not dist/. Found: ${strayWasm
         .map((w) => w.rel)
         .join(', ')}`,
     );
@@ -185,7 +195,7 @@ async function main() {
   }
 
   if (total > TOTAL_BUDGET) {
-    fail(`total dist/ is ${MB(total)} MB, over the ${MB(TOTAL_BUDGET)} MB budget`);
+    fail(`total ${TARGET}/ is ${MB(total)} MB, over the ${MB(TOTAL_BUDGET)} MB budget`);
   }
 
   if (!process.exitCode) {

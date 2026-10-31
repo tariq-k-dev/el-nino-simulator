@@ -1,5 +1,5 @@
 /**
- * `VITE_E2E=1 vite build`, portably.
+ * `VITE_E2E=1 vite build`, portably, into its OWN output directory.
  *
  * Why this exists: `"build:e2e": "... && VITE_E2E=1 vite build && ..."` is POSIX
  * shell syntax. npm/pnpm run scripts through `cmd.exe` on Windows, where that is
@@ -15,6 +15,12 @@
  * Setting the variable in `process.env` before spawning Vite is platform-neutral:
  * Vite reads `import.meta.env.VITE_*` from the environment and folds the literal
  * at build time, which is what makes the hook blocks dead-code-eliminable.
+ *
+ * Why the separate `outDir`: the E2E bundle and the production bundle used to share
+ * `dist/`, so the gate's own `pnpm build` replaced the instrumented bundle with a
+ * production one and the stamp guard rejected the next spec run with "dist/ was
+ * replaced since the build". Two builds, one directory, is a race with no winner.
+ * `dist-e2e/` is written only by this script and served only by Playwright.
  */
 import { spawn } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
@@ -23,8 +29,20 @@ import path from 'node:path';
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const viteBin = path.join(root, 'node_modules', 'vite', 'bin', 'vite.js');
 
+/** The directory the instrumented bundle is emitted into. Served by playwright.config.ts. */
+export const E2E_OUT_DIR = 'dist-e2e';
+
 /** Any flags after the script name are forwarded to `vite build`. */
 const forwarded = process.argv.slice(2);
+
+/*
+ * The outDir is forced here rather than in package.json, because every caller of
+ * `build:e2e` (the `e2e:look` chain, `e2e:batched`, a hand run) must land in the same
+ * directory Playwright serves. Forgetting the flag in one place would silently put the
+ * instrumented bundle back into `dist/` and return us to the stale-dist trap.
+ */
+if (!forwarded.includes('--outDir')) forwarded.push('--outDir', E2E_OUT_DIR);
+
 
 const child = spawn(process.execPath, [viteBin, 'build', ...forwarded], {
   cwd: root,

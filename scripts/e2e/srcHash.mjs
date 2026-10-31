@@ -22,6 +22,21 @@ import path from 'node:path';
 export const STAMP_DIR = 'dist-e2e';
 export const STAMP_FILE = 'build-stamp.json';
 
+/**
+ * The directory the INSTRUMENTED bundle is emitted into.
+ *
+ * Separate from `dist/` on purpose. Both builds used to write `dist/`, so the gate's own
+ * `pnpm build` replaced the E2E bundle with a production one and every subsequent spec
+ * run was rejected with "dist/ was replaced since the build" — a guard that fires on the
+ * normal workflow teaches people to ignore the guard. Now the production bundle owns
+ * `dist/`, the instrumented one owns `dist-e2e/`, and neither can clobber the other.
+ *
+ * Must match `E2E_OUT_DIR` in scripts/build-e2e.mjs and the webServer argument in
+ * playwright.config.ts; `srcHash.test.mjs` asserts the value so a rename cannot drift.
+ */
+export const E2E_DIST = 'dist-e2e';
+
+
 /** Guard message the global setup throws. Asserted verbatim by the unit test. */
 export const STALE_BUNDLE_MESSAGE = 'STALE E2E BUNDLE';
 
@@ -72,24 +87,26 @@ export async function hashSrcTree(repoRoot) {
 }
 
 /**
- * sha256 over the served bundle: `dist/assets/**.js`, path + bytes, sorted.
+ * sha256 over the served bundle: `<E2E_DIST>/assets/**.js`, path + bytes, sorted.
  *
  * `srcHash` alone is not enough, and this is measured, not hypothetical. The gate
- * ends in `pnpm build`, which writes a PRODUCTION bundle over the same `dist/`
- * that Playwright serves. So the sequence
+ * ends in `pnpm build`, which writes a PRODUCTION bundle. Before E0 that bundle went
+ * into the same `dist/` Playwright served, so
  *
  *     pnpm build:e2e && pnpm build && pnpm e2e:look      # srcHash still matches!
  *
- * leaves a stamp whose srcHash agrees with the tree while the served bundle has
- * every VITE_E2E hook dead-code-eliminated — the specs then die on a 90 s
+ * left a stamp whose srcHash agreed with the tree while the served bundle had every
+ * VITE_E2E hook dead-code-eliminated — the specs then died on a 90 s
  * `waitForFunction(() => window.__globe)` timeout that reads as a product bug.
- * Hashing the emitted assets catches that replacement, which srcHash cannot.
+ * Hashing the emitted assets catches that replacement, which srcHash cannot. It is
+ * still worth keeping now that the two builds have separate directories: it is the
+ * check that would notice `dist-e2e/` being emptied or rebuilt by something else.
  *
  * @param {string} repoRoot absolute repo root
  * @returns {Promise<string>} hex digest
  */
 export async function hashDistAssets(repoRoot) {
-  const assetsDir = path.join(repoRoot, 'dist', 'assets');
+  const assetsDir = path.join(repoRoot, E2E_DIST, 'assets');
   let files;
   try {
     files = await listFiles(assetsDir, assetsDir);
@@ -111,7 +128,7 @@ export async function hashDistAssets(repoRoot) {
 /**
  * Build the stamp object a fresh E2E build writes.
  *
- * `distHash` is '' when `dist/` does not exist yet; `checkStamp` treats that as a
+ * `distHash` is '' when `<E2E_DIST>/` does not exist yet; `checkStamp` treats that as a
  * failure, so the stamp is only meaningful when written after a real build.
  *
  * @param {string} repoRoot
@@ -132,9 +149,12 @@ export async function makeStamp(repoRoot, gitHead) {
  *
  * Two independent checks, because there are two independent ways to measure the
  * wrong thing:
- *   - `srcHash` — src/ changed since the build (a failed gate link leaves dist/).
- *   - `distHash` — dist/ was replaced by a different build after the stamp was
- *     written (the gate's `pnpm build` runs after `build:e2e` and strips the hooks).
+ *   - `srcHash` — src/ changed since the build (a failed gate link leaves the old
+ *     bundle in place).
+ *   - `distHash` — the served bundle was replaced by a different build after the stamp
+ *     was written. Since E0 the two builds have separate directories, so this no longer
+ *     fires on the normal gate; it fires when `dist-e2e/` is emptied, partially rebuilt,
+ *     or overwritten, which is still a silent way to measure the wrong code.
  *
  * Returns a verdict rather than throwing, so the unit test can assert on the exact
  * reason and the global setup can decide how loud to be. A missing or unparseable
@@ -171,8 +191,8 @@ export function checkStamp(stamp, current) {
     return {
       ok: false,
       reason:
-        `dist/ was replaced since the build — distHash ${recordedDist.slice(0, 12)} != served ${current.distHash.slice(0, 12)}. ` +
-        `A production \`pnpm build\` strips the VITE_E2E hooks`,
+        `${E2E_DIST}/ was replaced since the build — distHash ${recordedDist.slice(0, 12)} != served ${current.distHash.slice(0, 12)}. ` +
+        `Only \`pnpm build:e2e\` writes ${E2E_DIST}/; a production \`pnpm build\` strips the VITE_E2E hooks`,
     };
   }
   return { ok: true };
