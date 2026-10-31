@@ -53,6 +53,12 @@ export const EXPECTED_LOOK_TITLES = [
   'N5: 3.2 rejects an all-black capture as invalid and fails an all-white one',
   'N7: pin emissiveIntensity x4 blows out 3.5 P2/P3 for a day AND a night pin',
   'N8: pins hidden / core material black makes 3.5 P1 FAIL',
+  // --- added in P3: the 3.4 negatives ---
+  'N6: a hard step in the FLAT render makes SOFT fail',
+  'N6r: a hard step in the REAL render trips the catastrophe bound, not VISIBLE',
+  'N6b: a flat disc makes VISIBLE fail on A',
+  'N6c: a white AmbientLight at 3.0 lifts the night floor and fails VISIBLE',
+  'N6d: a two-texel toon ramp makes even the FLAT render hard, so SOFT fails',
 ] as const;
 
 /**
@@ -102,7 +108,7 @@ describe('the look suite inventory', () => {
 
     if (listed.length === 0) {
       console.warn('[inventory] no titles could be listed; only the constant was checked');
-      expect(EXPECTED_LOOK_TITLES.length).toBe(23);
+      expect(EXPECTED_LOOK_TITLES.length).toBe(28);
       return;
     }
 
@@ -122,9 +128,9 @@ describe('the look suite inventory', () => {
     expect(listed.length).toBeGreaterThanOrEqual(EXPECTED_LOOK_TITLES.length);
   });
 
-  it('the expected set itself has no duplicates and matches the reported 23', () => {
+  it('the expected set itself has no duplicates and matches the reported 28', () => {
     expect(new Set(EXPECTED_LOOK_TITLES).size).toBe(EXPECTED_LOOK_TITLES.length);
-    expect(EXPECTED_LOOK_TITLES.length).toBe(23);
+    expect(EXPECTED_LOOK_TITLES.length).toBe(28);
   });
 
   it('the two 3.4 titles are present — the pair Part 2 mis-reported as 22', () => {

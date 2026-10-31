@@ -44,6 +44,13 @@ import { requireValidPins } from './look/pinValidity';
 import { acquireGlintFrames } from './look/glintAcquire';
 import { classifyGlintCollapse, countDifferingPixels, maxRawChannelDelta, measureGlint } from './look/glint';
 import { GLINT_GATE, GLINT_VIEW } from './look/glintConstants';
+import {
+  acquireFlatFrame,
+  acquireRealFrame,
+  assertSurfaceRestored,
+  readTextureMeans,
+} from './look/flatAlbedo';
+import { evaluateTerminator, mutateTerminator } from './look/terminatorProfile';
 import type { Bitmap, DiscGeometry } from '../../src/lib/look/helpers';
 import { focalPxFromFov, shellSilhouetteOffsetPx } from '../../src/lib/look/helpers';
 import { SHELLS } from '../../src/scene/constants';
@@ -622,7 +629,169 @@ test.describe('negative tests: each check fails when its defect is present', () 
     expect(defectStats.max, 'the defect must ADD specular, not remove it').toBeGreaterThan(controlStats.max);
   });
 
-  // --------------------------------------------------------------------- N5 ---
+  // --------------------------------------------------------------------- N6 ---
+  test('N6: a hard step in the FLAT render makes SOFT fail', async ({ page }) => {
+    /*
+     * SOFT is measured on the albedo-neutral curve, so the negative must be injected there: a step put
+     * into the flat capture must be caught by the flat gate. Offline mutation — every disc pixel with
+     * n·L in [-0.10, +0.30] is set to grey Ld_flat above zero and grey Ln_flat at or below it — so the
+     * check is isolated from the renderer and the result cannot be an artefact of an injection that
+     * failed to reach the GPU.
+     */
+    const means = await readTextureMeans(page);
+    const control = await acquireFlatFrame(page, 0, 1.0, means);
+    await assertSurfaceRestored(page);
+
+    expect(control.verdict.soft, `control flat S ${control.verdict.S} already fails`).toBe(true);
+    expect(control.verdict.visible, 'control flat render is not visible').toBe(true);
+
+    const mutated = mutateTerminator(control.img, control.frame.sunCam, 'step', {
+      lit: control.verdict.Ld,
+      dark: control.verdict.Ln,
+    });
+    const after = evaluateTerminator(mutated, control.frame.sunCam);
+
+    console.log(
+      `[N6] control S=${control.verdict.S.toFixed(4)} (gate 0.25) | ` +
+        `defect S=${after.S.toFixed(4)} worstBin=${after.worstStepBin} step=${after.worstStepLuma.toFixed(2)} | ` +
+        `visible ${control.verdict.visible} -> ${after.visible}`,
+    );
+    await writeResult('negative-n6', { control: control.verdict, defect: after });
+
+    expect(Number.isFinite(after.S), 'defect S is not finite').toBe(true);
+    expect(after.soft, `SOFT did NOT catch a hard step: S ${after.S.toFixed(4)}`).toBe(false);
+    // The SIGNAL, not just the verdict.
+    expect(after.S, `S must reach the 0.6 separation level; got ${after.S.toFixed(4)}`).toBeGreaterThanOrEqual(0.6);
+    // And VISIBLE still passes — the step is a softness defect, not a visibility one.
+    expect(after.visible, 'VISIBLE should still pass under a hard step').toBe(true);
+  });
+
+  // -------------------------------------------------------------------- N6r ---
+  test('N6r: a hard step in the REAL render trips the catastrophe bound, not VISIBLE', async ({ page }) => {
+    /*
+     * The real-render half of N6. Since SOFT moved to the flat curve, the real render is guarded by the
+     * catastrophe bound (S_real < 0.6). This injects the same step into the REAL capture and asserts
+     * that the bound — not VISIBLE — is what catches it.
+     */
+    const real = await acquireRealFrame(page, 0);
+    expect(real.verdict.visible, 'control real render is not visible').toBe(true);
+    expect(real.verdict.S, `control real S ${real.verdict.S} already over the catastrophe bound`).toBeLessThan(0.6);
+
+    const mutated = mutateTerminator(real.img, real.frame.sunCam, 'step', {
+      lit: real.verdict.Ld,
+      dark: real.verdict.Ln,
+    });
+    const after = evaluateTerminator(mutated, real.frame.sunCam);
+
+    console.log(
+      `[N6r] control S_real=${real.verdict.S.toFixed(4)} | defect S_real=${after.S.toFixed(4)} ` +
+        `(bound 0.6) worstBin=${after.worstStepBin} step=${after.worstStepLuma.toFixed(2)} | ` +
+        `visible ${real.verdict.visible} -> ${after.visible}`,
+    );
+    await writeResult('negative-n6r', { control: real.verdict, defect: after });
+
+    expect(after.S, `catastrophe bound NOT tripped: S ${after.S.toFixed(4)}`).toBeGreaterThanOrEqual(0.6);
+    expect(after.S < 0.6, 'the catastrophe bound must FAIL under a hard step').toBe(false);
+    expect(after.visible, 'VISIBLE should still pass under a hard step').toBe(true);
+  });
+
+  // -------------------------------------------------------------------- N6b ---
+  test('N6b: a flat disc makes VISIBLE fail on A', async ({ page }) => {
+    /*
+     * Erase the lit side: every disc pixel with n·L > -0.15 is set to grey Ln. A = Ld - Ln collapses to
+     * ~0, so the VISIBLE predicate must fail while the geometry stays valid.
+     */
+    const real = await acquireRealFrame(page, 0);
+    expect(real.verdict.visible, 'control real render is not visible').toBe(true);
+
+    const mutated = mutateTerminator(real.img, real.frame.sunCam, 'flat', {
+      lit: real.verdict.Ld,
+      dark: real.verdict.Ln,
+    });
+    const after = evaluateTerminator(mutated, real.frame.sunCam);
+
+    console.log(
+      `[N6b] control A=${real.verdict.A.toFixed(2)} | defect A=${after.A.toFixed(2)} ` +
+        `Ld=${after.Ld.toFixed(2)} Ln=${after.Ln.toFixed(2)} visible=${after.visible}`,
+    );
+    await writeResult('negative-n6b', { control: real.verdict, defect: after });
+
+    expect(Number.isFinite(after.A), 'defect A is NaN').toBe(true);
+    expect(after.visible, `VISIBLE did NOT catch a flat disc: A ${after.A.toFixed(2)}`).toBe(false);
+    expect(after.A, `A must fall below 25; got ${after.A.toFixed(2)}`).toBeLessThan(25);
+  });
+
+  // -------------------------------------------------------------------- N6c ---
+  test('N6c: a white AmbientLight at 3.0 lifts the night floor and fails VISIBLE', async ({ page }) => {
+    /*
+     * A real render defect through the shared handle. Ambient light lifts every surface uniformly,
+     * including the emissive night side, so the day/night separation the VISIBLE predicate measures is
+     * destroyed. Intensity 3.0 is the prompt's value and is NOT tuned here.
+     */
+    const control = await acquireRealFrame(page, 0);
+    expect(control.verdict.visible, 'control real render is not visible').toBe(true);
+
+    await installDefectEngine(page);
+    const defective = await acquire(page, {
+      flags: { stars: false, pins: false, rings: false },
+      azimuth: 0,
+      defect: { name: 'ambientLight', params: { intensity: 3, color: 0xffffff } },
+    });
+    const after = evaluateTerminator(defective.frame, control.frame.sunCam);
+
+    console.log(
+      `[N6c] control Ln=${control.verdict.Ln.toFixed(2)} A=${control.verdict.A.toFixed(2)} visible=${control.verdict.visible} | ` +
+        `defect Ln=${after.Ln.toFixed(2)} A=${after.A.toFixed(2)} visible=${after.visible}`,
+    );
+    console.log(`[N6c] survival probe ${JSON.stringify(defective.probe?.evidence)}`);
+    await writeResult('negative-n6c', { control: control.verdict, defect: after, probe: defective.probe });
+
+    expect(defective.probe?.alive, `defect not live: ${defective.probe?.failures?.join('; ')}`).toBe(true);
+    expect(after.Ln, 'the ambient light must LIFT the night floor').toBeGreaterThan(control.verdict.Ln);
+    expect(after.visible, `VISIBLE did NOT catch an ambient lift: A ${after.A.toFixed(2)}`).toBe(false);
+  });
+
+  // -------------------------------------------------------------------- N6d ---
+  test('N6d: a two-texel toon ramp makes even the FLAT render hard, so SOFT fails', async ({ page }) => {
+    /*
+     * The strongest form of the negative: a real render defect that a flat surface cannot hide.
+     * `MeshToonMaterial` with a two-texel NearestFilter gradient map quantises n·L to two levels, so the
+     * terminator is a step in the SHADING, not in the albedo — the flat curve must show it.
+     *
+     * The surface is kept albedo-neutral (same flat day colour) so the only difference from the flat
+     * control is the quantisation.
+     */
+    const means = await readTextureMeans(page);
+    const control = await acquireFlatFrame(page, 0, 1.0, means);
+    await assertSurfaceRestored(page);
+    expect(control.verdict.soft, `flat control S ${control.verdict.S} already fails`).toBe(true);
+
+    await installDefectEngine(page);
+    const dayHex =
+      (Math.round(Math.min(1, means.day[0]) * 255) << 16) |
+      (Math.round(Math.min(1, means.day[1]) * 255) << 8) |
+      Math.round(Math.min(1, means.day[2]) * 255);
+
+    const defective = await acquire(page, {
+      flags: { stars: false, pins: false, rings: false },
+      azimuth: 0,
+      defect: { name: 'toonTerminator', params: { dayColor: dayHex } },
+    });
+    const after = evaluateTerminator(defective.frame, control.frame.sunCam);
+
+    console.log(
+      `[N6d] flat control S=${control.verdict.S.toFixed(4)} | toon S=${after.S.toFixed(4)} ` +
+        `worstBin=${after.worstStepBin} step=${after.worstStepLuma.toFixed(2)} | soft=${after.soft}`,
+    );
+    console.log(`[N6d] survival probe ${JSON.stringify(defective.probe?.evidence)}`);
+    await writeResult('negative-n6d', { control: control.verdict, defect: after, probe: defective.probe });
+
+    expect(defective.probe?.alive, `defect not live: ${defective.probe?.failures?.join('; ')}`).toBe(true);
+    expect(after.soft, `SOFT did NOT catch a two-texel toon terminator: S ${after.S.toFixed(4)}`).toBe(false);
+    expect(after.S, `S must reach 0.6; got ${after.S.toFixed(4)}`).toBeGreaterThanOrEqual(0.6);
+  });
+
+  // -------------------------------------------------------------------- N5 ---
   test('N5: 3.2 rejects an all-black capture as invalid and fails an all-white one', async ({ page }) => {
     await settleAt(page, 0);
     const geom: DiscGeometry = await page.evaluate(() => {
