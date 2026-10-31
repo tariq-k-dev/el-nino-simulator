@@ -14,7 +14,10 @@ export declare const STALE_BUNDLE_MESSAGE: string;
 
 export interface BuildStamp {
   gitHead: string;
+  /** sha256 over src/**. Catches "src changed, dist was not rebuilt". */
   srcHash: string;
+  /** sha256 over dist/assets/**.js. Catches "a production build replaced dist". */
+  distHash: string;
   builtAt: string;
 }
 
@@ -22,6 +25,10 @@ export type StampVerdict = { ok: true } | { ok: false; reason: string };
 
 export declare function listFiles(dir: string, root?: string): Promise<string[]>;
 export declare function hashSrcTree(repoRoot: string): Promise<string>;
+export declare function hashDistAssets(repoRoot: string): Promise<string>;
 export declare function makeStamp(repoRoot: string, gitHead: string): Promise<BuildStamp>;
-export declare function checkStamp(stamp: unknown, currentSrcHash: string): StampVerdict;
+export declare function checkStamp(
+  stamp: unknown,
+  current: { srcHash: string; distHash: string },
+): StampVerdict;
 export declare function readStamp(repoRoot: string): Promise<unknown | null>;

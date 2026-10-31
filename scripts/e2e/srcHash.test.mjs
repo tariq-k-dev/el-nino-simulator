@@ -16,6 +16,7 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import {
   STALE_BUNDLE_MESSAGE,
   checkStamp,
+  hashDistAssets,
   hashSrcTree,
   listFiles,
   makeStamp,
@@ -24,12 +25,24 @@ import {
 
 let root;
 
-/** Lay down a fake repo with the given src/ files. */
-async function makeRepo(files) {
+const SRC = {
+  'main.tsx': 'export const a = 1;\n',
+  'lib/helpers.ts': 'export const b = 2;\n',
+  'lib/nested/deep.ts': 'export const c = 3;\n',
+};
+
+/** Lay down a fake repo with the given src/ and dist/assets/ files. */
+async function makeRepo(srcFiles = SRC, assetFiles = { 'index-abc.js': 'console.log("e2e");\n' }) {
   const dir = await mkdtemp(path.join(tmpdir(), 'srchash-'));
   await mkdir(path.join(dir, 'src'), { recursive: true });
-  for (const [rel, contents] of Object.entries(files)) {
+  await mkdir(path.join(dir, 'dist', 'assets'), { recursive: true });
+  for (const [rel, contents] of Object.entries(srcFiles)) {
     const full = path.join(dir, 'src', rel);
+    await mkdir(path.dirname(full), { recursive: true });
+    await writeFile(full, contents, 'utf8');
+  }
+  for (const [rel, contents] of Object.entries(assetFiles)) {
+    const full = path.join(dir, 'dist', 'assets', rel);
     await mkdir(path.dirname(full), { recursive: true });
     await writeFile(full, contents, 'utf8');
   }
@@ -37,11 +50,7 @@ async function makeRepo(files) {
 }
 
 beforeEach(async () => {
-  root = await makeRepo({
-    'main.tsx': 'export const a = 1;\n',
-    'lib/helpers.ts': 'export const b = 2;\n',
-    'lib/nested/deep.ts': 'export const c = 3;\n',
-  });
+  root = await makeRepo();
 });
 
 afterEach(async () => {
@@ -88,16 +97,50 @@ describe('hashSrcTree', () => {
   });
 
   it('does not depend on readdir order', async () => {
-    const mirror = await makeRepo({
-      'main.tsx': 'export const a = 1;\n',
-      'lib/helpers.ts': 'export const b = 2;\n',
-      'lib/nested/deep.ts': 'export const c = 3;\n',
-    });
+    const mirror = await makeRepo();
     try {
       expect(await hashSrcTree(mirror)).toBe(await hashSrcTree(root));
     } finally {
       await rm(mirror, { recursive: true, force: true });
     }
+  });
+
+  it('ignores dist/, so a rebuilt bundle does not change srcHash', async () => {
+    const before = await hashSrcTree(root);
+    await writeFile(path.join(root, 'dist', 'assets', 'index-abc.js'), 'console.log("prod");\n', 'utf8');
+    expect(await hashSrcTree(root)).toBe(before);
+  });
+});
+
+describe('hashDistAssets', () => {
+  it('is deterministic for an unchanged bundle', async () => {
+    expect(await hashDistAssets(root)).toBe(await hashDistAssets(root));
+  });
+
+  it('changes when the served bundle is replaced by a production build', async () => {
+    const e2e = await hashDistAssets(root);
+    // The real sequence: `pnpm build` overwrites dist/ after build:e2e and
+    // dead-code-eliminates the VITE_E2E hooks. srcHash still matches; distHash must not.
+    await writeFile(path.join(root, 'dist', 'assets', 'index-abc.js'), 'console.log("prod");\n', 'utf8');
+    expect(await hashDistAssets(root)).not.toBe(e2e);
+  });
+
+  it('changes when the emitted filename changes (content-hashed assets)', async () => {
+    const before = await hashDistAssets(root);
+    await rm(path.join(root, 'dist', 'assets', 'index-abc.js'));
+    await writeFile(path.join(root, 'dist', 'assets', 'index-xyz.js'), 'console.log("e2e");\n', 'utf8');
+    expect(await hashDistAssets(root)).not.toBe(before);
+  });
+
+  it('ignores non-JS assets, so a texture swap is not a stale bundle', async () => {
+    const before = await hashDistAssets(root);
+    await writeFile(path.join(root, 'dist', 'assets', 'earth_day.jpg'), 'not really a jpeg', 'utf8');
+    expect(await hashDistAssets(root)).toBe(before);
+  });
+
+  it('returns empty string when dist/ is absent', async () => {
+    await rm(path.join(root, 'dist'), { recursive: true, force: true });
+    expect(await hashDistAssets(root)).toBe('');
   });
 });
 
@@ -129,33 +172,60 @@ describe('makeStamp / readStamp', () => {
 });
 
 describe('checkStamp', () => {
-  it('passes on a matching srcHash', async () => {
+  const currentOf = async () => ({ srcHash: await hashSrcTree(root), distHash: await hashDistAssets(root) });
+
+  it('passes when both hashes match', async () => {
     const stamp = await makeStamp(root, 'abc1234');
-    expect(checkStamp(stamp, stamp.srcHash)).toEqual({ ok: true });
+    expect(checkStamp(stamp, await currentOf())).toEqual({ ok: true });
   });
 
-  it('fails on a mismatched srcHash and names both prefixes', async () => {
+  it('fails when src/ changed and names both prefixes', async () => {
     const stamp = await makeStamp(root, 'abc1234');
-    const verdict = checkStamp(stamp, 'f'.repeat(64));
+    await writeFile(path.join(root, 'src', 'lib', 'helpers.ts'), 'export const b = 5;\n', 'utf8');
+    const verdict = checkStamp(stamp, await currentOf());
     expect(verdict.ok).toBe(false);
-    expect(verdict.reason).toContain('srcHash');
+    expect(verdict.reason).toContain('src/ changed');
     expect(verdict.reason).toContain(stamp.srcHash.slice(0, 12));
   });
 
-  it('fails when the stamp is missing — "cannot tell" is not "fresh"', () => {
-    const verdict = checkStamp(null, 'a'.repeat(64));
+  it('fails when dist/ was replaced even though src/ is untouched', async () => {
+    const stamp = await makeStamp(root, 'abc1234');
+    await writeFile(path.join(root, 'dist', 'assets', 'index-abc.js'), 'console.log("prod");\n', 'utf8');
+    const verdict = checkStamp(stamp, await currentOf());
+    expect(verdict.ok).toBe(false);
+    expect(verdict.reason).toContain('dist/ was replaced');
+    expect(verdict.reason).toContain('VITE_E2E');
+  });
+
+  it('reports the src/ cause first when both moved', async () => {
+    const stamp = await makeStamp(root, 'abc1234');
+    await writeFile(path.join(root, 'src', 'main.tsx'), 'export const a = 9;\n', 'utf8');
+    await writeFile(path.join(root, 'dist', 'assets', 'index-abc.js'), 'console.log("prod");\n', 'utf8');
+    expect(checkStamp(stamp, await currentOf()).reason).toContain('src/ changed');
+  });
+
+  it('fails when the stamp is missing — "cannot tell" is not "fresh"', async () => {
+    const verdict = checkStamp(null, await currentOf());
     expect(verdict.ok).toBe(false);
     expect(verdict.reason).toContain('pnpm build:e2e');
   });
 
-  it('fails when srcHash is absent or empty', () => {
-    expect(checkStamp({ gitHead: 'abc1234' }, 'a'.repeat(64)).ok).toBe(false);
-    expect(checkStamp({ srcHash: '' }, 'a'.repeat(64)).ok).toBe(false);
-    expect(checkStamp('a string', 'a'.repeat(64)).ok).toBe(false);
+  it('fails when srcHash is absent or empty', async () => {
+    const current = await currentOf();
+    expect(checkStamp({ distHash: current.distHash }, current).ok).toBe(false);
+    expect(checkStamp({ srcHash: '', distHash: current.distHash }, current).ok).toBe(false);
+    expect(checkStamp('a string', current).ok).toBe(false);
+  });
+
+  it('fails when distHash is absent — a stamp written before a build', async () => {
+    const current = await currentOf();
+    const verdict = checkStamp({ srcHash: current.srcHash }, current);
+    expect(verdict.ok).toBe(false);
+    expect(verdict.reason).toContain('distHash');
   });
 
   it('the guard message the global setup throws is a stable literal', () => {
-    // The spec suite greps for this string; changing it silently disarms the guard.
+    // The suite's docs quote this string; changing it silently disarms the guard.
     expect(STALE_BUNDLE_MESSAGE).toBe('STALE E2E BUNDLE');
   });
 });

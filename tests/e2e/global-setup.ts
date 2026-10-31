@@ -15,13 +15,20 @@
 import { readFile } from 'node:fs/promises';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { STALE_BUNDLE_MESSAGE, STAMP_DIR, STAMP_FILE, checkStamp, hashSrcTree } from '../../scripts/e2e/srcHash.mjs';
+import {
+  STALE_BUNDLE_MESSAGE,
+  STAMP_DIR,
+  STAMP_FILE,
+  checkStamp,
+  hashDistAssets,
+  hashSrcTree,
+} from '../../scripts/e2e/srcHash.mjs';
 
 const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..');
 
 export default async function globalSetup(): Promise<void> {
   const stampPath = path.join(repoRoot, STAMP_DIR, STAMP_FILE);
-  const currentSrcHash = await hashSrcTree(repoRoot);
+  const current = { srcHash: await hashSrcTree(repoRoot), distHash: await hashDistAssets(repoRoot) };
 
   let raw: string;
   try {
@@ -41,17 +48,17 @@ export default async function globalSetup(): Promise<void> {
     throw new Error(`${STALE_BUNDLE_MESSAGE}: ${STAMP_DIR}/${STAMP_FILE} is not valid JSON.`);
   }
 
-  const verdict = checkStamp(parsed, currentSrcHash);
+  const verdict = checkStamp(parsed, current);
   if (!verdict.ok) {
     throw new Error(
-      `${STALE_BUNDLE_MESSAGE}: ${verdict.reason}. The bundle in dist/ does not match the ` +
-        `current src/ tree, so any pixel measurement from it is untrusted. Re-run \`pnpm build:e2e\`.`,
+      `${STALE_BUNDLE_MESSAGE}: ${verdict.reason}. The served bundle is not the one this stamp ` +
+        `describes, so any pixel measurement from it is untrusted. Re-run \`pnpm build:e2e\`.`,
     );
   }
 
-  const stamp = parsed as { gitHead?: string; srcHash?: string };
+  const stamp = parsed as { gitHead?: string; srcHash?: string; distHash?: string };
   console.log(
     `[e2e] bundle stamp OK — srcHash ${String(stamp.srcHash).slice(0, 12)} ` +
-      `(built from ${String(stamp.gitHead).slice(0, 7)})`,
+      `distHash ${String(stamp.distHash).slice(0, 12)} (built from ${String(stamp.gitHead).slice(0, 7)})`,
   );
 }

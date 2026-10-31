@@ -72,47 +72,107 @@ export async function hashSrcTree(repoRoot) {
 }
 
 /**
+ * sha256 over the served bundle: `dist/assets/**.js`, path + bytes, sorted.
+ *
+ * `srcHash` alone is not enough, and this is measured, not hypothetical. The gate
+ * ends in `pnpm build`, which writes a PRODUCTION bundle over the same `dist/`
+ * that Playwright serves. So the sequence
+ *
+ *     pnpm build:e2e && pnpm build && pnpm e2e:look      # srcHash still matches!
+ *
+ * leaves a stamp whose srcHash agrees with the tree while the served bundle has
+ * every VITE_E2E hook dead-code-eliminated — the specs then die on a 90 s
+ * `waitForFunction(() => window.__globe)` timeout that reads as a product bug.
+ * Hashing the emitted assets catches that replacement, which srcHash cannot.
+ *
+ * @param {string} repoRoot absolute repo root
+ * @returns {Promise<string>} hex digest
+ */
+export async function hashDistAssets(repoRoot) {
+  const assetsDir = path.join(repoRoot, 'dist', 'assets');
+  let files;
+  try {
+    files = await listFiles(assetsDir, assetsDir);
+  } catch {
+    return '';
+  }
+  const js = files.filter((f) => /\.(js|mjs)$/.test(f));
+  const hash = createHash('sha256');
+  for (const rel of js) {
+    const bytes = await readFile(path.join(assetsDir, rel));
+    hash.update(rel);
+    hash.update('\0');
+    hash.update(bytes);
+    hash.update('\0');
+  }
+  return hash.digest('hex');
+}
+
+/**
  * Build the stamp object a fresh E2E build writes.
+ *
+ * `distHash` is '' when `dist/` does not exist yet; `checkStamp` treats that as a
+ * failure, so the stamp is only meaningful when written after a real build.
  *
  * @param {string} repoRoot
  * @param {string} gitHead commit the tree was built from, or 'unknown'
- * @returns {Promise<{gitHead: string, srcHash: string, builtAt: string}>}
+ * @returns {Promise<{gitHead: string, srcHash: string, distHash: string, builtAt: string}>}
  */
 export async function makeStamp(repoRoot, gitHead) {
   return {
     gitHead,
     srcHash: await hashSrcTree(repoRoot),
+    distHash: await hashDistAssets(repoRoot),
     builtAt: new Date().toISOString(),
   };
 }
 
 /**
- * Compare a stamp against the tree on disk.
+ * Compare a stamp against the tree AND the served bundle on disk.
  *
- * Returns a verdict rather than throwing, so the unit test can assert on the
- * exact reason and the global setup can decide how loud to be. A missing or
- * unparseable stamp is *not* a pass: "I could not tell" and "it is fresh" must
- * not be the same answer, because the failure this guards is a silent one.
+ * Two independent checks, because there are two independent ways to measure the
+ * wrong thing:
+ *   - `srcHash` — src/ changed since the build (a failed gate link leaves dist/).
+ *   - `distHash` — dist/ was replaced by a different build after the stamp was
+ *     written (the gate's `pnpm build` runs after `build:e2e` and strips the hooks).
  *
- * @param {{stamp: unknown}} input
- * @param {string} currentSrcHash
+ * Returns a verdict rather than throwing, so the unit test can assert on the exact
+ * reason and the global setup can decide how loud to be. A missing or unparseable
+ * stamp is *not* a pass: "I could not tell" and "it is fresh" must not be the same
+ * answer, because the failure this guards is a silent one.
+ *
+ * @param {unknown} stamp
+ * @param {{srcHash: string, distHash: string}} current
  * @returns {{ok: true} | {ok: false, reason: string}}
  */
-export function checkStamp(stamp, currentSrcHash) {
+export function checkStamp(stamp, current) {
   if (stamp === null || stamp === undefined) {
     return { ok: false, reason: `no ${STAMP_FILE} — run \`pnpm build:e2e\` first` };
   }
   if (typeof stamp !== 'object') {
     return { ok: false, reason: `${STAMP_FILE} is not an object` };
   }
-  const recorded = /** @type {{srcHash?: unknown}} */ (stamp).srcHash;
-  if (typeof recorded !== 'string' || recorded.length === 0) {
+  const { srcHash: recordedSrc, distHash: recordedDist } = /** @type {{srcHash?: unknown, distHash?: unknown}} */ (
+    stamp
+  );
+  if (typeof recordedSrc !== 'string' || recordedSrc.length === 0) {
     return { ok: false, reason: `${STAMP_FILE} has no srcHash` };
   }
-  if (recorded !== currentSrcHash) {
+  if (typeof recordedDist !== 'string' || recordedDist.length === 0) {
+    return { ok: false, reason: `${STAMP_FILE} has no distHash (was it written before a build?)` };
+  }
+  if (recordedSrc !== current.srcHash) {
     return {
       ok: false,
-      reason: `srcHash ${recorded.slice(0, 12)} != tree ${currentSrcHash.slice(0, 12)}`,
+      reason: `src/ changed since the build — srcHash ${recordedSrc.slice(0, 12)} != tree ${current.srcHash.slice(0, 12)}`,
+    };
+  }
+  if (recordedDist !== current.distHash) {
+    return {
+      ok: false,
+      reason:
+        `dist/ was replaced since the build — distHash ${recordedDist.slice(0, 12)} != served ${current.distHash.slice(0, 12)}. ` +
+        `A production \`pnpm build\` strips the VITE_E2E hooks`,
     };
   }
   return { ok: true };
