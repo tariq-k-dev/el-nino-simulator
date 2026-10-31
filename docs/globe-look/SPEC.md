@@ -13,7 +13,7 @@ Measured at 1280x800, SwiftShader, clock frozen.
 | **3.1** | rim: soft monotonic halo | 16 rays from the FITTED limb, −6..+60 px, bilinear luma; peak, outward monotonicity, shell-vs-background at 1.1 R | peak ≤ 110/255; worst outward rise ≤ 1/255 from `monotonicStartOffset` (+3 px); shell−bg ≤ 2/255; max abs step beyond +2 px ≤ 16/255 | peak **94.6** at +1 px; rise 0.44; shell−bg **0.29**; max step **7.99** | **N3** atmosphere forced opaque → shell−bg **223.99** |
 | **3.2** | glare: no clipped pixels | clipped count and largest bright blob (luma ≥ 250) inside the disc, 12 azimuths | clipped **== 0**; largest blob ≤ **12 px** | clipped **0**, blobs **0** at 12/12 az | **N2** `si 1.0` + roughness floor 0 → clipped **284**; **N5** all-white frame → largest **332,965** |
 | **3.3** | local peak: no blue circle | W1 only (r/R 0.91, 180°, size 40): sigma-3 blurred peak ÷ median of its 8–20 px annulus, excluding the measured specular mask | ratio ≤ **1.15** | ratio **0.976** (peak 4.95, med 5.07) | **N4** fill light + material specular → ratio **3.426** |
-| **3.4** | terminator: soft and readable | whole-disc n·L bands in D95 (r/R ≤ 0.95): Ld = median luma for n·L ∈ [0.30,0.50], Ln for n·L ∈ [−0.50,−0.15], A = Ld − Ln. Curve C(k) = 20 bins of 0.02 over n·L ∈ [−0.10,+0.30] | VISIBLE **A ≥ 25** and **Ld/max(Ln,1) ≥ 3**; SOFT **S ≤ 0.25** where S = max\|C(k+1)−C(k)\|/A | default **A 57.28, ratio 12.57, S 0.116** (PASS) — **az 120 S 0.294 and az 150 S 0.268 FAIL**, see §3 | **NOT GATED YET** — N6/N6b/N6c unbuilt, see §3 |
+| **3.4** | terminator: visible and soft | (a) VISIBLE on the **real** render: whole-disc n·L bands in D95, Ld = median luma for n·L ∈ [0.30,0.50], Ln for n·L ∈ [−0.50,−0.15], A = Ld−Ln. (b) SOFT on the **albedo-neutral** render at level ×1.0: C(k) = 20 bins of 0.02 over n·L ∈ [−0.10,+0.30], S = max\|C(k+1)−C(k)\|/A. (c) catastrophe bound on the real render | VISIBLE **A ≥ 25** and **Ld/max(Ln,1) ≥ 3**; SOFT **S ≤ 0.25**; catastrophe **S_real < 0.6**; night fraction **10–30 %**; night mean ≥ **4/255** | real **A 57.28, ratio 12.57, S 0.116**; flat **A 42.07, ratio 14.35, S 0.1476**; evaluated set **7 of 12** | **N6** flat hard step → S **0.9947**; **N6r** real hard step → S_real **0.9961** (bound 0.6); **N6b** flat disc → A **0.00**; **N6c** AmbientLight 3.0 → Ln 4.95→**57.45**; **N6d** toon ramp → S **0.8066** |
 | **3.5** | pins: readable, unblown, amber | semantic P1–P4 on each VALID pin; day AND night must both be represented | P1 luma ≥ **180**; P2 no `min(RGB) ≥ 250`; P3 sat ≥ **0.15**; P4 R ≥ 240, G ≥ 200, B ≤ G | 5 valid of 16 rows; e.g. `us-west` (255,255,179) luma 249.5 sat 0.298 | **N7** emissive ×4 → P2/P3 fail, day **and** night; **N8** pins hidden → luma **3.9** |
 | **3.6** | no ring light cast | mean luma of a 30–60 px annulus, pins ON vs OFF vs OFF again; delta vs `max(3 %, 1.5 × noise)` | \|delta %\| ≤ **max(3, 1.5 × noise)** | 3 measurable pins **0.002–2.849 %** | **N1** amber pointLight at the pin → **+341.3 %** |
 | **3.7** | console clean | app warnings/errors + pageerrors, driver chatter filtered | **== 0** | **0** app messages | (self-evident; no defect needed) |
@@ -105,68 +105,78 @@ Measured at 1280x800, SwiftShader, clock frozen.
 13. **E0: the instrumented bundle owns `dist-e2e/`.** Both builds wrote `dist/`, so every gate
     invalidated the E2E bundle and the stamp guard fired on the normal workflow.
 
-## 3. What is NOT established — 3.4, and it is a real STOP
+## 3. 3.4 — the second post-measurement definition change, disclosed
 
-The redefinition is **built** (`tests/e2e/look/terminatorProfile.ts`, 20 unit tests including every
-synthetic curve the prompt names and the D2 oracle to ±0.002) and the evaluated set is computed from
-**geometry alone and printed before measuring** (`terminatorApplicability.ts`). Three of the seven
-evaluated azimuths do not pass the gate on the real render:
+**This is the SECOND time 3.4's definition moved after the numbers were seen.** The first was F5
+(P2FIX): sampling moved from the 1 px axis profile to whole-disc n.L bands. The second is F5b (P3):
+SOFT moved from the real render to the albedo-neutral render. Both were forced by measurements, both
+are recorded here with the numbers that forced them, and **no threshold ever moved**.
 
-| az | θ | cross r/R | Ld | Ln | A | Ld/Ln | S | headroom 0.25/S | worst bin | worst step | VISIBLE | SOFT |
-|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|:--:|:--:|
-| **0** | 47.2 | 0.829 | 62.23 | 4.95 | **57.28** | **12.57** | **0.116** | 2.16 | 14 | 6.64 | pass | **pass** |
-| 120 | 64.3 | 0.565 | 85.39 | 13.95 | 71.44 | 6.12 | **0.294** | 0.85 | 7 | 20.99 | pass | **FAIL** |
-| 150 | 91.1 | 0.025 | 89.56 | 18.10 | 71.46 | 4.95 | **0.268** | 0.93 | 7 | 19.18 | pass | **FAIL** |
-| 180 | 115.6 | 0.563 | 89.97 | 20.95 | 69.02 | 4.29 | 0.241 | 1.04 | 7 | 16.60 | pass | pass |
-| 270 | 123.6 | 0.703 | 70.58 | 7.74 | 62.83 | 9.12 | 0.110 | 2.27 | 11 | 6.93 | pass | pass |
-| 300 | 100.7 | 0.250 | 64.21 | 6.17 | 58.04 | 10.40 | 0.091 | 2.74 | 5 | 5.29 | pass | pass |
-| 330 | 74.6 | 0.356 | 62.37 | 5.95 | 56.42 | 10.47 | 0.100 | 2.50 | 15 | 5.64 | pass | pass |
+### What failed, and what the failure was not
 
-Not evaluated (3 of 12 fail applicability): az 30 and 60 have **no night band at all** (the sun is
-almost behind the camera), az 90 and 210 and 240 lack a band or a populated bin. Az 0, 270, 300 and 330
-have huge SOFT headroom (S ≈ 0.10, headroom 2.2–2.7).
+F5's SOFT gate measured S on the real render and failed at **az 120 (S 0.294)** and **az 150
+(S 0.268)** against 0.25 — a real STOP, reported and not tuned.
 
-**Why 120 and 150 fail, stated as a measurement.** Their worst step is in curve bin **7**, i.e. the
-n·L bin **[0.04, 0.06)** — about 15–20 px past the terminator — with a step of 21.0 and 19.2 luma
-against A ≈ 71. Both azimuths put the terminator almost exactly through the disc CENTRE (crossing at
-r/R 0.565 and **0.025**), so the axis and its ±0.1R/±0.2R parallel lines run along the terminator
-itself, and the band's albedo changes sharply there. The curve is a median over D95, so this is real
-surface content, not aliasing: the terminator sits over a coastline.
+Step D (`docs/globe-look/FLAT-ALBEDO-PROBE.md`) removed the textures and re-measured the same seven
+azimuths at three albedo levels:
 
-The prompt's rule is explicit — *"if the default view fails VISIBLE or SOFT, **or any evaluated azimuth
-fails**, STOP and report the full 20-bin curve, Ld, Ln, A, S and the counts; do NOT change definitions
-or thresholds."* The default view passes; az 120 and az 150 do not. **Nothing was changed.** 3.4 keeps
-its existing (now partly retired) metrics and the new gate is dormant.
+| | az 120 | az 150 |
+|---|---:|---:|
+| REAL worst step (bin 7) | **20.99** | **19.18** |
+| FLAT worst step | **2.86** | **2.93** |
+| REAL S | 0.2938 | 0.2684 |
+| FLAT S | **0.0969** | **0.0964** |
 
-**N6 / N6b / N6c are therefore unbuilt** — they were specified as the negatives FOR this gate, and a
-negative test for a gate that is not live would be asserting a verdict the suite does not enforce. The
-mutation machinery they need is built and unused: `mutateTerminator(img, geom, 'step'|'flat', grey)` and
-`evaluateTerminator` are pure and independently tested, so wiring them up after a decision is
-mechanical.
+**21 of 21** albedo-neutral measurements passed. Pre-registered rule E3 said that outcome accepts H1
+(geography) and rejects H2 (shading). The ~20-luma step is a **coastline** the 0.02-wide n·L strip
+crosses, not a shader discontinuity.
 
-Options, none of them mine to pick:
+### The three decisions
 
-1. **Accept that 3.4 is a per-azimuth property, not a global one.** Gate the default view and report
-   the rest; az 120/150 legitimately have a terminator over varying albedo. This is the only option
-   that changes no number and no definition — it changes what the spec CLAIMS.
-2. **Gate VISIBLE everywhere and SOFT only where the crossing is at r/R > some floor** (az 120 and 150
-   have crossings at 0.565 and 0.025, i.e. through the middle of the disc). That is a new applicability
-   condition, and adding one after seeing the failures is exactly the shape of tuning.
-3. **Reconsider S.** Bins are 0.02 in n·L — S ≤ 0.25 allows an 0.08-n·L transition, about 25 px. If a
-   real coastline inside the terminator band can move a bin median by 20 luma, the metric may be
-   measuring albedo rather than softness, which is D3's finding applied one level further.
+- **E1.** The STOP was correct. A ≥ 25, Ld/max(Ln,1) ≥ 3, S ≤ 0.25, the 0.95 bound, D95, 20 bins of
+  0.02 and the evaluated-set rule are unchanged.
+- **E2.** H1 (geography) vs H2 (shading) — not decided by argument. H1's own predicted signature was
+  that the worst bin would be the SAME strip seen from adjacent azimuths (bin 7 at az 120, 150 and
+  180), and that is what was measured.
+- **E3.** The pre-registered rule, applied as written: all 21 flat S ≤ 0.25 ⇒ H1 accepted ⇒ F5b.
 
-The 20-bin default-view curve, for anyone re-opening this:
+### What the gate no longer proves
 
-```
-n·L    -0.09  -0.07  -0.05  -0.03  -0.01   0.01   0.03   0.05   0.07   0.09
-luma    5.81   5.80   5.88   5.88   6.59   7.88  12.44  14.30  15.52  16.59
-n·L     0.11   0.13   0.15   0.17   0.19   0.21   0.23   0.25   0.27   0.29
-luma   18.48  23.36  23.66  22.66  24.87  31.52  35.52  36.45  37.31  36.45
-```
+**Coastline contrast inside the terminator strip is out of scope.** A future texture change that put a
+razor-sharp land edge across the terminator would pass SOFT, because SOFT now asks a question about the
+lighting function rather than about the map. The catastrophe bound (S_real < 0.6) is what catches a
+severe edge — and a coastline is not severe: the measured real maximum is 0.294, so the bound has 2×
+headroom. Stated plainly because a reader is entitled to know what a green 3.4 does and does not mean.
 
-Note the non-monotonicity at 0.15→0.17 and 0.27→0.29: that is already albedo intruding on the curve at
-the default view, and it is the same phenomenon that fails az 120/150 at a larger amplitude.
+### Why the thresholds did not move
+
+S ≤ 0.25 still means a transition at least 0.08 wide in n·L. A ≥ 25 and Ld/Ln ≥ 3 still describe the
+real render's day/night separation. The only thing that changed is WHICH RENDER each question is asked
+of, and that was chosen by a pre-registered rule before the data existed.
+
+### Negatives
+
+| test | defect | measured | threshold | control |
+|---|---|---|---:|---|
+| **N6** | offline hard step in the FLAT capture | S **0.9947** | ≥ 0.6 → SOFT fails | S 0.1476, passes |
+| **N6r** | offline hard step in the REAL capture | S_real **0.9961** | ≥ 0.6 → catastrophe fails | S_real 0.1160, passes |
+| **N6b** | flat disc (lit side erased) | A **0.00** (Ld 4.00, Ln 4.00) | < 25 → VISIBLE fails | A 57.28, passes |
+| **N6c** | white AmbientLight 3.0 at the root | Ln 4.95 → **57.45**, A 54.81 | VISIBLE fails | visible, passes |
+| **N6d** | two-texel toon ramp on the flat surface | S **0.8066** | ≥ 0.6 → SOFT fails | S 0.1476, passes |
+
+N6d is the one that matters most: it is a REAL render defect (a `MeshToonMaterial` quantising n·L to
+two levels) that a flattened surface cannot hide, so it proves SOFT is still measuring softness and not
+merely the absence of texture.
+
+### One implementation cost, recorded
+
+The flat mutation does not restore cleanly in place — `fitLimb` swaps the surface material and
+`setLayers` re-renders React so R3F rebuilds materials, and a rebuild landing after the restore loop
+keeps the flat values. Three in-place strategies were tried and each closed one ordering and left
+another open. `assertSurfaceRestored` therefore **reloads the page** when the in-place restore does not
+hold, re-installs the defect engine, and reports it. In the probe run that was **21 of 21** capture
+cycles. That is why the 12-az 3.4 test needs a 600 s budget rather than the suite's 240 s: it is
+7 evaluated azimuths × (real + flat + reload).
 
 ## 4. How to run
 

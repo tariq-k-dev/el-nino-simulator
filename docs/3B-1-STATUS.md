@@ -258,16 +258,47 @@ tables, the 20-bin default-view curve and three options are in `docs/globe-look/
 The two retired gates (`width >= 6 % R`, `16/255` step) are **no longer asserted** — informational
 columns only — and a source guard fails if a test starts asserting them again.
 
+## 2B-C2B-P3 — the STOP is resolved, 3.4 is live
+
+### D — the albedo-neutral probe diagnosed the STOP (`05210d2`)
+
+The F5 failure at az 120 (S 0.294) and az 150 (S 0.268) was **geography, not shading**. Removing the
+textures and re-measuring the same seven azimuths at three albedo levels: **21 of 21 passed**, and the
+real 20.99 step at az 120 fell to **2.86**. Pre-registered rule E3 therefore accepted H1. Full tables
+and both 20-bin curves are in `docs/globe-look/FLAT-ALBEDO-PROBE.md`.
+
+### F5b — 3.4 is the two-curve gate and it is LIVE (`169828f`)
+
+(a) VISIBLE on the real render; (b) SOFT on the albedo-neutral render at ×1.0; (c) catastrophe bound
+S_real < 0.6; (d) night fraction 10-30 % and night mean ≥ 4/255 unchanged. **No threshold moved.** The
+evaluated set is the same 7 of 12 and the default view is asserted to be in it.
+
+Measured at the default view: real **A 57.28, ratio 12.57, S 0.1160**; flat **A 42.07, ratio 14.35,
+S 0.1476**. All 7 evaluated azimuths pass, including the two that forced the STOP (az 120 S_flat 0.0969,
+az 150 S_flat 0.0964).
+
+### N6 negatives — all five go red (`b1ae71d`)
+
+| test | defect | measured | control |
+|---|---|---|---|
+| N6 | hard step, flat capture | S **0.9947** | 0.1476 |
+| N6r | hard step, real capture | S_real **0.9961** (bound 0.6) | 0.1160 |
+| N6b | flat disc | A **0.00** | 57.28 |
+| N6c | AmbientLight 3.0 | Ln 4.95 → **57.45**, VISIBLE fails | visible |
+| N6d | two-texel toon ramp | S **0.8066** | 0.1476 |
+
+### Cost, recorded honestly
+
+The flat mutation does not restore in place — `fitLimb` swaps the material and `setLayers` re-renders
+React. `assertSurfaceRestored` reloads the page when needed and reports it: **7 of 7** cycles in the
+12-az test. That is why that test carries a 600 s budget instead of the suite's 240 s.
+
 ## Still NOT DONE
 
-1. **3.4's new gate is dormant.** The definition is fixed and tested; it is not enforced because the
-   real render fails it at az 120 and az 150. Needs a decision (SPEC.md section 3).
-2. **N6 / N6b / N6c are unbuilt** — they are the negatives FOR that gate, and a negative test for a
-   gate the suite does not enforce would assert a verdict nothing checks. Their mutation machinery
-   (`mutateTerminator`, `evaluateTerminator`) is built, pure and tested, so wiring them up is
-   mechanical once the gate is live.
-3. Everything else (3.1-3.3, 3.5-3.9) is green with negative evidence; N1, N2, N3, N4, N5, N7, N8, N9,
-   N10 all go red under their defects.
+- **Coastline contrast inside the terminator strip is out of scope** for 3.4 (SPEC.md section 3). SOFT
+  now asks a question about the lighting function; the catastrophe bound catches only severe edges.
+- Nothing else: 3.1-3.9 are all green with negative evidence, and N1-N10 (including N6, N6r, N6b, N6c,
+  N6d) all go red under their defects.
 
 ## Spec source
 
