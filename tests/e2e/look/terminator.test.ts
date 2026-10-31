@@ -14,11 +14,13 @@ import { describe, expect, it } from 'vitest';
 import type { Bitmap } from '../../../src/lib/look/helpers';
 import { nDotLAt } from '../../../src/lib/look/helpers';
 import {
+  CATASTROPHE_S,
   DAY_BAND,
   NIGHT_BAND,
   TERMINATOR_GATE,
   curveBin,
   evaluateTerminator,
+  gateTerminator,
   rOverROracle,
   type TerminatorVerdict,
 } from './terminatorProfile';
@@ -243,5 +245,76 @@ describe('the gate constants are the ones the prompt fixed', () => {
   it('the S <= 0.25 threshold means a transition at least 0.08 wide in n·L', () => {
     // S = 0.02 / w <= 0.25  =>  w >= 0.08. Stated as an assertion so the claim cannot rot.
     expect(0.02 / 0.25).toBeCloseTo(0.08, 6);
+  });
+});
+
+describe('gateTerminator — VISIBLE on the real curve, SOFT on the flat one', () => {
+  const g = geom();
+
+  /** A verdict with the fields the gate reads, so each case is explicit. */
+  function verdict(over: Partial<TerminatorVerdict>): TerminatorVerdict {
+    const base = evaluateTerminator(paint(g, ramp(0.4)), g);
+    return { ...base, ...over };
+  }
+
+  it('passes when the real render is visible and the flat render is soft', () => {
+    const real = verdict({ visible: true, soft: false, S: 0.294, failures: [] });
+    const flat = verdict({ visible: true, soft: true, S: 0.0969, failures: [] });
+    const v = gateTerminator(real, flat);
+    expect(v.pass, v.failures.join('; ')).toBe(true);
+    expect(v.catastrophePass).toBe(true);
+  });
+
+  it('SOFT comes from the FLAT curve: a soft real render cannot rescue a hard flat one', () => {
+    /*
+     * The failure this pins: swapping the two arguments would let a real render that happens to be
+     * smooth upstream, and a flat render with a shader step, both pass. The flat curve is the one that
+     * answers "is the lighting function soft".
+     */
+    const real = verdict({ visible: true, soft: true, S: 0.10, failures: [] }); // real LOOKS soft
+    const flat = verdict({ visible: true, soft: false, S: 0.40, failures: [] }); // flat is HARD
+    const v = gateTerminator(real, flat);
+    expect(v.soft).toBe(false);
+    expect(v.pass).toBe(false);
+    expect(v.failures.join(' ')).toContain('albedo-neutral');
+  });
+
+  it('VISIBLE comes from the REAL curve: a visible flat render cannot rescue an invisible real one', () => {
+    const real = verdict({ visible: false, soft: true, S: 0.10, failures: ['A 12.00 < 25 luma units'] });
+    const flat = verdict({ visible: true, soft: true, S: 0.09, failures: [] });
+    const v = gateTerminator(real, flat);
+    expect(v.visible).toBe(false);
+    expect(v.pass).toBe(false);
+  });
+
+  it('a real S >= 0.6 fails the catastrophe bound even when the flat curve is soft', () => {
+    // The bound exists precisely for a hard step that survives the albedo correction.
+    const real = verdict({ visible: true, soft: true, S: 0.75, failures: [] });
+    const flat = verdict({ visible: true, soft: true, S: 0.09, failures: [] });
+    const v = gateTerminator(real, flat);
+    expect(v.catastrophePass).toBe(false);
+    expect(v.pass).toBe(false);
+    expect(v.failures.join(' ')).toContain('0.6');
+  });
+
+  it('classifies the catastrophe bound at exactly 0.59 / 0.60', () => {
+    // The prompt's boundary: 0.59 passes, 0.60 fails. `<` not `<=`.
+    const flatSoft = verdict({ visible: true, soft: true, S: 0.09, failures: [] });
+    expect(gateTerminator(verdict({ visible: true, soft: true, S: 0.59, failures: [] }), flatSoft).catastrophePass).toBe(true);
+    expect(gateTerminator(verdict({ visible: true, soft: true, S: 0.6, failures: [] }), flatSoft).catastrophePass).toBe(false);
+  });
+
+  it('reports NOT EVALUATED rather than passing when the geometry cannot support it', () => {
+    const small: SunCameraGeometry = { ...g, r: 8 };
+    const tiny = evaluateTerminator(paint(small, ramp(0.3)), small);
+    const v = gateTerminator(tiny, tiny);
+    expect(v.evaluated).toBe(false);
+    expect(v.pass).toBe(false);
+    expect(v.notEvaluatedReason).toContain('terminator not in view');
+  });
+
+  it('states the catastrophe constant the prompt fixed', () => {
+    expect(CATASTROPHE_S).toBe(0.6);
+    expect(TERMINATOR_GATE.softMaxS).toBe(0.25);
   });
 });

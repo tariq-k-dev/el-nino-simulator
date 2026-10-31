@@ -14,7 +14,6 @@
 import { test, expect } from './fixtures';
 import {
   disc,
-  frameNoise,
   measureBlueCircle,
   measurePinGates,
   measureRingCast,
@@ -28,6 +27,13 @@ import { requireValidPins } from './look/pinValidity';
 import { acquireGlintFrames } from './look/glintAcquire';
 import { measureGlint } from './look/glint';
 import { GLINT_GATE, GLINT_RECORDED } from './look/glintConstants';
+import {
+  acquireFlatFrame,
+  acquireRealFrame,
+  assertSurfaceRestored,
+  readTextureMeans,
+} from './look/flatAlbedo';
+import { CATASTROPHE_S, gateTerminator } from './look/terminatorProfile';
 
 const AZIMUTHS = Array.from({ length: 12 }, (_, i) => i * 30);
 
@@ -237,127 +243,151 @@ test.describe('globe look', () => {
   });
 
   // ------------------------------------------------------- 3.4 terminator -----
-  test('3.4 terminator: measured from pixels, soft and readable', async ({ page }) => {
-    await requireValidDisc(page);
-    const { result } = await measureTerminator(page);
+  test('3.4 terminator: visible on the real render, soft on the albedo-neutral one', async ({ page }) => {
+    /*
+     * THE TWO-CURVE GATE (F5b). One real capture and one flat capture at the default view.
+     *
+     * (a) VISIBLE on the REAL render — A >= 25 and Ld/max(Ln,1) >= 3, from whole-disc n.L bands.
+     * (b) SOFT on the ALBEDO-NEUTRAL render at level x 1.0 — S <= 0.25, same bins, same set.
+     * (c) real-render catastrophe bound — S_real < 0.6.
+     * (d) unchanged: night fraction 10-30 %, night mean >= 4/255 at all 12 azimuths.
+     *
+     * Why SOFT moved to the flat curve is measured, not argued: at az 120 and az 150 the real curve
+     * steps ~20 luma in one bin, and with the textures removed the same bin steps 2.9. The step was the
+     * coastline the strip crosses. See docs/globe-look/FLAT-ALBEDO-PROBE.md — 21 of 21 albedo-neutral
+     * measurements passed.
+     */
+    const real = await acquireRealFrame(page, 0);
+    const means = await readTextureMeans(page);
+    const flat = await acquireFlatFrame(page, 0, 1.0, means);
+    /*
+     * The mutation must not leak. `assertSurfaceRestored` THROWS if the surface is still flattened, and
+     * falls back to a page reload when the in-place restore does not hold — a reload is the prompt's own
+     * "fresh page" route, so it is a pass, not a failure. It reports which path it took.
+     */
+    const noReload = await assertSurfaceRestored(page);
+    console.log(`[terminator] surface restored ${noReload ? 'in place' : 'by reload'}`);
 
-    // Inputs.
-    expect(result.profile.length, 'terminator profile has no samples').toBeGreaterThan(100);
-    expect(
-      result.profile.every((p) => Number.isFinite(p.luma)),
-      'terminator profile contains a non-finite luma',
-    ).toBe(true);
-    expect(result.widthPx, 'transition width could not be measured').not.toBeNull();
-    expect(result.rms, 'the limb fit was not a circle').toBeLessThanOrEqual(0.4);
+    const gate = gateTerminator(real.verdict, flat.verdict);
+
+    // Inputs before verdicts.
+    expect(real.verdict.evaluated, `az 0 is NOT EVALUATED: ${real.verdict.notEvaluatedReason}`).toBe(true);
+    expect(flat.verdict.evaluated, `the flat frame at az 0 is NOT EVALUATED: ${flat.verdict.notEvaluatedReason}`).toBe(true);
+    expect(Number.isFinite(real.verdict.Ld), 'real Ld is NaN').toBe(true);
+    expect(Number.isFinite(real.verdict.Ln), 'real Ln is NaN').toBe(true);
+    expect(Number.isFinite(real.verdict.S), 'real S is NaN').toBe(true);
+    expect(Number.isFinite(flat.verdict.S), 'flat S is NaN').toBe(true);
 
     console.log(
-      `[terminator] az=0 day=${result.dayLevel} night=${result.nightLevel} ` +
-        `width=${result.widthPx}px (${result.widthPctR}% of R_fit ${result.rFit}) ` +
-        `axis=(${result.axis.ax.toFixed(2)},${result.axis.ay.toFixed(2)})\n` +
-        `[terminator] nightFraction(luma, <25% of day mean)=${(result.nightFractionLuma * 100).toFixed(2)}% ` +
-        `nightMean=${result.nightMeanLuma} dayMean=${result.dayMeanLuma} ` +
-        `crossTerminatorStep=${result.crossTerminatorStep}/255`,
+      `[terminator] REAL  Ld=${real.verdict.Ld.toFixed(2)} Ln=${real.verdict.Ln.toFixed(2)} ` +
+        `A=${real.verdict.A.toFixed(2)} ratio=${real.verdict.ratio.toFixed(2)} S=${real.verdict.S.toFixed(4)} ` +
+        `(worst bin ${real.verdict.worstStepBin}, step ${real.verdict.worstStepLuma.toFixed(2)}) ` +
+        `visible=${real.verdict.visible} catastrophe(S<${CATASTROPHE_S})=${gate.catastrophePass}`,
+    );
+    console.log(
+      `[terminator] FLAT  Ld=${flat.verdict.Ld.toFixed(2)} Ln=${flat.verdict.Ln.toFixed(2)} ` +
+        `A=${flat.verdict.A.toFixed(2)} ratio=${flat.verdict.ratio.toFixed(2)} S=${flat.verdict.S.toFixed(4)} ` +
+        `(worst bin ${flat.verdict.worstStepBin}, step ${flat.verdict.worstStepLuma.toFixed(2)}) soft=${flat.verdict.soft}`,
     );
 
-    /*
-     * RETIRED (2B-C2B-P2FIX): the `width >= 6% R_fit` gate.
-     *
-     * It measured the endpoints of a locally monotonic segment of a LAMBERT profile, which has no day
-     * plateau — so the "width" was wherever a texture-driven descent happened to start and stop. The
-     * audit measured that segment sitting between n·L +0.15 and +0.25, entirely on the day side, and
-     * NOT containing the n·L = 0 crossing. Its value is still printed above as information.
-     *
-     * The replacement definition (whole-disc n.L bands, VISIBLE + SOFT) is built and unit-tested in
-     * `look/terminatorProfile.ts`, but it cannot be gated yet: at az 120 and az 150 the real render
-     * fails SOFT (S 0.294 / 0.268 against 0.25) — see docs/globe-look/SPEC.md. Until that is decided,
-     * 3.4 keeps the metrics below and nothing asserts the retired ones.
-     */
+    // (a) VISIBLE on the real render.
+    expect(gate.visible, `VISIBLE failed on the real render: ${gate.failures.join('; ')}`).toBe(true);
+    // (b) SOFT on the flat render.
+    expect(gate.soft, `SOFT failed on the albedo-neutral render: ${gate.failures.join('; ')}`).toBe(true);
+    // (c) catastrophe bound.
+    expect(gate.catastrophePass, `real S ${real.verdict.S.toFixed(4)} >= ${CATASTROPHE_S}`).toBe(true);
+    expect(gate.pass, `3.4 failed: ${gate.failures.join('; ')}`).toBe(true);
+
+    // (d) the legacy luma definitions, unchanged.
+    const { result } = await measureTerminator(page, { azimuthDeg: 0 });
+    expect(result.rms, 'the limb fit was not a circle').toBeLessThanOrEqual(0.4);
     expect(
       result.nightFractionLuma * 100,
       `night fraction by luma is ${(result.nightFractionLuma * 100).toFixed(2)}%, needs 10-30%`,
     ).toBeGreaterThanOrEqual(10);
     expect(result.nightFractionLuma * 100).toBeLessThanOrEqual(30);
     expect(result.nightMeanLuma, 'night mean luma is below 4/255').toBeGreaterThanOrEqual(4);
-
-    // Noise floor, so "soft" is not confused with "noisy".
-    const noise = await frameNoise(page);
     console.log(
-      `[terminator] frame noise meanAbs=${noise.meanAbs.toFixed(4)} maxAbs=${noise.maxAbs.toFixed(1)}`,
+      `[terminator] nightFraction=${(result.nightFractionLuma * 100).toFixed(2)}% nightMean=${result.nightMeanLuma}`,
     );
-    expect(Number.isFinite(noise.meanAbs), 'frame noise is NaN').toBe(true);
+
+    await writeResult('terminator-3.4-default', { real: real.verdict, flat: flat.verdict, gate });
   });
 
-  test('3.4 terminator: other 11 azimuths, night mean and no hard step', async ({ page }) => {
+  // ------------------------------------------------------- 3.4 all azimuths ---
+  test('3.4 terminator: every evaluated azimuth, real visibility and flat softness', async ({ page }) => {
+    /*
+     * BUDGET, not a threshold. Each evaluated azimuth now costs a real capture, a flat capture and (at
+     * present) a reload to restore the surface, so the sweep takes ~4 minutes: 7 x 3 captures at
+     * ~10 s each. The suite default is 240 s and this test timed out at capture 6 with every assertion
+     * still green — the measured numbers were never in question, the clock was.
+     */
+    test.setTimeout(600_000);
+    /*
+     * The 12-azimuth sweep. The evaluated SET is geometry-only, so it is identical to P2FIX and is
+     * asserted to contain the default view and at least 3 azimuths before anything is measured.
+     *
+     * The inverted-sentence is deliberate: altering this itinerary would silently change what the
+     * suite proves, so the set is checked, not assumed.
+     */
     const AZIMUTHS = [0, 30, 60, 90, 120, 150, 180, 210, 240, 270, 300, 330];
-    const rows: Array<{
-      az: number;
-      nightMeanLuma: number;
-      crossTerminatorStep: number;
-      widthPx: number | null;
-      widthPctR: number | null;
-      nightFractionLuma: number;
-      rFit: number;
-    }> = [];
+    const means = await readTextureMeans(page);
+    const rows: Array<{ az: number; gate: ReturnType<typeof gateTerminator>; nightMean: number; reload: boolean }> = [];
 
     for (const az of AZIMUTHS) {
+      const real = await acquireRealFrame(page, az);
+
+      // The legacy per-azimuth metric stays: night mean luma >= 4/255, all twelve azimuths.
       const { result } = await measureTerminator(page, { azimuthDeg: az });
       expect(result.rms, `az ${az}: limb fit RMS too large`).toBeLessThanOrEqual(0.4);
-      expect(Number.isFinite(result.nightMeanLuma), `az ${az}: night mean is NaN`).toBe(true);
-      rows.push({
-        az,
-        nightMeanLuma: result.nightMeanLuma,
-        crossTerminatorStep: result.crossTerminatorStep,
-        widthPx: result.widthPx,
-        widthPctR: result.widthPctR,
-        nightFractionLuma: result.nightFractionLuma,
-        rFit: result.rFit,
-      });
+      expect(result.nightMeanLuma, `az ${az}: night mean luma ${result.nightMeanLuma} < 4/255`).toBeGreaterThanOrEqual(4);
+
+      if (!real.verdict.evaluated) {
+        console.log(`[terminator] az=${String(az).padStart(3)} NOT EVALUATED — ${real.verdict.notEvaluatedReason}`);
+        continue;
+      }
+
+      const flat = await acquireFlatFrame(page, az, 1.0, means);
+      // Throws if the mutation leaked; a reload is an acceptable clean-up path and is counted.
+      const noReload = await assertSurfaceRestored(page);
+
+      const gate = gateTerminator(real.verdict, flat.verdict);
+      rows.push({ az, gate, nightMean: result.nightMeanLuma, reload: !noReload });
     }
 
-    const maxStep = Math.max(...rows.map((r) => r.crossTerminatorStep));
-    /*
-     * The gate is the DATA-DRIVEN threshold adopted in 2A4: 16/255 across all 12
-     * azimuths. 2A3 derived ceil(1.25 x max) = 16 from the same table, so the two agree;
-     * the constant is now stated rather than re-derived, so a future regression cannot
-     * move the gate by inflating the maximum it is computed from.
-     */
-    const threshold = 16;
+    const evaluatedAz = rows.map((r) => r.az);
+    expect(evaluatedAz, 'the default view is not in the evaluated set').toContain(0);
+    expect(evaluatedAz.length, 'fewer than 3 evaluated azimuths').toBeGreaterThanOrEqual(3);
+    const reloads = rows.filter((r) => r.reload).length;
+    console.log(
+      `[terminator] evaluated set: [${evaluatedAz.join(', ')}] (${evaluatedAz.length} of 12); ` +
+        `in-place restores needing a reload: ${reloads}/${rows.length}`,
+    );
 
     console.log(
       `[terminator table]\n${rows
         .map(
           (r) =>
-            `  az=${String(r.az).padStart(3)}  nightMean=${r.nightMeanLuma.toFixed(2).padStart(6)}  ` +
-            `crossStep=${r.crossTerminatorStep.toFixed(2).padStart(6)}  ` +
-            `width=${r.widthPx === null ? 'null' : r.widthPx.toFixed(1).padStart(5)}px ` +
-            `(${r.widthPctR === null ? 'null' : r.widthPctR.toFixed(2)}% R)  ` +
-            `nightFrac=${(r.nightFractionLuma * 100).toFixed(2)}%  R_fit=${r.rFit}`,
+            `  az=${String(r.az).padStart(3)}  real A=${r.gate.real.A.toFixed(1).padStart(6)} ` +
+            `ratio=${r.gate.real.ratio.toFixed(2).padStart(6)} S_real=${r.gate.real.S.toFixed(4)}  ` +
+            `S_flat=${r.gate.flat.S.toFixed(4)}  nightMean=${r.nightMean.toFixed(2).padStart(6)}  ` +
+            `${r.gate.pass ? 'pass' : 'FAIL'}`,
         )
-        .join('\n')}\n` +
-        `[terminator] max step=${maxStep.toFixed(2)}/255 -> gate ${threshold}/255`,
+        .join('\n')}`,
     );
 
-    await writeResult('terminator-table', {
-      rows,
-      maxStep,
-      threshold,
-      rule: 'fixed 16/255 (2A4), equals the 2A3 ceil(1.25 x max) derivation',
-    });
-
-    /*
-     * RETIRED (2B-C2B-P2FIX): the fixed 16/255 cross-terminator step gate.
-     *
-     * Inherited from a whole-disc metric that no longer exists. At az 60 it measured 13.69/255 where
-     * theta = 8.8 deg puts the terminator almost entirely off the planet — image noise, not a step.
-     * The value stays in the table above as information; the SOFT definition (S <= 0.25 on the
-     * n.L curve) is its replacement and is not gated yet, for the reason given in the default-view
-     * test above.
-     */
     for (const r of rows) {
-      expect(r.nightMeanLuma, `az ${r.az}: night mean luma ${r.nightMeanLuma} < 4/255`).toBeGreaterThanOrEqual(4);
+      expect(r.gate.visible, `az ${r.az}: VISIBLE failed on the real render — ${r.gate.failures.join('; ')}`).toBe(true);
+      expect(r.gate.soft, `az ${r.az}: SOFT failed on the albedo-neutral render — ${r.gate.failures.join('; ')}`).toBe(true);
+      expect(
+        r.gate.catastrophePass,
+        `az ${r.az}: real S ${r.gate.real.S.toFixed(4)} >= ${CATASTROPHE_S}`,
+      ).toBe(true);
     }
-    void threshold;
+
+    await writeResult('terminator-3.4-12az', { rows });
   });
+
   // ---------------------------------------------------- 3.5 pins day and night --
   test('3.5 pins: readable, unblown and still amber — day and night', async ({ page }) => {
     /*

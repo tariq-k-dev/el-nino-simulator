@@ -486,3 +486,105 @@ export function rOverROracle(alphaDeg: number, d: number): number {
   const a = (alphaDeg * Math.PI) / 180;
   return (Math.sin(a) * Math.sqrt(d * d - 1)) / (d - Math.cos(a));
 }
+
+
+// ------------------------------------------------- F5b: the two-curve 3.4 gate
+
+/**
+ * THE SECOND post-measurement definition change, and why it is not a loosening.
+ *
+ * F5's SOFT gate measured S on the REAL render and failed at az 120 (0.294) and az 150 (0.268). Step D
+ * (`docs/globe-look/FLAT-ALBEDO-PROBE.md`) established the cause by removing the textures: every one of
+ * 21 albedo-neutral measurements (7 azimuths x 3 levels) passed, and the real 20.99 step at az 120 fell
+ * to 2.86 with the same geometry and the same bins. The step was COASTLINE, not shading.
+ *
+ * So SOFT is now measured where it is a property of the lighting function — the albedo-neutral render —
+ * and the real render keeps a coarser CATASTROPHE bound. Nothing was relaxed:
+ *
+ *   - A >= 25 and Ld/max(Ln,1) >= 3 still apply to the REAL render, unchanged.
+ *   - S <= 0.25 still applies, unchanged, to the albedo-neutral curve at level x 1.0.
+ *   - S_real < 0.6 is a NEW bound, and it is the N6 separation level already fixed in P2FIX (measured
+ *     maximum on the real render 0.294, so the bound has 2x headroom). It is not a SOFT replacement.
+ *
+ * WHAT THE GATE NO LONGER PROVES: coastline contrast inside the terminator strip is out of scope. A
+ * future texture change that put a razor-sharp land edge across the terminator would pass SOFT. The
+ * catastrophe bound is what catches it if the edge is severe (>= 0.6), which a coastline is not.
+ */
+
+/** The real-render catastrophe bound. Equals the N6 separation level; not a SOFT replacement. */
+export const CATASTROPHE_S = 0.6;
+
+export interface TerminatorGateVerdict {
+  evaluated: boolean;
+  notEvaluatedReason: string | null;
+  /** VISIBLE, from the REAL render. */
+  visible: boolean;
+  /** SOFT, from the FLAT render at level x 1.0. */
+  soft: boolean;
+  /** Real-render catastrophe bound: S_real < 0.6. */
+  catastrophePass: boolean;
+  /** True only when all three hold. */
+  pass: boolean;
+  real: TerminatorVerdict;
+  flat: TerminatorVerdict;
+  failures: string[];
+}
+
+/**
+ * Combine the real and albedo-neutral verdicts into one gate decision.
+ *
+ * PURE: two verdicts in, one verdict out. This is what makes "SOFT uses the flat curve, VISIBLE the
+ * real one" testable without a browser, which is the property that matters — the two curves come from
+ * the same geometry and the same bins, and mixing them up would silently pass a hard terminator.
+ */
+export function gateTerminator(real: TerminatorVerdict, flat: TerminatorVerdict): TerminatorGateVerdict {
+  const failures: string[] = [];
+
+  if (!real.evaluated) {
+    return {
+      evaluated: false,
+      notEvaluatedReason: real.notEvaluatedReason,
+      visible: false,
+      soft: false,
+      catastrophePass: false,
+      pass: false,
+      real,
+      flat,
+      failures: [],
+    };
+  }
+
+  // (a) VISIBLE on the real render.
+  const visible = real.visible;
+  if (!visible) failures.push(...real.failures.filter((f) => f.includes('A ') || f.includes('Ld/Ln')));
+
+  // (b) SOFT on the albedo-neutral render, level x 1.0.
+  const soft = flat.soft;
+  if (!soft) {
+    failures.push(
+      `flat S ${Number.isFinite(flat.S) ? flat.S.toFixed(4) : 'NaN'} > ${TERMINATOR_GATE.softMaxS} ` +
+        `(albedo-neutral render — a step here is the shader, not the map)`,
+    );
+  }
+
+  // (c) the real-render catastrophe bound.
+  const catastrophePass = Number.isFinite(real.S) && real.S < CATASTROPHE_S;
+  if (!catastrophePass) {
+    failures.push(
+      `real S ${Number.isFinite(real.S) ? real.S.toFixed(4) : 'NaN'} >= ${CATASTROPHE_S} — ` +
+        `a hard step survived the albedo correction, so this is not geography`,
+    );
+  }
+
+  return {
+    evaluated: true,
+    notEvaluatedReason: null,
+    visible,
+    soft,
+    catastrophePass,
+    pass: visible && soft && catastrophePass,
+    real,
+    flat,
+    failures,
+  };
+}

@@ -37,8 +37,8 @@ export const EXPECTED_LOOK_TITLES = [
   '3.1 rim: soft monotonic halo, no hard edge',
   '3.2 glare: zero clipped pixels and no blob over 12 px at all 12 azimuths',
   '3.3 blue circle: no local peak over 1.15x outside the sun glint',
-  '3.4 terminator: measured from pixels, soft and readable',
-  '3.4 terminator: other 11 azimuths, night mean and no hard step',
+  '3.4 terminator: visible on the real render, soft on the albedo-neutral one',
+  '3.4 terminator: every evaluated azimuth, real visibility and flat softness',
   '3.5 pins: readable, unblown and still amber — day and night',
   '3.6 rings: no light cast on the surface around a pin',
   '3.9 glint: the accepted attenuated look, as shipped',
@@ -128,7 +128,8 @@ describe('the look suite inventory', () => {
   });
 
   it('the two 3.4 titles are present — the pair Part 2 mis-reported as 22', () => {
-    // Pins the specific discrepancy: default + 12-az are TWO tests, not one.
+    // Pins the specific discrepancy: default + 12-az are TWO tests, not one. Both were RENAMED in
+    // P3 when the definition became the two-curve gate, which is a deliberate edit to this constant.
     const terminator = EXPECTED_LOOK_TITLES.filter((t) => t.startsWith('3.4 terminator'));
     expect(terminator).toHaveLength(2);
   });
