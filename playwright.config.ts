@@ -12,6 +12,13 @@ import { defineConfig, devices } from '@playwright/test';
  */
 export default defineConfig({
   testDir: './tests/e2e',
+  /**
+   * Fails the whole run with "STALE E2E BUNDLE" when dist-e2e/build-stamp.json's
+   * srcHash does not match src/ on disk. The server below serves `dist/`, which
+   * keeps its previous contents when a build link fails, so a spec run can
+   * otherwise measure a bundle built from a different source tree.
+   */
+  globalSetup: './tests/e2e/global-setup.ts',
   // The 1.6 Mbps and 400 kbps cases legitimately take minutes.
   timeout: 400_000,
   expect: { timeout: 15_000 },

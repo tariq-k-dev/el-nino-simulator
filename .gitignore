@@ -32,6 +32,11 @@ __pycache__/
 # Temp CSV written by scripts/gen-engine-golden.mjs during a run
 enso-golden-*.csv
 
+# The E2E build stamp. Machine-local by design: srcHash describes the tree this
+# bundle came from, so a committed copy would be wrong on every other checkout and
+# would defeat the STALE E2E BUNDLE guard it exists to enforce.
+dist-e2e/
+
 # Playwright artifacts (reports, traces, failure screenshots) — never committed.
 .cache/
 test-results/

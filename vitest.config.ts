@@ -9,7 +9,9 @@ export default defineConfig({
   },
   test: {
     environment: 'node',
-    include: ['src/**/*.test.ts', 'src/**/*.test.tsx'],
+    // scripts/**/*.test.mjs: build-time guards whose failure mode is silence — the
+    // E2E stale-bundle hash lives there. Everything under src/ is app code.
+    include: ['src/**/*.test.ts', 'src/**/*.test.tsx', 'scripts/**/*.test.mjs'],
     reporters: ['default'],
   },
 });
