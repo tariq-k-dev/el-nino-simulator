@@ -129,8 +129,17 @@ export default function App() {
         exporting={exporting}
       />
 
-      {/* Left column: control deck */}
-      <div className="pointer-events-none absolute bottom-0 left-0 z-20 flex w-full flex-col gap-3 p-4 sm:p-6 lg:w-auto">
+      {/*
+        Left column: control deck.
+
+        `data-occluder` is a MEASUREMENT MARKER for the framing work (step C): the insets registry
+        reads it to know which side of the canvas this element covers. It carries no styling and
+        changes no layout — the attribute is the whole change.
+      */}
+      <div
+        data-occluder="left-panel"
+        className="pointer-events-none absolute bottom-0 left-0 z-20 flex w-full flex-col gap-3 p-4 sm:p-6 lg:w-auto"
+      >
         <div className="pointer-events-auto flex flex-col gap-2">
           <div className="hidden items-center gap-2 pl-1 lg:flex">
             <span className="h-px w-6 bg-gradient-to-r from-sky-400/60 to-transparent" />
@@ -150,8 +159,11 @@ export default function App() {
         </div>
       </div>
 
-      {/* Right column: region cards (desktop only) */}
-      <div className="pointer-events-none absolute right-0 top-1/2 z-20 hidden -translate-y-1/2 p-4 lg:flex lg:p-6">
+      {/* Right column: region cards (desktop only) — marked for the insets registry, see above. */}
+      <div
+        data-occluder="right-panel"
+        className="pointer-events-none absolute right-0 top-1/2 z-20 hidden -translate-y-1/2 p-4 lg:flex lg:p-6"
+      >
         <RegionCards metrics={analytics.metrics} activeRegion={activeRegion} onSelect={selectRegion} />
       </div>
 

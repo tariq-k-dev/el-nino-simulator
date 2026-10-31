@@ -149,6 +149,10 @@ export function RegionDrawer({ region, metrics, analytics, units, onClose }: Reg
   return (
     <aside
       ref={panelRef}
+      // `data-occluder` marks the drawer for the insets registry (step C). Closed, it sits
+      // off-canvas via translate-x-[110%], so its rect does not overlap the canvas and the
+      // registry contributes nothing — from geometry, not from a special case.
+      data-occluder="right-drawer"
       aria-hidden={!open}
       aria-label={region ? `${region.name} impact analysis` : 'Region impact analysis'}
       className={[

@@ -18,7 +18,12 @@ export function Header({ metrics, units, onToggleUnits, onExport, exporting }: H
   return (
     // z-40 so the unit toggle and Snapshot stay clickable while the region
     // drawer (z-30) is open on the right.
-    <header className="pointer-events-none absolute inset-x-0 top-0 z-40 flex items-start justify-between gap-4 p-4 sm:p-6">
+    // `data-occluder` marks the header as a top overlay for the insets registry (step C). The
+    // attribute is inert here: no class, no style, no layout change.
+    <header
+      data-occluder="top-panel"
+      className="pointer-events-none absolute inset-x-0 top-0 z-40 flex items-start justify-between gap-4 p-4 sm:p-6"
+    >
       {/* Identity + live badge */}
       <div className="pointer-events-auto flex flex-col gap-2.5">
         <div className="flex items-center gap-3">
