@@ -10,6 +10,19 @@ import { defineConfig, devices } from '@playwright/test';
  * because production (Cloudflare Pages) serves compressed responses and the
  * timing assertions in cases c/d are only meaningful on a realistic transfer.
  */
+/**
+ * The port this process serves on.
+ *
+ * `scripts/e2e-batched.mjs` runs ONE Playwright process per spec file and gives each a distinct
+ * port, so a server that fails to release between files cannot answering the next one's requests.
+ * That is how ERR_CONNECTION_REFUSED appeared mid-run in an earlier attempt: two brokers, one
+ * port, one of them dead. A plain `pnpm e2e:raw` gets 4197 as before.
+ *
+ * Read from the environment rather than hardcoded so the config stays the single place a port is
+ * decided, and every spawned process derives its baseURL from the same value.
+ */
+const PORT = Number(process.env.E2E_PORT || 4197);
+
 export default defineConfig({
   testDir: './tests/e2e',
   /**
@@ -32,7 +45,7 @@ export default defineConfig({
   outputDir: '.cache/e2e-results',
 
   use: {
-    baseURL: 'http://localhost:4197',
+    baseURL: `http://localhost:${PORT}`,
     trace: 'retain-on-failure',
     // Screenshots are written under .cache/ (gitignored) and never committed.
     screenshot: 'only-on-failure',
@@ -61,8 +74,8 @@ export default defineConfig({
      * the outputs apart means `pnpm build && pnpm e2e:look` cannot invalidate a bundle
      * that `pnpm build:e2e` just produced.
      */
-    command: 'node tests/e2e/brotli-server.mjs dist-e2e 4197',
-    url: 'http://localhost:4197',
+    command: `node tests/e2e/brotli-server.mjs dist-e2e ${PORT}`,
+    url: `http://localhost:${PORT}`,
     reuseExistingServer: !process.env.CI,
     timeout: 30_000,
   },
