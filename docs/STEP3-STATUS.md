@@ -128,6 +128,55 @@ transform does not fire one). Closing returns the offset to (22.422, 59.125), ai
 6. **The parked `VITE_E2E` vs `?debug` gate mismatch was reported, not fixed** — `__globe` and
    `__frame` need both, the build needs only the env var.
 
+### F: the full batched run
+
+12/12 files ran, **76/76 tests executed** (the 74 expected plus `look.spec.ts`'s 9 and
+`negative.spec.ts`'s 14 being counted inside it), 10/12 files green, **0 retries**, 21.7 min total.
+Summary copied immediately to `.cache/e2e-results/batched-summary-20261031-133622-full-a2.json`.
+
+| file | passed | failed | skipped | expected | retries | wall |
+|---|---:|---:|---:|---:|---:|---:|
+| boot.spec.ts | 10 | 0 | 0 | 10 | 0 | 417 s |
+| determinism.spec.ts | 2 | 0 | 0 | 2 | 0 | 16 s |
+| **frame.spec.ts** | **20** | 0 | 0 | 20 | 0 | 121 s |
+| gate-clock.spec.ts | 1 | 0 | 0 | 1 | 0 | 51 s |
+| **globe.spec.ts** | **5** | 0 | 0 | 5 | 0 | 54 s |
+| harden.spec.ts | 8 | 0 | 0 | 8 | 0 | 121 s |
+| history-gate.spec.ts | 1 | 0 | 0 | 1 | 0 | 16 s |
+| limb.spec.ts | 2 | 0 | 0 | 2 | 0 | 15 s |
+| look.spec.ts | 7 | **2** | 0 | 9 | 0 | 272 s |
+| negative.spec.ts | 13 | **1** | 0 | 14 | 0 | 195 s |
+| ref.spec.ts | 2 | 0 | 0 | 2 | 0 | 13 s |
+| scene-gate.spec.ts | 2 | 0 | 0 | 2 | 0 | 11 s |
+| **total** | **73** | **3** | **0** | **76** | **0** | 21.7 min |
+
+`globe.spec.ts` **5/5 including "zoom still works after a region fly-to"** — so S4 does not fire and
+the Step 3A waiver is formally cleared for this step.
+
+**Isolation reruns of the two red files:**
+
+| file | isolation result | verdict |
+|---|---|---|
+| `look.spec.ts` | **9/9**, 318 s | the two full-run failures were **load**, not product. Both are the 3.4 terminator pair, which the audit already documents as needing 7 reloads and 3.3 min on its own. |
+| `negative.spec.ts` | 13/14, **N10 fails again** | see the bisection below |
+
+### N10 is pre-existing, bisected, not a 3A2 regression
+
+N10 fails with the documented signature — **control-vs-control in-page `maxAbs = 0.7152`** against a
+`<= 1 luma / <= 50 px` tolerance, over **129 differing px** of 333 185 sampled
+(`docs/globe-look/SPEC.md` §5.5; V2 measured 221 px inside the same process; D8 measured exact
+zeros on fresh contexts). That is the unexplained jitter, not a framing defect.
+
+It is also **not caused by this step**, and the ablation says so: with `startInsetsObserver` removed
+from `main.tsx` and the bundle rebuilt, N10 fails identically at **0.7152 / 141 px**, and every other
+negative case still passes 13/14 the same way. The only thing 3A2 added to a locked-mode page was
+starting that observer, and removing it changes nothing. Restored after the measurement; the tree is
+clean.
+
+That makes three independent facts pointing the same way: locked mode is byte-identical (`ref.spec`
+strict 0, sha256 unchanged, in two processes), the camera is untouched (F1, `globe.spec` 5/5), and
+the one red negative test fails the same with the step's new code switched off.
+
 ### Not started, per the prompt
 
 No focus state machine, no `userZoomed` flag (the `lastFit` stand-in is not it), no single
