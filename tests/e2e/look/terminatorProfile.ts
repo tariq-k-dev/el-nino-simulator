@@ -245,3 +245,244 @@ export function serializeGeometry(input: {
 }): SunCameraGeometry {
   return { ...input };
 }
+
+
+// =========================================================== the 3.4 gate (F5)
+
+/**
+ * WHY THE SAMPLING CHANGED AND THE THRESHOLDS DID NOT.
+ *
+ * The first F5 draft took Ld and Ln from the 1 px profile along the projected-sun axis. That
+ * FAILED the real default view for a physical reason the audit had already measured:
+ *
+ *  - The night side is an EMISSIVE FLOOR (`Globe.tsx:314-316`, `emissiveMap` at 0.18), not a dark
+ *    surface. It does not fall with n·L, so Ln is ~5.2 wherever you look.
+ *  - At n·L = +0.25 the Lambert term has barely begun: the axis reads 18.6 there against a whole-disc
+ *    median of 62.3 for the same band. One line of albedo is not a level — it is whatever continent
+ *    that line happens to cross.
+ *
+ * So Ld, Ln and the curve are taken over WHOLE-DISC n·L bands (thousands of pixels each), which is
+ * also what the audit's day/night levels already did. The thresholds are untouched: A >= 25,
+ * Ld/max(Ln,1) >= 3, S <= 0.25. Moving the sampling to where the signal lives is not the same act as
+ * loosening the gate, and the numbers below show the gate is still decisive.
+ *
+ * The 1 px axis profile survives ONLY in `docs/globe-look/TERMINATOR-AUDIT.md`. It is not a gate.
+ */
+
+/** Gate constants. Unchanged from the first-write F5 — see the note above. */
+export const TERMINATOR_GATE = {
+  /** Minimum day-minus-night separation, luma units. */
+  visibleMinA: 25,
+  /** Minimum day/night ratio. */
+  visibleMinRatio: 3,
+  /** Maximum normalised adjacent-bin step: a hard step gives ~1.0. */
+  softMaxS: 0.25,
+  /** D95: pixels this far from the centre or closer are used. */
+  pixelSetMaxROverR: 0.95,
+  /** Applicability: minimum pixels in each of the two level bands. */
+  minBandPixels: 1000,
+  /** Applicability: minimum pixels in EVERY curve bin. */
+  minBinPixels: 200,
+  /** Curve geometry: 20 bins of 0.02 from -0.10 to +0.30. */
+  curveFrom: -0.1,
+  curveTo: 0.3,
+  curveBins: 20,
+} as const;
+
+/** Day band and night band, in n·L. Narrow and off-centre on purpose: */
+export const DAY_BAND: readonly [number, number] = [0.3, 0.5];
+export const NIGHT_BAND: readonly [number, number] = [-0.5, -0.15];
+
+export interface TerminatorVerdict {
+  /** False when the geometry/coverage cannot support the claim; the reason says why. */
+  evaluated: boolean;
+  notEvaluatedReason: string | null;
+  /** Pixels used (r/R <= 0.95 and a hit). */
+  pixelCount: number;
+  /** Crossing r/R on the axis, for the applicability rule and the report. */
+  crossROverR: number | null;
+  /** Band sample counts. */
+  dayCount: number;
+  nightCount: number;
+  /** Medians. NaN when a band is empty. */
+  Ld: number;
+  Ln: number;
+  /** Ld - Ln. */
+  A: number;
+  /** Ld / max(Ln, 1). Infinity is legitimate here and is guarded by max(). */
+  ratio: number;
+  /** Per-bin medians C(k); NaN for an empty bin. */
+  curve: number[];
+  /** Bin sample counts. */
+  curveCounts: number[];
+  /** Smallest bin count, for the applicability rule. */
+  minBinCount: number;
+  /** max |C(k+1) - C(k)| / A. NaN when A <= 0 (never divide by zero). */
+  S: number;
+  /** Index k of the largest step, for the report. */
+  worstStepBin: number;
+  /** |C(worstStepBin+1) - C(worstStepBin)|, raw luma units. */
+  worstStepLuma: number;
+  /** 0.25 / S — how much headroom the softness gate has. Infinity when S is 0. */
+  softHeadroom: number;
+  /** VISIBLE: A >= 25 AND ratio >= 3. */
+  visible: boolean;
+  /** SOFT: S <= 0.25. */
+  soft: boolean;
+  /** Both. */
+  pass: boolean;
+  /** Which predicates failed, so a report can name them. */
+  failures: string[];
+}
+
+/** Bin index for an n·L value, or -1 when it falls outside the curve range. */
+export function curveBin(nDotL: number): number {
+  const { curveFrom, curveTo, curveBins } = TERMINATOR_GATE;
+  if (!Number.isFinite(nDotL) || nDotL < curveFrom || nDotL >= curveTo) return -1;
+  const width = (curveTo - curveFrom) / curveBins;
+  const k = Math.floor((nDotL - curveFrom) / width);
+  return Math.min(curveBins - 1, Math.max(0, k));
+}
+
+/**
+ * Evaluate 3.4 on one frame. PURE: an image plus geometry in, a verdict out.
+ *
+ * Nothing here sets a layer, renders, or reads the page, which is what lets N6/N6b mutate a real
+ * capture offline and N6c inject a real defect and still judge both with this same function.
+ */
+export function evaluateTerminator(img: Bitmap, geom: SunCameraGeometry): TerminatorVerdict {
+  const dayVals: number[] = [];
+  const nightVals: number[] = [];
+  const bins: number[][] = Array.from({ length: TERMINATOR_GATE.curveBins }, () => []);
+  let pixelCount = 0;
+
+  const y1 = Math.min(img.height - 1, Math.ceil(geom.cy + geom.r));
+  const x1 = Math.min(img.width - 1, Math.ceil(geom.cx + geom.r));
+  for (let py = Math.max(0, Math.floor(geom.cy - geom.r)); py <= y1; py += 1) {
+    for (let px = Math.max(0, Math.floor(geom.cx - geom.r)); px <= x1; px += 1) {
+      const s = nDotLAt(geom, px, py);
+      if (!s.hit) continue;
+      if (s.rOverR > TERMINATOR_GATE.pixelSetMaxROverR) continue;
+      pixelCount += 1;
+      const l = lumaAt(img, px, py);
+      if (s.nDotL >= DAY_BAND[0] && s.nDotL <= DAY_BAND[1]) dayVals.push(l);
+      else if (s.nDotL >= NIGHT_BAND[0] && s.nDotL <= NIGHT_BAND[1]) nightVals.push(l);
+      const k = curveBin(s.nDotL);
+      if (k >= 0) bins[k].push(l);
+    }
+  }
+
+  const Ld = dayVals.length ? median(dayVals) : Number.NaN;
+  const Ln = nightVals.length ? median(nightVals) : Number.NaN;
+  const A = Ld - Ln;
+  const ratio = Number.isFinite(A) ? Ld / Math.max(Ln, 1) : Number.NaN;
+
+  const curve = bins.map((b) => (b.length ? median(b) : Number.NaN));
+  const curveCounts = bins.map((b) => b.length);
+  const minBinCount = curveCounts.reduce((m, c) => (c < m ? c : m), Infinity);
+
+  /*
+   * S is computed only over ADJACENT PAIRS where both bins have a median. A pair with an empty bin
+   * is an applicability failure, not a step, so treating it as a number would invent a curve.
+   */
+  let worstStepLuma = 0;
+  let worstStepBin = -1;
+  if (Number.isFinite(A) && A > 0) {
+    for (let k = 0; k < curve.length - 1; k += 1) {
+      if (!Number.isFinite(curve[k]) || !Number.isFinite(curve[k + 1])) continue;
+      const step = Math.abs(curve[k + 1] - curve[k]);
+      if (step > worstStepLuma) {
+        worstStepLuma = step;
+        worstStepBin = k;
+      }
+    }
+  }
+  const S = Number.isFinite(A) && A > 0 ? worstStepLuma / A : Number.NaN;
+
+  const cross = findAxisNDotL(geom, sunScreenAxisFromGeom(geom), 0);
+  const crossROverR = cross?.rOverR ?? null;
+
+  /* Applicability, a pure function of geometry and coverage — decided BEFORE any threshold. */
+  const reasons: string[] = [];
+  if (crossROverR === null) reasons.push('the axis never crosses n·L = 0 inside the disc');
+  else if (crossROverR > TERMINATOR_GATE.pixelSetMaxROverR) {
+    reasons.push(`the crossing is at r/R ${crossROverR.toFixed(3)} > ${TERMINATOR_GATE.pixelSetMaxROverR}`);
+  }
+  if (dayVals.length < TERMINATOR_GATE.minBandPixels) {
+    reasons.push(`the day band has ${dayVals.length} px (min ${TERMINATOR_GATE.minBandPixels})`);
+  }
+  if (nightVals.length < TERMINATOR_GATE.minBandPixels) {
+    reasons.push(`the night band has ${nightVals.length} px (min ${TERMINATOR_GATE.minBandPixels})`);
+  }
+  if (minBinCount < TERMINATOR_GATE.minBinPixels) {
+    reasons.push(`a curve bin has ${minBinCount} px (min ${TERMINATOR_GATE.minBinPixels})`);
+  }
+
+  const evaluated = reasons.length === 0;
+
+  const failures: string[] = [];
+  const visible = evaluated && A >= TERMINATOR_GATE.visibleMinA && ratio >= TERMINATOR_GATE.visibleMinRatio;
+  if (evaluated) {
+    if (!(A >= TERMINATOR_GATE.visibleMinA)) {
+      failures.push(`A ${fmt(A)} < ${TERMINATOR_GATE.visibleMinA} luma units`);
+    }
+    if (!(ratio >= TERMINATOR_GATE.visibleMinRatio)) {
+      failures.push(`Ld/Ln ${fmt(ratio)} < ${TERMINATOR_GATE.visibleMinRatio}`);
+    }
+  }
+  // A <= 0 fails SOFT by construction: there is no step to normalise by.
+  const soft = evaluated && Number.isFinite(S) && S <= TERMINATOR_GATE.softMaxS;
+  if (evaluated && !soft) {
+    failures.push(
+      Number.isFinite(S)
+        ? `S ${S.toFixed(4)} > ${TERMINATOR_GATE.softMaxS}`
+        : `A ${fmt(A)} <= 0, so S is undefined`,
+    );
+  }
+
+  return {
+    evaluated,
+    notEvaluatedReason: evaluated ? null : `terminator not in view — ${reasons.join('; ')}`,
+    pixelCount,
+    crossROverR,
+    dayCount: dayVals.length,
+    nightCount: nightVals.length,
+    Ld,
+    Ln,
+    A,
+    ratio,
+    curve,
+    curveCounts,
+    minBinCount,
+    S,
+    worstStepBin,
+    worstStepLuma,
+    softHeadroom: Number.isFinite(S) && S > 0 ? TERMINATOR_GATE.softMaxS / S : Number.POSITIVE_INFINITY,
+    visible,
+    soft,
+    pass: visible && soft,
+    failures,
+  };
+}
+
+function fmt(v: number): string {
+  return Number.isFinite(v) ? v.toFixed(2) : 'NaN';
+}
+
+/**
+ * The D2 ORACLE — the closed form for where an n·L iso-line projects, in a PERSPECTIVE camera.
+ *
+ *     r/R = sin(alpha) * sqrt(d^2 - 1) / (d - cos(alpha))
+ *
+ * with `alpha` the central angle of the surface point from the view axis and `d` the camera distance
+ * in earth radii. This replaces an earlier orthographic hint (crossing 0.68, -0.25 point at 0.84)
+ * that was wrong for this camera by ~0.15 R; the prompt's D2 retracts it and names this as the
+ * oracle. `terminatorGeometry.test.ts` checks it against 0.830 / 0.614 / 0.957.
+ *
+ * @param alphaDeg central angle from the view axis, degrees
+ * @param d        camera distance in earth radii
+ */
+export function rOverROracle(alphaDeg: number, d: number): number {
+  const a = (alphaDeg * Math.PI) / 180;
+  return (Math.sin(a) * Math.sqrt(d * d - 1)) / (d - Math.cos(a));
+}
