@@ -580,6 +580,25 @@ describe('diffStats', () => {
     const d = diffStats(on, off, geom);
     expect(d.centroidROverR!).toBeCloseTo(15 / 30, 2);
   });
+
+  it('exposes maxAbs so a pure DARKENING is not mistaken for identical frames', () => {
+    /*
+     * The bug this pins: `max` is the largest SIGNED difference. If every pixel gets darker, no
+     * signed value ever exceeds the -Infinity seed, and a caller comparing `max === 0` reads a
+     * 200/255 darkening as "the frames are identical". Found while auditing N9, where the collapse
+     * test reported identical frames for a pair differing in 303 disc pixels.
+     */
+    const geom = { cx: 40, cy: 40, r: 30 };
+    // `diffStats` computes luma(a) - luma(b), so `on` must be the DARK one for the difference to be
+    // negative everywhere.
+    const on = makeImage(80, 80, () => [10, 10, 10]);
+    const off = makeImage(80, 80, () => [210, 210, 210]);
+    const d = diffStats(on, off, geom);
+    expect(d.max).toBeLessThan(0); // signed max never leaves the seed region
+    expect(d.maxAbs).toBeCloseTo(200, 4); // but the magnitude is the whole step
+    expect(d.maxAbsAt).not.toBeNull();
+  });
+
 });
 
 describe('specularMask', () => {

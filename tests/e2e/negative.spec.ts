@@ -42,8 +42,8 @@ import { acquire, installDefectEngine, type LayerFlags } from './look/acquire';
 import { checkGlare, checkLocalPeak, checkPins, checkRim, checkRingCast } from './look/analysis';
 import { requireValidPins } from './look/pinValidity';
 import { acquireGlintFrames } from './look/glintAcquire';
-import { measureGlint } from './look/glint';
-import { GLINT_GATE, GLINT_RECORDED, GLINT_VIEW } from './look/glintConstants';
+import { classifyGlintCollapse, countDifferingPixels, maxRawChannelDelta, measureGlint } from './look/glint';
+import { GLINT_GATE, GLINT_VIEW } from './look/glintConstants';
 import type { Bitmap, DiscGeometry } from '../../src/lib/look/helpers';
 import { focalPxFromFov, shellSilhouetteOffsetPx } from '../../src/lib/look/helpers';
 import { SHELLS } from '../../src/scene/constants';
@@ -485,10 +485,14 @@ test.describe('negative tests: each check fails when its defect is present', () 
     const control = await acquireGlintFrames(page);
     const controlStats = measureGlint(control.current, control.off, control.geometry);
     expect(controlStats.valid, `control frames invalid: ${controlStats.invalidReason}`).toBe(true);
+    // The CONTROL must be inside the window — both bounds. Asserting only the lower one let a
+    // control that was already too bright (a defect upstream) satisfy "above the minimum" and
+    // then the test's premise carried no information.
     expect(
       controlStats.max,
-      `control glint peak ${controlStats.max.toFixed(2)} already below the gate`,
+      `control glint peak ${controlStats.max.toFixed(2)} is outside the gate [${GLINT_GATE.maxMin}, ${GLINT_GATE.maxMax}]`,
     ).toBeGreaterThanOrEqual(GLINT_GATE.maxMin);
+    expect(controlStats.max).toBeLessThanOrEqual(GLINT_GATE.maxMax);
 
     /*
      * Defect: overlay off, material still at the shipped si 0. Both "frames" are then the same
@@ -504,50 +508,54 @@ test.describe('negative tests: each check fails when its defect is present', () 
     const alsoOff = await capture(page);
 
     const defectStats = measureGlint(withOverlayOff, alsoOff, control.geometry);
+    // A NUMBER, not just a NaN: "identical" must mean zero pixels changed, not merely that the
+    // measurement came back INVALID. Those are opposite findings and N9 must tell them apart.
+    const differing = countDifferingPixels(withOverlayOff, alsoOff, control.geometry);
+    const rawDelta = maxRawChannelDelta(withOverlayOff, alsoOff, control.geometry);
+
+    const verdict = classifyGlintCollapse(defectStats, differing, GLINT_GATE);
 
     console.log(
-      `[N9] control max=${controlStats.max.toFixed(2)} area6=${controlStats.area6} | ` +
+      `[N9] control max=${controlStats.max.toFixed(2)} area6=${controlStats.area6} ` +
+        `(gate ${GLINT_GATE.maxMin}..${GLINT_GATE.maxMax}) | ` +
         `defect max=${defectStats.valid ? defectStats.max.toFixed(2) : 'INVALID'} ` +
-        `area6=${defectStats.area6} valid=${defectStats.valid} reason=${defectStats.invalidReason}`,
+        `area6=${defectStats.area6} differingLumaPx=${differing} maxRawChannelDelta=${rawDelta} ` +
+        `kind=${verdict.kind} ` +
+        `acceptable=${verdict.acceptable} — ${verdict.reason}`,
     );
-    await writeResult('negative-n9', { control: controlStats, defect: defectStats });
+    await writeResult('negative-n9', {
+      control: controlStats,
+      defect: defectStats,
+      differingLumaPixels: differing,
+      maxRawChannelDelta: rawDelta,
+      verdict,
+    });
 
     /*
-     * With the overlay off there is nothing left to difference, so the honest outcome is an
-     * INVALID measurement (max 0 => "the toggle did not take effect"). Either way the sentinel
-     * must not pass: an invalid input cannot satisfy a numeric window.
+     * EXACTLY TWO signals count as N9 passing, and the classifier below is unit-tested:
+     *
+     *   (a) `identical` — INVALID, max NaN, the identical-frames reason, AND zero disc pixels
+     *       differing. All three, because the reason is a claim made by the code under test.
+     *   (b) `residual`  — VALID with a finite max below the gate minimum.
+     *
+     * Any other INVALID fails the test. The previous version accepted ANY INVALID whose reason
+     * merely contained "identical", so a broken capture (bad geometry, zero radius) would also have
+     * kept N9 green — the looseness that made the assertion meaningless.
      */
-    const passed =
+    expect(
+      verdict.acceptable,
+      `N9 did not see a collapse: ${verdict.reason}`,
+    ).toBe(true);
+    expect(['identical', 'residual']).toContain(verdict.kind);
+
+    /*
+     * And the sentinel's own verdict must be "not a pass" in both cases. Stated separately from
+     * `acceptable` because they answer different questions: one says the MEASUREMENT collapsed, the
+     * other says the GATE did not accept it.
+     */
+    const gatePassed =
       defectStats.valid && defectStats.max >= GLINT_GATE.maxMin && defectStats.max <= GLINT_GATE.maxMax;
-    expect(passed, 'the 3.9 sentinel PASSED with the overlay off, so it is not measuring glint').toBe(false);
-
-    /*
-     * The signal, stated so that BOTH honest outcomes satisfy it.
-     *
-     * With the overlay off, `F_current` and `F_off` are the same render, so `measureGlint` has two
-     * legitimate answers depending on whether a rounding residual survives the round trip:
-     *
-     *   - `valid: false, max: NaN` — the frames are byte-identical and the toggle had no effect
-     *     (the common case; asserted as INVALID, never as a pass), or
-     *   - `max` small but finite — a 1-2/255 residual from the material/overlay re-render.
-     *
-     * An earlier version asserted `max < 70.8` unconditionally, which FAILED on NaN — the honest
-     * identical-frames outcome. The test was wrong, not the check: a NaN comparison is false, so
-     * the assertion reported a failure for the most collapsed measurement possible.
-     */
-    if (defectStats.valid) {
-      expect(
-        defectStats.max,
-        `the overlay-off difference must collapse, not stay near ${GLINT_RECORDED.max}`,
-      ).toBeLessThan(GLINT_GATE.maxMin);
-      expect(defectStats.area6, 'the overlay-off area6 must collapse too').toBeLessThan(GLINT_GATE.area6Min);
-    } else {
-      expect(
-        defectStats.invalidReason,
-        'an invalid measurement must say why, not be silently skipped',
-      ).toContain('identical');
-      expect(Number.isNaN(defectStats.max), 'an invalid measurement carries no max').toBe(true);
-    }
+    expect(gatePassed, 'the 3.9 sentinel PASSED with the overlay off, so it is not measuring glint').toBe(false);
 
     // Restore the shipped overlay for whatever runs next.
     await page.evaluate(() => window.__globe!.setLookFlags({ specular: true }));

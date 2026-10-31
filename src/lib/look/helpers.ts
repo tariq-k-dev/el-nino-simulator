@@ -969,9 +969,18 @@ export function monotonicStartOffset(
 // --------------------------------------------------- difference images (glint)
 
 export interface DiffStats {
-  /** Largest signed difference, /255. */
+  /** Largest signed difference, /255. Can be negative when the frame darkened overall. */
   max: number;
   maxAt: [number, number] | null;
+  /**
+   * Largest difference by MAGNITUDE — ALWAYS >= 0, and 0 only when the frames agree exactly.
+   *
+   * Exists because `max` is signed: if every pixel got darker, the signed maximum stays -Infinity
+   * and is indistinguishable from "nothing was sampled". A collapse check needs "did anything move
+   * at all", which is this and only this.
+   */
+  maxAbs: number;
+  maxAbsAt: [number, number] | null;
   /** 99.9th percentile of the signed differences inside the disc. */
   p999: number;
   /** Pixels with a difference greater than 6/255. */
@@ -1171,6 +1180,15 @@ export function diffStats(a: Bitmap, b: Bitmap, geom: DiscGeometry): DiffStats {
   const vals: number[] = [];
   let max = -Infinity;
   let maxAt: [number, number] | null = null;
+  /**
+   * Largest difference by MAGNITUDE — genuinely non-negative, and 0 only when the frames agree.
+   *
+   * Kept separate from `max` because `max` is signed: an all-darkening pair leaves it at its
+   * -Infinity seed. Named `maxAbs` and documented non-negative so a caller cannot repeat the
+   * confusion by comparing it to a negative number.
+   */
+  let maxAbs = 0;
+  let maxAbsAt: [number, number] | null = null;
   let area6 = 0;
   let area3 = 0;
   let sx = 0;
@@ -1190,6 +1208,18 @@ export function diffStats(a: Bitmap, b: Bitmap, geom: DiscGeometry): DiffStats {
     const v =
       luma(a.data[o], a.data[o + 1], a.data[o + 2]) - luma(b.data[o], b.data[o + 1], b.data[o + 2]);
     vals.push(v);
+    /*
+     * `max` is the LARGEST ABSOLUTE difference and `maxSigned` the largest signed one.
+     *
+     * It used to be signed only. That is fine while every difference is positive, and wrong the
+     * moment a pixel gets DARKER: with all v < 0 the signed running max never updates, stays
+     * -Infinity, and callers cannot tell that from "no pixels were sampled". A collapse test then
+     * reads a 200/255 darkening as "the frames are identical" — measured while auditing N9.
+     */
+    if (Math.abs(v) > maxAbs) {
+      maxAbs = Math.abs(v);
+      maxAbsAt = [x, y];
+    }
     if (v > max) {
       max = v;
       maxAt = [x, y];
@@ -1211,6 +1241,8 @@ export function diffStats(a: Bitmap, b: Bitmap, geom: DiscGeometry): DiffStats {
   return {
     max,
     maxAt,
+    maxAbs,
+    maxAbsAt,
     p999: percentile(vals, 0.999),
     area6,
     area3,
