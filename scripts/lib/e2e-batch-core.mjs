@@ -138,10 +138,13 @@ export function aggregate(files) {
  *   boot      403.5 s                                          -> use 10 min
  *   harden    110.1 s                                          -> use 4 min
  *   gate-clock 52.1 s, determinism 16.1 s, history-gate 16.1 s, limb 15.7 s, scene-gate 12.5 s -> 2 min
+ *   ref       17.1 s (B3.4, three separate processes)                        -> use 1 min (2x)
  */
 export const FILE_TIMEOUTS_MS = {
   'look.spec.ts': 15 * 60_000,
   'negative.spec.ts': 8 * 60_000,
+  // ref.spec: measured 17.1 s per process (three separate runs, B3.4) -> 2x = 34.2 s, rounded to 1 min.
+  'ref.spec.ts': 1 * 60_000,
   'globe.spec.ts': 3 * 60_000,
   'boot.spec.ts': 10 * 60_000,
   'harden.spec.ts': 4 * 60_000,

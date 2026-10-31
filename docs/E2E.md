@@ -351,3 +351,41 @@ present — a **page reload** to restore the surface. That is 7 reloads. `look.s
 |---|---|---|
 | `e2e:look` (batched) | **3/3 files, 28/28 tests, 0 retries** | 9.4 min |
 | full `pnpm e2e` (batched) | **10/10 files, 54/54 tests, 0 retries** | 20.0 min |
+
+### The reference frame (`ref.spec.ts`)
+
+`tests/e2e/ref.spec.ts` is the **strict-0** gate: it re-captures the reference pose and compares the
+result to the committed PNG at `tests/e2e/ref/default-1280x800.png` with exact equality — max
+|dLuma| 0, 0 differing pixels, and every R/G/B channel identical. There is no tolerance.
+
+| | |
+|---|---|
+| part of | **full `pnpm e2e` only** — `e2e:look` stays 28 tests |
+| tests | 2 (in-page determinism, then the committed-frame comparison) |
+| measured | 12.2–13.2 s per file through the batched runner; 17.1 s as a raw single process |
+| backstop | `FILE_TIMEOUTS_MS['ref.spec.ts'] = 1 min` (2x the measured 17.1 s, rounded up) |
+
+**Regenerating it:**
+
+```bash
+UPDATE_REF=1 pnpm e2e:raw -- tests/e2e/ref.spec.ts   # writes the PNG
+pnpm e2e:raw -- tests/e2e/ref.spec.ts                # verifies it
+```
+
+Review the PNG diff **visually** before committing a regenerated file — a green run only says the new
+file matches the new render, not that the new render is right. The default run never writes, and a
+`UPDATE_REF=1` run does not certify itself: generation and verification are separate processes by
+design, which is also why B3.4 verified in three of them.
+
+**The PNG is SwiftShader-specific.** It was rendered under `--use-gl=swiftshader
+--enable-unsafe-swiftshader --ignore-gpu-blocklist`, the same flags `playwright.config.ts` passes. A
+different GPU stack will produce different shaded pixels and the comparison will fail — regenerate on
+the machine you intend to certify, do not "fix" it by adding a tolerance.
+
+**Size note:** 735.2 KB of a Tariq-approved 800 KB budget. The crop removes the cheap sky, so every
+lossless pngjs setting lands at 545–680 KB; the budget was raised rather than shrinking the crop or
+going lossy.
+
+**Known open question:** the cross-load control pair flipped by 0.7152 luma over 213–221 px inside the
+real `negative.spec` process (twice), and no D8 arm reproduced it. See
+`docs/globe-look/SPEC.md` §5.5 and `docs/STEP3-DIAG.md`. It is not covered by this spec's result.

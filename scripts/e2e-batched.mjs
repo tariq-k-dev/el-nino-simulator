@@ -517,6 +517,7 @@ function expectedCounts() {
     'limb.spec.ts': 2,
     'look.spec.ts': 9,
     'negative.spec.ts': 14,
+    'ref.spec.ts': 2,
     'scene-gate.spec.ts': 2,
   };
   return {

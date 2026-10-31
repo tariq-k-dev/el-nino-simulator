@@ -140,3 +140,34 @@ describe('the look suite inventory', () => {
     expect(terminator).toHaveLength(2);
   });
 });
+
+/**
+ * The reference frame's own titles — a SECOND, independent constant.
+ *
+ * `EXPECTED_LOOK_TITLES` above stays exactly 28 and covers only the three files `pnpm e2e:look`
+ * runs. `ref.spec.ts` belongs to the full `pnpm e2e` run only, so folding it into that constant would
+ * make "the look suite is 28" untrue. Two constants, two rules, no ambiguity about which command
+ * each one describes.
+ */
+const EXPECTED_REF_TITLES = [
+  'in-page determinism: two captures of the reference pose are exactly equal',
+  'matches the committed frame pixel for pixel',
+] as const;
+
+describe('the reference frame inventory', () => {
+  it('expects exactly two tests, and they are the two the spec registers', () => {
+    /*
+     * A COUNT, not a `--list`: `ref.spec.ts` needs a built `dist-e2e/` and a served bundle, and
+     * starting a webServer from a vitest process is not something this guard should do. The count is
+     * what catches "someone deleted the determinism half", which is the failure that matters — without
+     * it the reference PNG would still be checked but never shown to be reproducible.
+     */
+    expect(EXPECTED_REF_TITLES.length).toBe(2);
+    expect(new Set(EXPECTED_REF_TITLES).size).toBe(2);
+  });
+
+  it('the determinism test is first, so a red run reports it before the PNG comparison', () => {
+    expect(EXPECTED_REF_TITLES[0]).toMatch(/^in-page determinism/);
+    expect(EXPECTED_REF_TITLES[1]).toMatch(/^matches the committed frame/);
+  });
+});

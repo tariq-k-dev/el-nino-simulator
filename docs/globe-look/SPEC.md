@@ -274,3 +274,34 @@ Every number is inside its window; the pointed ones moved because the frozen pha
 Two entries moved by one pixel or less: `shellMinusBackground` (−0.02 luma) and the sentinel's
 `area6` (−1 px, 9594 → 9593), both far inside their windows and both consistent with a single
 8-bit step at one rim pixel.
+
+### 5.5 The reference frame (strict 0)
+
+`tests/e2e/ref/default-1280x800.png` is the committed picture of the shipped look at the reference
+pose: 1280x800, az 0, seeded starfield, hotspot rings OFF, both uTime gates frozen at 0. It is
+**732x732** — the globe disc plus a 40 px margin — because a whole-canvas file would change whenever
+unrelated chrome changed.
+
+- **Size: 752 831 bytes (735.2 KB)**, inside the 800 KB budget. The budget was raised from 300 KB by
+  Tariq because the crop *removes* the cheap-to-compress sky: measured at 732x732, every pngjs
+  setting lands at 545–680 KB (default 680.2, colorType 2 680.2, deflateLevel 9 680.2, filterType 4
+  667.4, deflateStrategy 0 545.1). Encoding stays **lossless** — a lossy baseline cannot support an
+  exact-0 rule.
+- **sha256 `934ecd132ee474247136fd429f6442e1d52f1115d46cf1ce50da77b8f4d29a44`**, identical in the
+  generating run and all three verification runs.
+- **How to update it:** `UPDATE_REF=1 pnpm e2e:raw -- tests/e2e/ref.spec.ts`, then review the PNG
+  diff visually before committing. The default run never writes; a write run does not certify itself.
+- **The rule: exactly 0.** `maxAbs === 0`, `differing === 0`, `perChannelExact === true`. There is no
+  tolerance argument anywhere in `reference.ts` or `ref.spec.ts`.
+- **Three-process verification (B3.4):** three separate Playwright processes against the committed
+  file each reported `maxAbs=0 differing=0 maxChannel=0 perChannelExact=true`, in 17.1–17.3 s each.
+- **Bite test:** moving the camera out by 0.5 % through `__globe.setCamera` produced
+  `maxAbs=176.46 differing=384701 maxChannel=191` and a 728x728 crop — the guard fails loudly and
+  prints the numbers. Restored, it passes at 0 again.
+
+**The cross-load flip is NOT explained and is NOT covered by this.** Inside the real
+`negative.spec.ts` process, the control frame differed from a fresh page load by 0.7152 luma across
+213–221 px, and that reproduced twice. The D8 matrix (27 pairs across acquisition paths A/B/C, in-page
+and cross-load on fresh contexts) found exact zeros everywhere, so it did not replicate the harness
+that showed the flip. The reference frame's three-process verification is the current evidence for
+cross-process reproducibility; the mechanism of the negative.spec flip remains an open question.
