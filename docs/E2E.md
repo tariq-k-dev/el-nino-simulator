@@ -65,10 +65,18 @@ Measured on this machine (SwiftShader, 1280×800):
 | `boot.spec.ts` (400 kbps case dominates) | 6.3 min |
 | `look.spec.ts` (10 tests) | 2.6 min |
 | `negative.spec.ts` (9 tests) | 2.1 min |
+| `negative.spec.ts` (9 tests) | 2.1 min |
 | `globe.spec.ts` (5 tests) | 0.9–2.2 min |
 | `harden.spec.ts` | 2.9 min |
 | `limb.spec.ts` | 0.7 min |
 | `determinism.spec.ts`, `gate-clock.spec.ts`, `history-gate.spec.ts`, `scene-gate.spec.ts` | 0.3–1.1 min each |
+
+### Test counts are guarded
+
+`tests/e2e/suiteInventory.test.ts` holds the 23 expected titles of the three look files and fails when
+one is removed or renamed without updating the constant. Additions are allowed. This exists because a
+report once said "22" where the suite had 23 — nothing had been lost, but a suite that cannot state its
+own size is one rename away from silently testing less than it claims.
 
 ### The look suite (`pnpm e2e:look`)
 

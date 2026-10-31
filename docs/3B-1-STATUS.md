@@ -214,17 +214,60 @@ Three real defects were found by actually running it: a shared `outputDir` (file
 mid-teardown), a path-vs-regex filter ("No tests found"), and trace teardown deciding results.
 `docs/E2E.md` documents all three so they are not rediscovered.
 
-### Still NOT DONE
+### 2B-C2B-P2FIX
 
-1. **3.4 is still measured with its OLD definition.** F5 was not implemented because F4(e) stopped
-   it; the `width >= 6 % R` and `16/255` step gates are **still live in code**, retired only in
-   intent. `docs/globe-look/SPEC.md` says so explicitly rather than pretending otherwise.
-2. **N6 / N6b / N6c do not exist** — they belong to the blocked redefinition. The mutation and
-   profile machinery they need IS built and unit-agnostic (`tests/e2e/look/terminatorProfile.ts`,
-   including `mutateTerminator` for the offline N6/N6b mutations), so implementing them after the
-   decision is mechanical.
-3. Every other check (3.1-3.3, 3.5-3.9) is green with negative evidence, and N1, N2, N3, N4, N5,
-   N7, N8, N9, N10 all go red under their defects.
+### P1 - the inventory: nothing was lost (`de9d541`)
+
+`playwright --list` returns **23** titles for the three look files — Part 1's set exactly. Part 2's
+"22" was an arithmetic slip in the report (I summed my own list without the 3.9 row I had just added),
+not a dropped test. `tests/e2e/suiteInventory.test.ts` now holds the 23 expected titles and fails when
+one disappears or is renamed without editing the constant; verified by renaming 3.7 and watching it go
+red. Additions are allowed.
+
+### P2 - N9 tightened, and it found a real bug (`e3c6694`)
+
+The old assertion accepted ANY `INVALID` whose reason contained "identical", so a broken capture would
+have kept N9 green. It now requires exactly one of: (a) INVALID **with the identical reason, NaN max,
+and zero differing disc pixels**, or (b) VALID with a finite max below the gate — and the control must
+be inside the window on **both** bounds.
+
+Tightening it exposed a genuine defect in a shared helper: **`diffStats.max` is the largest SIGNED
+difference**, so when the overlay goes off and a region DARKENS, the signed maximum never leaves its
+`-Infinity` seed — and `measureGlint` read that as "the two frames are identical" for a pair differing
+in 300 disc pixels. `diffStats` now also returns **`maxAbs`** (true magnitude, 0 only when the frames
+agree), and the collapse test uses it. N9 now reports `max=0.00, kind=residual` honestly.
+
+A second correction inside the same step: the differing-pixel count must be over **luma**, not raw RGB —
+303 pixels differed by one channel unit that the luma weights round out. The gate is luma; count in the
+gate's units.
+
+### F5 - 3.4 redefined at the definition level, STOPPED at the gate level (`965ac24`, `7c7fd19`)
+
+Built and unit-tested (20 tests): whole-disc n·L bands, the 20-bin curve, VISIBLE/SOFT, the
+applicability rule computed from geometry alone and printed BEFORE measuring, and the D2 perspective
+oracle (`rOverROracle`) verified to ±0.002 against 0.830 / 0.614 / 0.957. **Thresholds unchanged.**
+
+The evaluated set is **7 of 12** azimuths: {0, 120, 150, 180, 270, 300, 330}. The default view
+**passes** with A 57.28, ratio 12.57, S 0.116 (headroom 2.16). But **az 120 fails SOFT (S 0.294) and az
+150 fails SOFT (S 0.268)** against 0.25, with the worst step in curve bin 7 (n·L ≈ 0.05) at 21.0 and
+19.2 luma. Both put the terminator through the centre of the disc, i.e. over a coastline.
+
+That is the prompt's STOP condition ("or any evaluated azimuth fails"), so nothing was tuned. Full
+tables, the 20-bin default-view curve and three options are in `docs/globe-look/SPEC.md` section 3.
+
+The two retired gates (`width >= 6 % R`, `16/255` step) are **no longer asserted** — informational
+columns only — and a source guard fails if a test starts asserting them again.
+
+## Still NOT DONE
+
+1. **3.4's new gate is dormant.** The definition is fixed and tested; it is not enforced because the
+   real render fails it at az 120 and az 150. Needs a decision (SPEC.md section 3).
+2. **N6 / N6b / N6c are unbuilt** — they are the negatives FOR that gate, and a negative test for a
+   gate the suite does not enforce would assert a verdict nothing checks. Their mutation machinery
+   (`mutateTerminator`, `evaluateTerminator`) is built, pure and tested, so wiring them up is
+   mechanical once the gate is live.
+3. Everything else (3.1-3.3, 3.5-3.9) is green with negative evidence; N1, N2, N3, N4, N5, N7, N8, N9,
+   N10 all go red under their defects.
 
 ## Spec source
 
