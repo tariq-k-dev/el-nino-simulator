@@ -10,6 +10,128 @@ Session log for the Step 3 framing work. One row per step; each prompt lives in 
 | 2B-STEP3-A-FIX3 | P0 + D7 | `8c1fceb` | stopped: in-page control pair 0.7152 luma |
 | 2B-STEP3-A-FIX3-V2 | P0 + E1 draft | `0aa0352` | stopped: cross-load pair 0.7152 luma / 221 px |
 | 2B-STEP3-A-FIX3-V3 | **E1 + B2 done; B3 SKIPPED on D8 reading (3); C not started** | `24c76ab`, `a8f9ea2`, docs | 28/28, zero retries |
+| 2B-STEP3-A (close) | **CLOSED** — 784 unit tests, 56 e2e, one waivered failure | `5db822c` | the 3A waiver, documented in `docs/E2E.md` |
+| 2B-STEP3-A2 | **CLOSED** — framing behind a live/locked mode; zoom-out fit | `9f38053`…`this` | 819 unit tests; frame 20/20 in two isolated runs |
+
+---
+
+## 2B-STEP3-A2 — FrameOffset and fit distance (zoom-out only)
+
+### Commits
+
+| step | commit | what |
+|---|---|---|
+| P0 | `9f38053` | prompt alone, `docs/prompts/step3-a2.md` |
+| A | `d656f61` | `docs/STEP3-FRAME.md` design memo |
+| B | `6ce8359` | `src/layout/frame.ts` + `frame.test.ts` (pure `computeFrame`) |
+| C | `f1d6ff3` | `FrameRig`, `framing.ts`, `frameProbe.ts`, insets observer start |
+| D | `2ab1e36` | `tests/e2e/frame.spec.ts` (F1-F10) + runner registration |
+| E | this commit | docs: framing modes, measured tables, 3A2 closure |
+
+### The framed numbers (measured, not derived)
+
+Insets measured live in the browser via `[data-occluder]` at every viewport:
+**L 360.844, R 316, T 118.25, B 0** — the Step 3A figure for 1440x900 exactly, and identical at the
+other three viewports because every panel is fixed-size and edge-anchored.
+
+| viewport | free (w x h) | free centre | dx, dy | r_max | d_contain | **d_target** | silhouette at d_target |
+|---|---|---|---|---|---|---|---|
+| 1280x800 | 603.156 x 681.750 | 662.422, 459.125 | +22.422, +59.125 | 277.578 | 4.282829 | **4.282829** | 250.23 |
+| 1024x768 | 347.156 x 649.750 | 534.422, 443.125 | +22.422, +59.125 | 149.578 | 7.454770 | **5.000000** | 204.20 (**clamped**, 54.6 px over) |
+| 1440x900 | 763.156 x 781.750 | 742.422, 509.125 | +22.422, +59.125 | 357.578 | 3.778586 | **3.778586** | 321.74 |
+| 1280x720 | 603.156 x 601.750 | 662.422, 419.125 | +22.422, +59.125 | 276.875 | 3.893455 | **3.893455** | 249.23 |
+
+`d0` = **3.3533565** (`DEFAULT_POSITION.length()`, shipped as 3.3534), `dMax` = 5.
+
+**The 1024x768 clamp is a product fact, not an implementation detail.** The layout needs 7.455 to fit
+the disc but `<OrbitControls maxDistance>` caps at 5, so the disc renders 54.6 px larger than the free
+rect allows and `pacific` (1.10 r/R, on the silhouette) falls outside the padded rectangle. Raising
+`dMax` is a zoom-range product decision, so it was **not** changed; F4 asserts both branches and
+reports which one bound.
+
+### F1-F10 results
+
+| case | result | numbers |
+|---|---|---|
+| F1 locked default | **pass** | mode locked, `cameraViewIsNull` true, projection element `[8]` = 0, distance 3.3534 |
+| F2 centring x4 | **pass** | centre error 1280x800 **(0.016, 0.000)**, 1024x768 **(0.027, 0.036)**, 1440x900 **(0.027, 0.000)**, 1280x720 **(0.039, 0.000)** px |
+| F3 fit x4 | **pass** | live distance = `max(d0, d_contain)` to < 0.001 at all four; never below d0 |
+| F4 pins x4 | **pass** | 2 front-facing of 4 everywhere; all inside the padded rect where the fit binds; the clamp branch reports `pacific` 51.6 px outside and asserts the overhang |
+| F5 resize + return | **pass** | 1440x900 `3.778411` → 1024x768 `4.999797` → back `3.778789` (Δ **0.000378**, limit 0.001); offset returns to (22.4219, 59.1250) exactly |
+| F6 user zoom wins | **pass** | fitted 3.7784 → user 3.0462 → after resize **3.0462 unchanged**; fit target moved (3.7786 → 3.8935) and the offset was re-installed |
+| F7 orbit invariance | **pass** | az 120 moves the centre **0.016 px**; free centre unchanged |
+| F8 drawer x2 | **pass** | see below |
+| F9 picking | **pass** | clicked `us-west` at 0.605 r/R with offset (22.42, 59.13) → drawer opened |
+| F10 zoom after fly-to | **pass** | d 3.3867 → 3.4747 (Δ **0.088**), polled, no fixed sleep |
+
+### F8 drawer facts
+
+| viewport | right inset | transition | free width | centre error (AIM vs free) | d |
+|---|---|---|---|---|---|
+| 1440x900 | 316 → 418 | **605 ms** | 763.2 → 661.2 | **(0.024, 0.000)** px | 3.7784 → 2.5962 |
+| 1280x720 | 316 → 418 | **450 ms** | 603.2 → 501.2 | **(0.049, 0.000)** px | 3.8935 → 2.5966 |
+
+**The insets store settles AFTER the transition, not during it** — 450-605 ms against the 500 ms
+`duration-500` transform, i.e. driven by `transitionend` as designed, not by a `ResizeObserver` (a
+transform does not fire one). Closing returns the offset to (22.422, 59.125), aim error 0.037 px.
+
+### Two oracle corrections worth carrying forward
+
+1. **A view offset moves the AIM point, not the world origin.** After a fly-to `controls.target` sits
+   on the pin, so `project([0,0,0])` lands 126 px from the free centre while the aim point lands
+   0.024 px from it. F8 asserts on the aim point (`__globe.target()` was added for this) and prints
+   the origin error beside it so the difference is visible rather than implied.
+2. **`__frame.settled` alone is not "the page is at rest".** For ~1 s after load the insets are the
+   pre-mount approximation and the rig is correctly settled *against that*: measured `settled: true`
+   at dx 14.0313, then the real insets arrive and dx must reach 22.4219. `settleStable()` requires
+   the same insets/free/target twice running.
+
+### Bugs this step found in its own code
+
+| bug | symptom | fix |
+|---|---|---|
+| ease gated on the write threshold | offset stalled at 22.3653 vs target 22.4219, 0.057 px short **forever** — the remaining error fell below `0.01/0.09` so nothing was ever applied again | ease an ideal `easedOffset` that always advances; gate only `setViewOffset` on 0.01 px |
+| `settled` = "reached target" with a foreign distance owner | unsatisfiable after any fly-to (camera parks at 2.6, target 5.0), so F8 timed out at 5 s with the offset already correct to 0.03 px | `settled` = offset arrived AND (rig owns distance ? arrived : not moving); "not moving" is a 4-frame span < 2e-4 |
+| `camera.view === null` as the offset test | `clearViewOffset()` only sets `view.enabled = false`, so a null check reported the **inverse** of the truth | test `view === null \|\| view.enabled === false` |
+| insets observer never started | live mode would have measured `ZERO_INSETS` and written nothing — the registry was built in 3A with a test seam and no caller | `startInsetsObserver(document, window)` at module scope in `main.tsx` |
+
+### Locked-mode proof
+
+| check | result |
+|---|---|
+| `ref.spec.ts` residual, process 1 | `maxAbs=0 differing=0 perChannelExact=true`, crop 732x732 at (274,34), **735.2 KB** |
+| `ref.spec.ts` residual, process 2 | identical |
+| PNG sha256 (both) | **934ecd132ee474247136fd429f6442e1d52f1115d46cf1ce50da77b8f4d29a44** — unchanged |
+| `globe.spec.ts` isolation | **5/5**, 53.0 s (incl. "zoom still works after a region fly-to") |
+| `scene-gate.spec.ts` / `limb.spec.ts` | **2/2** / **2/2** (R_fit vs `discRadiusPx` within 0.111 px) |
+| production bundle marker grep | `frame-locked-branch-7f3a`: **0** in `dist/`, **1** in `dist-e2e/assets/index-*.js` |
+
+### Unit tests
+
+**819 passed / 36 files** (3A closed at 784 / 33). New: `frame.test.ts` **19**, `framing.test.ts`
+**9**, `frameProbe.test.ts` **7** = **35**; 784 + 35 = 819.
+
+### Deviations from the prompt
+
+1. **`__globe.target()` was added** (one getter) so F8 could assert on the aim point; without it the
+   case either asserts the wrong thing or cannot be written.
+2. **F4 is conditional on the clamp** at 1024x768 — the blanket assertion is arithmetically
+   impossible there without raising `dMax`. Both branches are asserted and the overhang must exceed
+   40 px, so the escape hatch cannot swallow a regression.
+3. **F5 uses 1024x768, not 1280x720**, as its intermediate viewport: 1440x900 → 1280x720 differs by
+   only 0.0357, too little to be meaningful against a 0.001 return tolerance.
+4. **F6 asserts the offset is unchanged, not changed** — the insets are identical at 1440x900 and
+   1280x720, so `dx`/`dy` are the same numbers by geometry.
+5. **`src/scene/FrameRig.tsx` was edited inside the step-D commit** (the 4-frame stillness ring, and
+   a fold instead of `Math.max(...)` which `source-guards.test.ts` forbids in `src/`). One commit per
+   step is preserved; the file's step-C content is `f1d6ff3`.
+6. **The parked `VITE_E2E` vs `?debug` gate mismatch was reported, not fixed** — `__globe` and
+   `__frame` need both, the build needs only the env var.
+
+### Not started, per the prompt
+
+No focus state machine, no `userZoomed` flag (the `lastFit` stand-in is not it), no single
+camera-writer refactor, no sun changes, no mobile layout.
 
 ---
 
