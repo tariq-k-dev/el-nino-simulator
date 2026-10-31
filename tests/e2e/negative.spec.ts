@@ -646,7 +646,8 @@ test.describe('negative tests: each check fails when its defect is present', () 
     console.log(
       `[N10] control max=${controlStats.max.toFixed(2)} area6=${controlStats.area6} ` +
         `(gate ${GLINT_GATE.maxMin}..${GLINT_GATE.maxMax} / ${GLINT_GATE.area6Min}..${GLINT_GATE.area6Max}) | ` +
-        `defect max=${defectStats.max.toFixed(2)} area6=${defectStats.area6} centroid=${JSON.stringify(defectStats.centroid)}`,
+        `defect max=${defectStats.max.toFixed(2)} maxAbs=${defectStats.maxAbs.toFixed(2)} ` +
+        `area6=${defectStats.area6} centroid=${JSON.stringify(defectStats.centroid)}`,
     );
     await writeResult('negative-n10', { control: controlStats, defect: defectStats });
 
