@@ -40,6 +40,7 @@ import { measureBlueCircle, writeResult } from './look/measure';
 import { openGlobe, capture, setLayers, settleAt, cameraGeometry } from './look/capture';
 import { acquire, installDefectEngine, type LayerFlags } from './look/acquire';
 import { checkGlare, checkPins, checkRim, checkRingCast } from './look/analysis';
+import { requireValidPins } from './look/pinValidity';
 import type { Bitmap, DiscGeometry } from '../../src/lib/look/helpers';
 import { focalPxFromFov, shellSilhouetteOffsetPx } from '../../src/lib/look/helpers';
 import { SHELLS } from '../../src/scene/constants';
@@ -137,6 +138,18 @@ async function pinGeometry(page: Page, geom: DiscGeometry) {
   }, geom);
 }
 
+/**
+ * The facing geometry `checkRingCast` needs, in one place.
+ *
+ * `pinGeometry` above returns the shape `checkPins` wants; 3.6 wants the same two numbers
+ * without `side`. Named separately so the conversion is explicit rather than a spread that
+ * silently carried field names into a rule.
+ */
+async function ringCastPinGeometry(page: Page, geom: DiscGeometry) {
+  const pins = await pinGeometry(page, geom);
+  return pins.map((p) => ({ id: p.id, x: p.x, y: p.y, facingDot: p.facingDot, rOverR: p.rOverR }));
+}
+
 test.describe('negative tests: each check fails when its defect is present', () => {
   test.setTimeout(400_000);
 
@@ -169,17 +182,32 @@ test.describe('negative tests: each check fails when its defect is present', () 
     await setLayers(page, RING_CAST_FLAGS);
 
     const control = await acquire(page, { flags: RING_CAST_FLAGS, azimuth: 0 });
-    const pins = await page.evaluate(() => window.__globe!.pins());
+    // Facing geometry, resolved the same way 3.5 does, so `isValidPin` — not a hand-picked
+    // name — decides which pin a light can reach.
+    const pins = await ringCastPinGeometry(page, control.geometry);
     const controlRows = checkRingCast(control.frame, control.frame, control.frame, control.geometry, pins);
     const controlValid = controlRows.filter((r) => r.valid);
-    expect(controlValid.length, 'no measurable pin for the control').toBeGreaterThan(0);
+    /*
+     * The pin is SELECTED BY THE SHARED RULE, not named.
+     *
+     * The previous version hand-named `us-west`, with a comment explaining that the generic
+     * selection had landed on horn-africa — a pin `checkRingCast` called valid on annulus
+     * coverage alone although it faces away at az 0. Naming the pin worked around the
+     * defect in the validity rule instead of fixing it. `checkRingCast` now applies
+     * `isValidPin`, so the generic selection is correct and the workaround is gone.
+     */
+    requireValidPins(controlValid.map((r) => r.id), 'at-least-one', 'N1 control at az 0');
     expect(
       controlValid.every((r) => r.pass),
       `control should pass; got ${controlValid.map((r) => `${r.id}=${r.deltaPct}%`).join(', ')}`,
     ).toBe(true);
-    // A light must be on the NEAR side to cast onto the near-side annulus.
-    const facing = await page.evaluate(() => window.__globe!.pins().find((p) => p.id === 'us-west')?.facing);
-    expect(facing, 'us-west must be front-facing at az 0 or the defect lands on the far side').toBe(true);
+
+    /*
+     * Which pin the defect is anchored to. Every valid row is a candidate; the target is the
+     * one whose annulus the light can reach, and the assertion below proves it did.
+     */
+    const target = controlValid[0];
+    const usWest = target;
 
     /*
      * Pin selection is explicit, not "whichever the check liked most".
@@ -191,19 +219,13 @@ test.describe('negative tests: each check fails when its defect is present', () 
      * that is both front-facing and inside the disc at az 0, so it is named, and the
      * validity of that specific row is asserted rather than assumed.
      */
-    const target = controlValid.find((r) => r.id === 'us-west');
-    expect(
-      target,
-      `us-west is not measurable at az 0; valid rows were ${controlValid.map((r) => r.id).join(', ')}`,
-    ).toBeDefined();
-    const usWest = target!;
 
     // The defect frame (pins ON) plus the pins-OFF pair, all under ONE live defect.
     const defective = await acquire(page, {
       flags: RING_CAST_FLAGS,
       azimuth: 0,
       defect: { name: 'pointLight', params: { intensity: 2, distance: 1, color: 0xffaa00 } },
-      pinName: 'us-west',
+      pinName: target.id,
       extraCaptures: [
         { label: 'off', flags: { ...RING_CAST_FLAGS, pins: false } },
         { label: 'off2', flags: { ...RING_CAST_FLAGS, pins: false } },
@@ -213,10 +235,10 @@ test.describe('negative tests: each check fails when its defect is present', () 
     const off2 = defective.extras.off2;
 
     const rows = checkRingCast(defective.frame, off, off2, defective.geometry, pins);
-    const hit = rows.find((r) => r.id === 'us-west')!;
+    const hit = rows.find((r) => r.id === target.id)!;
 
     console.log(
-      `[N1] us-west: control delta=${usWest.deltaPct}% (allowed ${usWest.allowedPct}%) | ` +
+      `[N1] ${target.id}: control delta=${usWest.deltaPct}% (allowed ${usWest.allowedPct}%) | ` +
         `defect delta=${hit.deltaPct}% (allowed ${hit.allowedPct}%) | ` +
         `annulus ${hit.offMean.toFixed(3)} -> ${hit.onMean.toFixed(3)} | pass=${hit.pass}`,
     );
@@ -232,8 +254,8 @@ test.describe('negative tests: each check fails when its defect is present', () 
       defective.probeAfterExtras?.alive,
       `the defect did not survive the pins-off captures: ${defective.probeAfterExtras?.failures?.join('; ')}`,
     ).toBe(true);
-    expect(hit.valid, 'us-west must stay measurable for the defect to count').toBe(true);
-    expect(hit.pass, `3.6 did NOT catch an amber pointLight at us-west: delta ${hit.deltaPct}%`).toBe(false);
+    expect(hit.valid, `${target.id} must stay measurable for the defect to count`).toBe(true);
+    expect(hit.pass, `3.6 did NOT catch an amber pointLight at ${target.id}: delta ${hit.deltaPct}%`).toBe(false);
     // The signal, not just the verdict: positive direction, and past the gate.
     expect(hit.onMean, 'the defect must BRIGHTEN the annulus, not merely move it').toBeGreaterThan(
       hit.offMean,

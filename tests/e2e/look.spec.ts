@@ -24,6 +24,7 @@ import {
   writeResult,
 } from './look/measure';
 import { openGlobe, capture, setLayers, settleAt } from './look/capture';
+import { requireValidPins } from './look/pinValidity';
 
 const AZIMUTHS = Array.from({ length: 12 }, (_, i) => i * 30);
 
@@ -386,7 +387,22 @@ test.describe('globe look', () => {
 
     await writeResult('pin-gates', { az: AZ, rows: all });
 
-    // Coverage: the gate is only meaningful if day and night are both represented.
+    /*
+     * NON-VACUITY, from the shared helper and expressed as a FAILURE, never a skip.
+     *
+     * 3.5's claim is about day AND night pins, so a run in which only one side is
+     * measurable supports only half of it. `requireValidPins` throws with the azimuth in the
+     * message instead of letting the assertion pass over an empty list.
+     *
+     * 0 is added here on purpose: az 180 has no valid pin that is a day pin, and az 0 has
+     * no valid night pin, so a per-azimuth requirement of "both" would be unsatisfiable.
+     * The union across the four azimuths is what the look is judged on.
+     */
+    requireValidPins(
+      valid.map((r) => ({ id: r.id, az: r.az, side: r.side })),
+      'some-day-and-some-night',
+      `3.5 over az ${AZ.join(',')}`,
+    );
     expect(dayPins.length, 'no valid DAY pin in az {0,90,180,270} (needs n·sun > 0.2)').toBeGreaterThan(0);
     expect(nightPins.length, 'no valid NIGHT pin in az {0,90,180,270} (needs n·sun < -0.1)').toBeGreaterThan(0);
     expect(invalid.length, `all pins invalid: ${invalid.map((r) => `${r.id}@${r.az} ${r.validityReason}`).join('; ')}`)
@@ -428,6 +444,7 @@ test.describe('globe look', () => {
               `  ${r.id.padEnd(12)} (${r.x},${r.y}) n=${String(r.annulusPixels).padStart(5)}  ` +
               `on=${r.onMean.toFixed(2)} off=${r.offMean.toFixed(2)} off2=${r.offMean2.toFixed(2)}  ` +
               `delta=${r.deltaPct.toFixed(3)}%  noise=${r.noisePct.toFixed(3)}%  ` +
+              `r/R=${r.rOverR.toFixed(3)} n·cam=${r.facingDot.toFixed(2)}  ` +
               `inside=${(r.annulusInsideFraction * 100).toFixed(1)}%  allowed=${r.allowedPct.toFixed(3)}%  ` +
               `${r.valid ? (r.pass ? 'pass' : 'FAIL') : 'INVALID: ' + r.validityReason}`,
           )
@@ -446,6 +463,12 @@ test.describe('globe look', () => {
     // outside the disc cannot have cast light measured on it, and reporting the sky's own
     // variation as a pin's delta is exactly the (300,392) mistake in another costume.
     const measurable = results.filter((r) => r.valid);
+    /*
+     * 3.6 must have at least one valid pin at EVERY azimuth it evaluates. A green run over
+     * zero measurable pins asserts "no cast light" about nothing, which is the vacuity this
+     * helper exists to turn into a named failure.
+     */
+    requireValidPins(measurable.map((r) => r.id), 'at-least-one', '3.6 at the default view (az 0)');
     expect(measurable.length, 'no pin had a valid surface annulus').toBeGreaterThan(0);
 
     for (const r of measurable) {

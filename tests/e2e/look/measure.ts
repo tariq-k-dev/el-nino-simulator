@@ -41,6 +41,7 @@ import {
   type Bitmap,
   type DiscGeometry,
 } from '../../../src/lib/look/helpers';
+import { isValidPin } from './pinValidity';
 import {
   ALL_LAYERS,
   capture,
@@ -961,9 +962,13 @@ export interface RingCastResult {
   /** max(3%, 1.5 x noise%) for this pin. */
   allowedPct: number;
   annulusPixels: number;
-  /** Fraction of the 30..60 px annulus that lies inside the disc. */
+  /** Fraction of the 30..60 px annulus that lies inside the disc. Reported, not a rule. */
   annulusInsideFraction: number;
-  /** False when the pin's annulus is not mostly surface, so cast light is unmeasurable. */
+  /** Projected core r/R — an input to the SHARED validity rule. */
+  rOverR: number;
+  /** normal·camDir — the other input. */
+  facingDot: number;
+  /** False when `isValidPin` rejects the pin or its annulus is not mostly surface. */
   valid: boolean;
   validityReason: string;
   pass: boolean;
@@ -1007,7 +1012,36 @@ export async function measureRingCast(
 
   if (afterFit) await afterFit();
 
-  const pins = await page.evaluate(() => window.__globe!.pins());
+  /*
+   * Pin geometry for the SHARED rule. `__globe.pins()` gives the screen position and a
+   * boolean `facing`; 3.6 needs the numbers, so they are resolved here the same way
+   * `measurePinGates` and the negative suite do — anchors -> world normal -> n·cam, and
+   * the projected core distance over the FITTED radius.
+   *
+   * `facing` (a boolean with a 0.06 threshold) is deliberately NOT used: the rule's
+   * threshold is 0.1 and it must come from one place.
+   */
+  const pinData = await page.evaluate((g: { cx: number; cy: number; r: number }) => {
+    const anchors = window.__globe!.pinAnchors();
+    const list = window.__globe!.pins();
+    const cam = window.__camera as { position: { x: number; y: number; z: number } };
+    const cl = Math.hypot(cam.position.x, cam.position.y, cam.position.z) || 1;
+    const camDir = [cam.position.x / cl, cam.position.y / cl, cam.position.z / cl];
+    return list.map((p) => {
+      const a = anchors.find((x) => x.id === p.id);
+      const w: [number, number, number] = a ? a.world : [0, 0, 0];
+      const len = Math.hypot(w[0], w[1], w[2]) || 1;
+      const n: [number, number, number] = [w[0] / len, w[1] / len, w[2] / len];
+      return {
+        id: p.id,
+        x: p.x,
+        y: p.y,
+        facingDot: n[0] * camDir[0] + n[1] * camDir[1] + n[2] * camDir[2],
+        rOverR: Math.hypot(p.x - g.cx, p.y - g.cy) / g.r,
+      };
+    });
+  }, geom);
+  const pins = pinData;
   const inside = (x: number, y: number) => insideDisc(geom, x, y);
 
   const annulusMean = (img: Bitmap, cx: number, cy: number) =>
@@ -1033,18 +1067,19 @@ export async function measureRingCast(
     const allowedPct = Math.max(3, 1.5 * noisePct);
 
     /*
-     * Validity. The annulus is meant to be SURFACE around the pin; if the pin sits near
-     * or beyond the limb most of it is sky. pacific at az 0 projects to 1.100 R — outside
-     * the disc entirely — and its annulus measured 1828 px against 8478 for an interior
-     * pin, so its 20.4% "delta" was the sky changing, not cast light.
+     * Validity, from ONE rule shared with 3.5 and the negative suite (`isValidPin`):
+     * front-facing AND projected core inside the limb AND enough annulus on the surface.
      *
-     * The reference is the pixel count an interior pin yields; requiring 70% of that is
-     * the same coverage idea as the probe-window rule.
+     * The coverage term stays because a pin can satisfy the geometric rule and still have
+     * its 30–60 px annulus straddle the limb. What is gone is coverage ALONE, which called
+     * horn-africa valid at az 0 (n·cam −0.5747, facing away) and sent the first N1 attempt
+     * looking for cast light on the far side of the globe.
      */
     const interiorCount = 8478; // measured for interior pins at 1280x800
     const annulusInsideFraction = a.count / interiorCount;
-    const valid = annulusInsideFraction >= 0.7;
-    const rPx = Math.hypot(pin.x - geom.cx, pin.y - geom.cy);
+    const coverageOk = annulusInsideFraction >= 0.7;
+    const verdict = isValidPin(pin);
+    const valid = verdict.valid && coverageOk;
     results.push({
       id: pin.id,
       x: +pin.x.toFixed(1),
@@ -1057,10 +1092,14 @@ export async function measureRingCast(
       allowedPct: +allowedPct.toFixed(3),
       annulusPixels: a.count,
       annulusInsideFraction: +annulusInsideFraction.toFixed(4),
+      rOverR: +pin.rOverR.toFixed(4),
+      facingDot: +pin.facingDot.toFixed(4),
       valid,
-      validityReason: valid
-        ? 'valid'
-        : `annulus is only ${(annulusInsideFraction * 100).toFixed(1)}% surface (centre at ${(rPx / geom.r).toFixed(3)} R, ${rPx.toFixed(1)}px)`,
+      validityReason: !verdict.valid
+        ? verdict.reason
+        : coverageOk
+          ? 'valid'
+          : `annulus is only ${(annulusInsideFraction * 100).toFixed(1)}% surface`,
       pass: valid && deltaPct <= allowedPct,
     });
   }

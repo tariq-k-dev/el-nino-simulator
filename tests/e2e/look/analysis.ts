@@ -17,6 +17,7 @@
  * `./acquire`, and no reference to `window`, `page`, `fitLimb`, or `setLayers`.
  */
 import type { Bitmap, DiscGeometry } from '../../../src/lib/look/helpers';
+import { isValidPin } from './pinValidity';
 import {
   annulus,
   bilinearLuma,
@@ -62,6 +63,10 @@ export interface RingCastCheck {
   allowedPct: number;
   annulusPixels: number;
   annulusInsideFraction: number;
+  /** The pin's projected core r/R, carried through so a report can show the rule's input. */
+  rOverR: number;
+  /** The pin's `normal·camDir`. */
+  facingDot: number;
   valid: boolean;
   validityReason: string;
   pass: boolean;
@@ -77,19 +82,33 @@ const INTERIOR_ANNULUS_PX = 8478;
  * pins off again for the noise floor. The third exists because two frames of the same
  * scene differ slightly, and a gate tighter than the noise would be measuring the
  * renderer rather than the look.
+ *
+ * VALIDITY IS SHARED, NOT LOCAL. This check used to decide validity on annulus coverage
+ * alone (`count / 8478 >= 0.7`), which is a question about where a pin projects rather
+ * than which side of the globe it is on. horn-africa at az 0 has n·cam −0.5747 — it faces
+ * away — yet its annulus is ~100% inside the disc, so the old rule called it measurable
+ * and the first N1 attempt injected a light behind the globe. It now calls `isValidPin`,
+ * the same function 3.5 and every negative test use.
+ *
+ * The annulus coverage number is still REPORTED, because "this pin's annulus is mostly
+ * sky" remains useful evidence; it is no longer a validity rule.
  */
 export function checkRingCast(
   on: Bitmap,
   off: Bitmap,
   off2: Bitmap,
   geom: DiscGeometry,
-  pins: Array<{ id: string; x: number; y: number }>,
+  pins: Array<{ id: string; x: number; y: number; facingDot: number; rOverR: number }>,
 ): RingCastCheck[] {
   const inside = (x: number, y: number): boolean => inDisc(geom, x, y);
   return pins.map((pin) => {
     const a = annulus(on, pin.x, pin.y, 30, 60, inside);
     const b = annulus(off, pin.x, pin.y, 30, 60, inside);
     const c = annulus(off2, pin.x, pin.y, 30, 60, inside);
+
+    // The shared rule first; an invalid pin is reported with its reason, never scored.
+    const verdict = isValidPin(pin);
+
     if (a.count === 0 || b.count === 0) {
       return {
         id: pin.id,
@@ -103,23 +122,33 @@ export function checkRingCast(
         allowedPct: 3,
         annulusPixels: a.count,
         annulusInsideFraction: 0,
+        rOverR: +pin.rOverR.toFixed(4),
+        facingDot: +pin.facingDot.toFixed(4),
         valid: false,
         validityReason: 'the annulus sampled no pixels',
         pass: false,
       };
     }
+
     const deltaPct = Math.abs((a.mean - b.mean) / b.mean) * 100;
     const noisePct = Math.abs((c.mean - b.mean) / b.mean) * 100;
     const allowedPct = Math.max(3, 1.5 * noisePct);
-    /*
-     * Validity. The annulus is meant to be SURFACE around the pin; a pin near or beyond
-     * the limb leaves most of it sky, and then the "delta" is the sky changing. pacific
-     * at az 0 projects to 1.100 R and measured a 1828 px annulus against 8478 for an
-     * interior pin — its 20.4% delta was not cast light.
-     */
     const annulusInsideFraction = a.count / INTERIOR_ANNULUS_PX;
-    const valid = annulusInsideFraction >= 0.7;
-    const rPx = Math.hypot(pin.x - geom.cx, pin.y - geom.cy);
+
+    /*
+     * Both conditions must hold: the shared geometric rule, AND enough of the annulus
+     * inside the disc that the sampled mean is surface. They are not redundant in the
+     * other direction — a pin can pass `isValidPin` and still have its 30–60 px annulus
+     * straddle the limb, in which case the delta is partly sky.
+     */
+    const coverageOk = annulusInsideFraction >= 0.7;
+    const valid = verdict.valid && coverageOk;
+    const validityReason = !verdict.valid
+      ? verdict.reason
+      : !coverageOk
+        ? `annulus is only ${(annulusInsideFraction * 100).toFixed(1)}% surface`
+        : 'valid';
+
     return {
       id: pin.id,
       x: +pin.x.toFixed(1),
@@ -132,12 +161,10 @@ export function checkRingCast(
       allowedPct: +allowedPct.toFixed(3),
       annulusPixels: a.count,
       annulusInsideFraction: +annulusInsideFraction.toFixed(4),
+      rOverR: +pin.rOverR.toFixed(4),
+      facingDot: +pin.facingDot.toFixed(4),
       valid,
-      validityReason: valid
-        ? 'valid'
-        : `annulus is only ${(annulusInsideFraction * 100).toFixed(1)}% surface (centre at ${(
-            rPx / geom.r
-          ).toFixed(3)} R, ${rPx.toFixed(1)}px)`,
+      validityReason,
       pass: valid && deltaPct <= allowedPct,
     };
   });
@@ -467,12 +494,14 @@ export function checkPins(
       }
     }
 
-    let validityReason = 'valid';
-    if (d.facingDot < minFacingDot) {
-      validityReason = `faces away (normal·camDir ${d.facingDot.toFixed(3)} < ${minFacingDot})`;
-    } else if (d.rOverR > maxROverR) {
-      validityReason = `projected core at ${d.rOverR.toFixed(3)} R > ${maxROverR}`;
-    } else if (pixels.length < minSamples) {
+    /*
+     * The SHARED rule, then the one thing that is genuinely about this check: whether the
+     * core produced enough pixels to take a median from. 3.6 and every negative test call
+     * the same `isValidPin`, so the two cannot drift apart again.
+     */
+    const verdict = isValidPin(d, { minFacingDot, maxROverR });
+    let validityReason = verdict.reason;
+    if (verdict.valid && pixels.length < minSamples) {
       validityReason = `only ${pixels.length} core samples (min ${minSamples})`;
     }
     const valid = validityReason === 'valid';
