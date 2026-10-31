@@ -186,3 +186,91 @@ pnpm e2e:look                       # builds, then look + negative + globe
 pnpm e2e                            # batched: one process per spec file
 pnpm e2e:raw -- --grep "3.5"        # single process, targeted
 ```
+
+## 5. Step 3A disclosures (frozen-state phase, N10 re-specification)
+
+Three changes landed in Step 3A. The first two change what a *frozen* capture shows; the third
+changes what N10 asserts. **No look threshold or window moved** — the 3.9 windows
+(70.8–110.7 luma / 6716–12472 area6), the sentinel (88.52 / 9594), A ≥ 25, Ld/Ln ≥ 3, S ≤ 0.25,
+S_real < 0.6, the 0.95 bound, and the rim and pin windows are all untouched, and the run that backs
+this section is 28/28 with zero retries.
+
+### 5.1 The frozen scene now freezes at a fixed constant, not at the live phase
+
+The atmosphere's breathe term (`shaders.ts:114`) and the pin ring pulse (`shaders.ts:227`) are
+functions of a `uTime` uniform. Both used to be written from R3F's clock unconditionally, so with
+the scene clock frozen they kept moving. Two captures of one pinned pose differed by up to 3.0 luma
+across 13608 px. `src/scene/lookTime.ts` now routes both writes through
+`lookTime(animate, elapsed)`: `elapsed` when `animate` is true (the live product — byte-identical),
+and the constant **0** when it is false, matching what `Starfield.tsx:109` already did.
+
+At `uTime = 0` the breathe term is `1 - 0.015 = 0.985` (its trough) and the ring phase is
+`fract(uPhase)`. **The live product is unchanged**; only frozen captures moved.
+
+### 5.2 Third post-measurement definition change: N10 detects by frame identity
+
+N10 asserted that this defect pushes metric 3.9 over its upper bound. In a deterministic frozen
+frame it does not. The defect (si 1.0, roughness floor 0, retired fill light) contributes **249.90
+luma across 11779 px at [344,390]** while the diff's *maximum* stays on the shipped glint at
+[781,374], where `max` reads 87.52 — the control's 88.52 minus one 8-bit step, because the OFF frame
+moved by one and the defect never touches that pixel (defect-minus-control there is +1.00).
+`diffStats.max` is a single extreme; a brighter neighbouring feature masks the defect by
+construction. **3.9 measures overlay amplitude; this defect changes the surface.**
+
+N10 now asserts, over the `fitLimb` disc:
+
+| rule | threshold | measured | status |
+|---|---|---:|---|
+| in-page control-vs-control, max \|dLuma\| | ≤ **1.0** | 0.7152 | pass |
+| in-page control-vs-control, pixels differing | ≤ **50** | 43 | pass |
+| defect-vs-control, max \|dLuma\| | > **8** | **249.90** | pass |
+| defect-vs-control, pixels > 6 luma | ≥ **100** | **11779** | pass |
+
+The detection thresholds (8 luma, 100 px) were fixed before any defect measurement. **The in-page
+noise floor (1.0 luma, 50 px) was chosen AFTER measuring 0.7152 luma over 9–43 px** — it is a
+post-measurement tolerance, not a pre-registered one, and any future tightening has to justify
+itself against that floor. Separation is 8× the luma floor and ≥2× the pixel floor.
+
+The cross-load control pair (**0.7152 luma / 213 px** in the recorded run) is **printed, not
+asserted**: N10 compares frames inside one page. Cross-load determinism is owned by
+`tests/e2e/ref.spec.ts`, which stays strict 0 with no tolerance anywhere. The reason for the split is
+that the two paths disagree — see 5.3.
+
+The 3.9 reading under the defect is printed as information only and deliberately not asserted.
+**N9 and the 3.9 sentinel test are untouched**, so the metric keeps its own proof that it can fail.
+
+### 5.3 The old N10 pass was an artifact; the erratic values are not reproducible
+
+Before the freeze, the two competing maxima swapped places between runs, at scattered pixels, while
+the clock moved only 0.06 s — so the old assertion passed by luck. The only evidence for those
+passes is the hash-labelled D1 runs (defect max 201.72, 185.08, 165.68, and one 87.52, each labelled
+by the sha1 of *both* source files and the bundle's `srcHash`). **They were not reproduced in later
+sessions**: six runs of the unfrozen variant gave 87.52, and a 2×2 path × pairing matrix (D8) gave
+exact zeros in all 27 pairs. The classification is therefore *unexplained and not pin-carried* —
+masking 45 px around every pin leaves the defect max at 87.5204, unchanged — and it is recorded as an
+unexplained intermittent, not as a solved one.
+
+### 5.4 Raw numbers, before and after the freeze
+
+Every number is inside its window; the pointed ones moved because the frozen phase changed.
+
+| measurement | before (2B close) | after 3A | moved |
+|---|---:|---:|---|
+| 3.1 rim peak | 95.24 | **95.24** | — |
+| 3.1 peak offset | +1 px | **+1 px** | — |
+| 3.1 max \|step\| beyond +2 px | 8.11 | **8.11** | — |
+| 3.1 shell − background | 0.31 | **0.29** | −0.02 |
+| 3.1 monotonic start | +3 px | **+3 px** | — |
+| 3.5 us-west core (day) | (255,255,179) | **(255,255,179)** | — |
+| 3.5 se-asia core (night) | (255,255,149) | **(255,255,149)** | — |
+| 3.6 us-west ring (valid) | 28.824 / 28.026, Δ2.849% | **28.824 / 28.026, Δ2.849%** | — |
+| 3.6 se-asia / horn-africa | 0.018% / 0.002% | **0.018% / 0.002%** | — |
+| 3.9 sentinel max | 88.52 | **88.5204** | — |
+| 3.9 sentinel area6 | 9594 | **9593** | −1 px |
+| N9 | identical (0 px) | **identical (0 px)** | — |
+| N10 defect max (3.9 reading, informational) | 87.52 | **87.52** | — |
+| N10 defect-vs-control (new detector) | n/a | **249.90 luma / 11779 px** | new |
+
+Two entries moved by one pixel or less: `shellMinusBackground` (−0.02 luma) and the sentinel's
+`area6` (−1 px, 9594 → 9593), both far inside their windows and both consistent with a single
+8-bit step at one rim pixel.

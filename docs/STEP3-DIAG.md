@@ -314,3 +314,94 @@ Saved data: `.cache/d1-table.json`, `.cache/d234-{PP,FF}.json`, `.cache/d5-{FF,F
 **Not done.** The D-phase used the session's tool budget on measurement; the insets registry (C of
 `step3-a-fix.md`) is an implementation step with its own unit tests, layout assertion and gate, and
 was not started rather than half-landed. Nothing in Step E was committed.
+
+---
+
+# Addendum — D7 confirmation, D8 path matrix, and the ROI correction
+
+Written during 2B-STEP3-A-FIX3 / -V2 / -V3. Commits: `8c1fceb` (prompt), `0aa0352` (v2 prompt),
+`24c76ab` (v3 prompt), `a8f9ea2` (E1).
+
+## ROI correction: (327,488) IS inside the disc
+
+The first pass of this document placed (327,488) outside the ROI at "342 px from the centre". That
+was arithmetic error, not a finding. Recomputed against the actual `fitLimb` geometry
+(cx 640.0, cy 399.5, r 325.66):
+
+| from | distance | r/R | inside the disc? |
+|---|---:|---:|---|
+| (640.0, 400.0), r 325.56 | **325.135 px** | 0.9987 | **yes** |
+| (640.0, 399.5), r 325.66 | **325.271 px** | 0.9988 | **yes** |
+
+So it sits on the disc, just under one pixel inside the limb. `measureGlint`'s region of interest is
+the fitted disc and nothing else — `diffStats` skips every pixel with
+`(x-cx)² + (y-cy)² > r²` — so (327,488) is **inside** both the ROI and the `area6` count.
+[344,390], the fill light's blue circle, is well inside it too (r/R 0.139).
+
+## D7 — the defect lands, but 3.9 does not see it
+
+Faithful reproduction of N10's own acquisition (control 88.5204 / 9594, defect 87.5204 / 9399 — the
+same numbers N10 prints):
+
+| quantity | value |
+|---|---|
+| defect-vs-control at the defect's argmax [781,374] | **+1.00 luma** |
+| nearest projected pin to that pixel | **horn-africa, 104.9 px** |
+| distances to pacific / us-west / se-asia / horn-africa | 501.8 / 356.1 / 244.4 / **104.9** px |
+| r/R of that pixel | 0.44 (disc, not the atmosphere band) |
+| **defect max with 45 px masked around every pin** | **87.5204 — unchanged** |
+| defect-vs-control elsewhere | **249.9 luma at [344,390]**, 8470 px |
+
+**Classification: unexplained and NOT pin-carried.** The mask changes nothing because the max sits
+104.9 px from the nearest pin, well outside a 45 px radius. The 249.9-luma contribution is real and
+correctly delivered; it simply does not coincide with the glint's maximum.
+
+### Limits of this evidence
+
+The earlier erratic passes (defect max 201.72, 185.08, 165.68 across D1's hash-labelled variants)
+**were not reproduced** in later sessions: six runs of the unfrozen variant all gave 87.52, and the
+D8 matrix below gave exact zeros in all 27 pairs. Those values exist only in the D1 runs, which are
+labelled by the sha1 of both source files and the bundle's `srcHash`. The intermittent is recorded as
+unexplained, not as solved.
+
+## D8 — path × pairing matrix (27 pairs, all exact 0)
+
+- **Path A** = reference-helper style: `settleAt` + `setLayers` + capture, no `fitLimb` material swap.
+- **Path B** = N10 style: the same flags, preceded by `fitLimb`'s `surfaceWhite(true/false)` cycle.
+- **Arm C** = path B with the swap skipped — which is path A with the same flags, so C is a repetition
+  loop, not an independent arm. Recorded as such rather than presented as a third result.
+
+Three fresh page loads per path, two acquisitions per load.
+
+| path | in-page (3 pairs) | cross-load (6 pairs) | per-channel histograms |
+|---|---|---|---|
+| A | max\|dLuma\| **0**, 0 px | **0**, 0 px | empty (no differing pixels) |
+| B | max\|dLuma\| **0**, 0 px | **0**, 0 px | empty |
+| C | max\|dLuma\| **0**, 0 px | **0**, 0 px | empty |
+
+Overlap of the differing-pixel sets between A's and B's in-page pairs: both empty (Jaccard undefined).
+
+**Reading (3) applied: nothing flips in any arm.** No pixel had a channel delta of 2 LSB or more in
+any arm (reading 4), and path A did not flip cross-load (reading 2). So: B2 proceeded, and **B3 was
+skipped** because the prompt makes readings (2), (3) and (4) all stop before B3.
+
+This is in tension with the v2 measurement of 0.7152 luma / 221 px on the cross-load pair, and the
+tension is not resolved. The v2 number was taken inside the real `negative.spec.ts` process, after 13
+other negative tests had run in the same browser; D8's numbers were taken on fresh contexts only.
+A same-process-state effect would explain both, and nothing in D8's arms tested that.
+
+## Jitter location (in-page control pair, from the N10 run)
+
+17–43 pixels differ, every one by exactly **0.7152 luma = one green level**. Across four runs they
+cluster at the same coordinates:
+
+| x,y | d | r/R | band | to glint peak | nearest pin | to pin |
+|---|---:|---:|---|---:|---|---:|
+| 770,144 | 0.7152 | 0.8809 | disc | 230.3 px | horn-africa | 173.5 px |
+| 768,171 | 0.7152 | 0.8049 | disc | 203.5 px | horn-africa | 151.3 px |
+| 552,178 | 0.7152 | 0.7313 | disc | 302.2 px | us-west | 121.6 px |
+| 748,194 | 0.7152 | 0.7135 | disc | 183.2 px | horn-africa | 146.3 px |
+
+All on the disc at r/R 0.71–0.88 — **not** limb shimmer, **not** in the rim band, and nowhere near a
+pin or the glint. Time between the two acquisitions: **10 164–10 228 ms**. Recorded, not fixed, and
+not used to relax anything.

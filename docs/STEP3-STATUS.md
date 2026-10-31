@@ -6,6 +6,10 @@ Session log for the Step 3 framing work. One row per step; each prompt lives in 
 |---|---|---|---|
 | 2B-STEP3-A | PARTIAL — stopped at B, red gate | `8f9e1aa`, `01d0f83` | audit + status only; B was red |
 | 2B-STEP3-A-FIX | **STOPPED at B2 — legacy verification red** | `4c7801d`, `01d0f83`, `70ca2b5` | uTime fix landed; N10 fails as a direct result |
+| 2B-STEP3-A-FIX2 | D7/D8 diagnosis only | `33d2855`, `dec1745` | no code change; N10 unexplained intermittent |
+| 2B-STEP3-A-FIX3 | P0 + D7 | `8c1fceb` | stopped: in-page control pair 0.7152 luma |
+| 2B-STEP3-A-FIX3-V2 | P0 + E1 draft | `0aa0352` | stopped: cross-load pair 0.7152 luma / 221 px |
+| 2B-STEP3-A-FIX3-V3 | **E1 + B2 done; B3 SKIPPED on D8 reading (3); C not started** | `24c76ab`, `a8f9ea2`, docs | 28/28, zero retries |
 
 ---
 
@@ -254,3 +258,64 @@ Options, none of which I took unilaterally:
 - B is **not committed**. The prompt says "commit alone" only on a green capture; the
   capture is red, so there is nothing to commit but a file that records a jittering scene.
 - Everything else in A is committed and the audit contains no look/spec/threshold change.
+
+---
+
+## 2B-STEP3-A-FIX3-V3 (this session)
+
+### E1 — N10 re-specified to frame identity (`a8f9ea2`)
+
+Every capture goes through `acquireGlintFrames`; the detector asserts the in-page noise floor
+(≤ 1.0 luma, ≤ 50 px differing — a POST-MEASUREMENT tolerance) and the detection rule (> 8 luma,
+≥ 100 px > 6, fixed before any defect measurement). Cross-load is printed, not asserted.
+
+| check | threshold | measured | status |
+|---|---|---:|---|
+| in-page max \|dLuma\| | ≤ 1.0 | 0.7152 | pass |
+| in-page differing px | ≤ 50 | 43 | pass |
+| defect max \|dLuma\| | > 8 | **249.90** | pass |
+| defect px > 6 | ≥ 100 | **11779** | pass |
+| precondition | si 1, rough 0, no map | si 0→1, rough 0.9→0, map true→false, version 4→5 | pass |
+| cross-load (printed) | — | 0.7152 / 213 px | not asserted |
+
+Bites: identical pair → "defect not detected" (0.00 luma, 0 px); defect applied → passes. The
+"defect not applied" variant trips the PRECONDITION assertion first, which is the correct order.
+
+Gate: `tsc -b`, `lint`, `test` **760 passed / 31 files**, `build` — all green.
+
+### B2 — legacy verification, 28/28
+
+`look.spec.ts` 9/9, `negative.spec.ts` 14/14, `globe.spec.ts` 5/5, **zero retries**, 9.8 min total.
+Moved raw numbers: 3.1 rim peak 95.24 (unchanged), shell−bg 0.29 (−0.02); 3.5 pins (255,255,179) /
+(255,255,149) unchanged; 3.6 us-west Δ2.849% unchanged; 3.9 sentinel 88.5204 / **9593** (−1 px);
+N9 identical; N10 defect 3.9 reading 87.52 unchanged. No threshold or window touched.
+
+Disclosure written to `docs/globe-look/SPEC.md` §5; D7 tables, D8 matrix and the jitter location in
+`docs/STEP3-DIAG.md`.
+
+### D8 — reading (3) applied, so B3 was SKIPPED
+
+27 pairs across paths A/B/C, in-page and cross-load over three fresh loads: **every pair exactly 0**,
+no per-channel histogram entries, no pixel with a 2-LSB delta. Reading (3) = "nothing flips in any
+arm: record it as intermittent, finish B2, STOP before B3". That is what was done.
+
+This conflicts with V2's cross-load 0.7152 / 221 px, which was measured inside the real
+`negative.spec.ts` process after 13 other tests; D8 used fresh contexts only. Unresolved, recorded as
+such. `tests/e2e/look/reference.ts` and `tests/e2e/ref.spec.ts` remain uncommitted.
+
+### CPU-load note
+
+Before `e2e:look`: Hermes 80 CPU-s, Hermes 53, python 48, Gemini 45, chrome 42 — no heavy external
+jobs, unlike the earlier degraded run (python 2428, jetbrains-toolbox 3049).
+
+### Throwaway scripts (uncommitted)
+
+`scripts/tmp-d1.py`, `tmp-d234.mjs`, `tmp-d5.mjs`, `tmp-d7.mjs`, `tmp-d8.mjs`,
+`tmp-n10-phase.mjs`, `tmp-refmatrix.mjs`. Note: `source-guards.test.ts` scans `scripts/`, so three of
+these had to be rewritten to drop `Math.min(...spread)` before the gate would pass.
+
+### Next
+
+B3 (reference frame) needs D8 re-run **inside the negative-spec process state** to settle whether
+reading (2) or (3) is real, or an explicit decision to take the D8 result at face value and let
+ref.spec's strict 0 stand. Step C (insets registry) was not started.
