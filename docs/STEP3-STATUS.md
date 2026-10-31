@@ -580,3 +580,33 @@ Two contradictions were found and written down rather than stopping on: item 4 p
 under the director while item 5 makes `FrameRig` a pure provider (resolved by having the rig hand the
 offset up), and `userZoomed` must gate ONLY the distance channel or a wheel event would un-centre the
 globe. Neither changes behaviour, so no S-item triggers.
+
+### 3B / C — golden poses captured BEFORE any refactor (`tests/e2e/camera-golden.spec.ts`)
+
+Eight cases: four regions x (locked 1280x800, live 1440x900), plus one comparison test = **9 tests**.
+Regenerate with `UPDATE_GOLDEN=1`, assert-only otherwise, exactly like `UPDATE_REF`. Details in
+`docs/STEP3B-GOLDEN.md`.
+
+**The step's real finding is that a fly-to pose is not reproducible across loads without pinning the
+spin.** The first capture measured `controls.target` differing by up to **8.36e-3 R** and position by
+**4.78e-3 R** between processes; the prompt's `max(1e-5, 10x noise)` rule would have fixed the
+tolerance at **0.084 R**, ~20 px of disc movement, and S3 would then have been unable to detect a
+regression. Cause: `CameraRig.tsx:54` builds the target as `regionDirection(id, spin.current.y)` and
+`spin.y` accumulates from frame deltas. Fix: `__globe.setSpin(true, 0)` before selecting — the same
+pinning `__look.setAzimuth` already applies to every pixel baseline.
+
+| run | process | result | max component error |
+|---|---|---:|---:|
+| `cap1-write` (`UPDATE_GOLDEN=1`) | 1 | **9/9 green** | 8.33e-17 |
+| `cap2-verify` | 2 | **9/9 green** | 5.55e-17 |
+| `cap3-verify` | 3 | **9/9 green** | 5.55e-17 |
+
+**Tolerance: 1e-5 R** — the floor binds, because `10 x 5.55e-17` is `5.55e-16`. Six of eight cases
+were exactly 0 on every component. Runner registration: count 9, per-file timeout 6 min (2x the
+measured 125.5 s, rounded up). Full-suite total becomes **85**.
+
+Two small additions carried by this step, both necessary and both disclosed: `tests/e2e/globals.d.ts`
+declared no `setSpin` although the runtime handle has had it since 3A (`globeProbe.ts:269`) — a
+declaration only, no runtime change; and the spec needed `fileURLToPath(import.meta.url)` instead of
+`__dirname`, because the Playwright config is ESM and the first run died as `0/9 tests` with
+`ReferenceError: __dirname is not defined in ES module scope`.
