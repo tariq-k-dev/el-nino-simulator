@@ -7,10 +7,15 @@
  */
 import { describe, expect, it } from 'vitest';
 import {
+  DEFAULT_FILE_TIMEOUT_MS,
+  FILE_TIMEOUTS_MS,
   WORKER_CRASH_EXIT,
   aggregate,
+  buildSummary,
+  fileTimeoutMs,
   pickPort,
   shouldRetry,
+  validateKillTarget,
 } from './e2e-batch-core.mjs';
 
 describe('shouldRetry', () => {
@@ -127,5 +132,131 @@ describe('aggregate', () => {
 
   it('sums the wall time', () => {
     expect(aggregate([file({ durationMs: 500 }), file({ file: 'b', durationMs: 700 })]).totalMs).toBe(1200);
+  });
+});
+
+// ------------------------------------------------ C2: kill-target validation ---
+
+describe('validateKillTarget', () => {
+  /*
+   * The rule: kill ONLY the pid the runner spawned. `taskkill /T` on anything else can take the Brotli
+   * server with it, and then every later test in the file gets ERR_CONNECTION_REFUSED — the exact
+   * symptom that made a batched run look like a product failure.
+   */
+  it('accepts the pid this run spawned', () => {
+    expect(validateKillTarget(4242, { ownPid: 100, serverPid: 555, spawnPid: 4242 })).toEqual({ ok: true });
+  });
+
+  it('refuses the server pid', () => {
+    const v = validateKillTarget(555, { ownPid: 100, serverPid: 555, spawnPid: 4242 });
+    expect(v.ok).toBe(false);
+    expect(v.reason).toContain('Brotli server');
+  });
+
+  it('refuses the runner own pid', () => {
+    const v = validateKillTarget(100, { ownPid: 100, serverPid: 555, spawnPid: 4242 });
+    expect(v.ok).toBe(false);
+    expect(v.reason).toContain('runner itself');
+  });
+
+  it('refuses pid 0, negatives and non-integers', () => {
+    // pid 0 means "all processes in this group" to taskkill — catastrophic.
+    for (const bad of [0, -1, 1.5, Number.NaN, '7', null, undefined]) {
+      expect(validateKillTarget(bad, { ownPid: 100, spawnPid: 4242 }).ok, `should refuse ${String(bad)}`).toBe(false);
+    }
+  });
+
+  it('refuses a pid that is not the one spawned, even if positive and unrelated', () => {
+    const v = validateKillTarget(9999, { ownPid: 100, serverPid: 555, spawnPid: 4242 });
+    expect(v.ok).toBe(false);
+    expect(v.reason).toContain('not the Playwright process');
+  });
+});
+
+// --------------------------------------------------- C3: the timeout table ---
+
+describe('fileTimeoutMs', () => {
+  it('has a measured backstop for every spec file', () => {
+    for (const f of Object.keys(FILE_TIMEOUTS_MS)) {
+      expect(FILE_TIMEOUTS_MS[f], `${f} has no budget`).toBeGreaterThan(0);
+    }
+  });
+
+  it('gives look.spec.ts at least 1.5x its measured 10.0 min', () => {
+    // Measured: 320.4 s batched, 10.0 min raw. 1.5x of 10 min is 15 min.
+    expect(FILE_TIMEOUTS_MS['look.spec.ts']).toBeGreaterThanOrEqual(10 * 60_000 * 1.5);
+  });
+
+  it('gives negative.spec.ts at least 1.5x its measured 4.7 min', () => {
+    expect(FILE_TIMEOUTS_MS['negative.spec.ts']).toBeGreaterThanOrEqual(4.7 * 60_000 * 1.5);
+  });
+
+  it('gives globe.spec.ts at least 1.5x its measured 60.8 s', () => {
+    expect(FILE_TIMEOUTS_MS['globe.spec.ts']).toBeGreaterThanOrEqual(60.8 * 1000 * 1.5);
+  });
+
+  it('falls back to a generous default for an unknown spec', () => {
+    expect(fileTimeoutMs('brand-new.spec.ts', {})).toBe(DEFAULT_FILE_TIMEOUT_MS);
+  });
+
+  it('honours E2E_FILE_TIMEOUT_MS_OVERRIDE', () => {
+    expect(fileTimeoutMs('look.spec.ts', { E2E_FILE_TIMEOUT_MS_OVERRIDE: '20000' })).toBe(20000);
+  });
+
+  it('ignores a nonsense override rather than disabling the backstop', () => {
+    expect(fileTimeoutMs('globe.spec.ts', { E2E_FILE_TIMEOUT_MS_OVERRIDE: 'abc' })).toBe(FILE_TIMEOUTS_MS['globe.spec.ts']);
+    expect(fileTimeoutMs('globe.spec.ts', { E2E_FILE_TIMEOUT_MS_OVERRIDE: '0' })).toBe(FILE_TIMEOUTS_MS['globe.spec.ts']);
+  });
+});
+
+// ------------------------------------------------------------- C4: summary ---
+
+describe('buildSummary', () => {
+  const row = (over = {}) => ({
+    file: 'globe.spec.ts',
+    port: 4300,
+    status: 'passed',
+    testsPassed: 5,
+    testsFailed: 0,
+    testsSkipped: 0,
+    expected: 5,
+    durationMs: 60_000,
+    retries: 0,
+    ...over,
+  });
+
+  it('exits zero when every file passed and counts match', () => {
+    const s = buildSummary([row(), row({ file: 'limb.spec.ts', testsPassed: 2, expected: 2 })], { expectedTotal: 7 });
+    expect(s.exitCode).toBe(0);
+    expect(s.tests.mismatch).toBe(false);
+  });
+
+  it('exits non-zero on a TIMEOUT', () => {
+    const s = buildSummary([row({ status: 'TIMEOUT', testsPassed: 1, expected: 5 })], { expectedTotal: 1 });
+    expect(s.exitCode).toBe(1);
+  });
+
+  it('exits non-zero when a file ran FEWER tests than it owns', () => {
+    // A file can exit 0 having registered fewer tests than the inventory expects.
+    const s = buildSummary([row({ testsPassed: 3, expected: 5 })], { expectedTotal: 3 });
+    expect(s.exitCode).toBe(1);
+    expect(s.countMismatches).toEqual(['globe.spec.ts']);
+  });
+
+  it('exits non-zero on a total count mismatch even when every file claims passed', () => {
+    const s = buildSummary([row()], { expectedTotal: 99 });
+    expect(s.exitCode).toBe(1);
+    expect(s.tests.mismatch).toBe(true);
+  });
+
+  it('lets skipped tests account for the difference', () => {
+    const s = buildSummary([row({ testsPassed: 4, testsSkipped: 1, expected: 5 })], { expectedTotal: 5 });
+    expect(s.countMismatches).toEqual([]);
+  });
+
+  it('reports the killReason and retries per file', () => {
+    const s = buildSummary([row({ status: 'TIMEOUT', killReason: 'timeout', retries: 1, testsPassed: 1 })], {});
+    expect(s.files[0].killReason).toBe('timeout');
+    expect(s.retriedFiles).toEqual(['globe.spec.ts']);
   });
 });

@@ -64,7 +64,14 @@ export default defineConfig({
     },
   ],
 
-  webServer: {
+  /*
+   * C1: when the batched runner owns the server, do NOT start another one.
+   *
+   * `scripts/e2e-batched.mjs` spawns the Brotli server itself, directly, so it is a SIBLING of the
+   * Playwright process rather than a descendant — that is what keeps `taskkill /T` on Playwright's pid
+   * from taking the server down mid-file. Playwright is told here to stand down.
+   */
+  webServer: process.env.E2E_EXTERNAL_SERVER === '1' ? undefined : {
     /*
      * Serves the INSTRUMENTED bundle with Brotli + ETag/304, mocking Cloudflare Pages.
      *

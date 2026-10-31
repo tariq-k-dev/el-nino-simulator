@@ -28,10 +28,17 @@
  *   node scripts/e2e-batched.mjs look.spec.ts     # a subset, by filename fragment
  */
 import { spawn, spawnSync } from 'node:child_process';
-import { readdirSync } from 'node:fs';
+import { mkdirSync, readdirSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { aggregate, pickPort, shouldRetry } from './lib/e2e-batch-core.mjs';
+import { spawn as spawnRaw } from 'node:child_process';
+import {
+  buildSummary,
+  fileTimeoutMs,
+  pickPort,
+  shouldRetry,
+  validateKillTarget,
+} from './lib/e2e-batch-core.mjs';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const specDir = path.join(root, 'tests', 'e2e');
@@ -176,10 +183,72 @@ function cleanPlaywrightOrphans() {
   }
 }
 
+/**
+ * Start this file's Brotli server and wait until it answers.
+ *
+ * C1: THE RUNNER OWNS THE SERVER LIFECYCLE. It is spawned here, directly by the runner, on this
+ * file's own port — so it is a SIBLING of the Playwright process, never a descendant of it. That
+ * matters because `killTree` runs `taskkill /T` on the Playwright pid: a descendant server would go
+ * with it, and every remaining test in the file would get ERR_CONNECTION_REFUSED.
+ *
+ * Playwright is then told NOT to start one, via `E2E_EXTERNAL_SERVER=1` read by playwright.config.ts.
+ */
+function startServer(file, port) {
+  const srv = spawnRaw(
+    process.execPath,
+    [path.join(root, 'tests', 'e2e', 'brotli-server.mjs'), 'dist-e2e', String(port)],
+    { cwd: root, stdio: ['ignore', 'pipe', 'pipe'], windowsHide: true },
+  );
+  srv.stdout.on('data', () => {});
+  srv.stderr.on('data', () => {});
+  return srv;
+}
+
+/** Wait until `port` accepts a connection, or give up. */
+async function waitForServer(port, timeoutMs = 30_000) {
+  const net = await import('node:net');
+  const started = Date.now();
+  while (Date.now() - started < timeoutMs) {
+    const ok = await new Promise((resolve) => {
+      const sock = net.connect({ port, host: '127.0.0.1' }, () => {
+        sock.destroy();
+        resolve(true);
+      });
+      sock.on('error', () => resolve(false));
+      sock.setTimeout(1000, () => {
+        sock.destroy();
+        resolve(false);
+      });
+    });
+    if (ok) return true;
+    await new Promise((r) => setTimeout(r, 200));
+  }
+  return false;
+}
+
 /** One attempt at one file. Returns the result without deciding whether to retry. */
 function runOnce(file, port) {
-  return new Promise((resolve) => {
+  return new Promise(async (resolve) => {
     const started = Date.now();
+    const timeoutMs = fileTimeoutMs(file);
+
+    // C1: the runner owns the server, so it is a sibling of the Playwright process.
+    const server = startServer(file, port);
+    const serverPid = server.pid;
+    const ready = await waitForServer(port);
+    if (!ready) {
+      killTree(serverPid, 'server-not-ready', { file, fileStartedAt: started });
+      resolve({
+        file,
+        exitCode: 1,
+        durationMs: Date.now() - started,
+        output: `[batched] the Brotli server on port ${port} never became ready`,
+        status: 'failed',
+        killReason: 'server-not-ready',
+        timedOut: false,
+      });
+      return;
+    }
     const playwrightBin = path.join(root, 'node_modules', '@playwright', 'test', 'cli.js');
     const child = spawn(
       process.execPath,
@@ -235,6 +304,8 @@ function runOnce(file, port) {
           PLAYWRIGHT_HTML_OPEN: 'never',
           // Serial inside a file: the cases measure wall-clock and bytes on one CPU.
           E2E_BATCHED: '1',
+          // C1: the runner owns the server; the config must not start a second one.
+          E2E_EXTERNAL_SERVER: '1',
         },
         stdio: ['ignore', 'pipe', 'pipe'],
         windowsHide: true,
@@ -251,23 +322,85 @@ function runOnce(file, port) {
       process.stderr.write(b);
     });
 
+    /*
+     * C3: the per-file timeout is a BACKSTOP with a measured budget. Without one a hung file hangs the
+     * suite forever, and a killed run is indistinguishable from a product failure. A timeout kills only
+     * this file's Playwright tree, marks the file TIMEOUT (so it is not reported as a hundred
+     * ECONNREFUSED test failures), and the next file still gets a fresh server on a fresh port.
+     */
+    let timedOut = false;
+    const timer = setTimeout(() => {
+      timedOut = true;
+      console.error(`[batched] ${file} exceeded ${Math.round(timeoutMs / 1000)}s — killing its tree`);
+      const verdict = validateKillTarget(child.pid, { ownPid: process.pid, serverPid, spawnPid: child.pid });
+      if (verdict.ok) killTree(child.pid, `timeout ${timeoutMs}ms`, { file, fileStartedAt: started });
+      else console.error(`[batched] REFUSED timeout kill: ${verdict.reason}`);
+    }, timeoutMs);
+
+    let settled = false;
     child.on('close', (code, signal) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
       /*
-       * The child is gone, but its server may not be, and its trace writer may still be flushing.
-       * Kill the tree while the pid is valid, then WAIT for the tree to actually disappear: the
-       * next file deletes and recreates its own artifacts dir, and a lingering process from this
-       * one is what produced the trace ENOENT.
+       * C2: kill ONLY the pid this run spawned, and refuse anything else. `taskkill /T` on the wrong
+       * pid takes the Brotli server with it. The server itself is torn down separately, in the finally
+       * below, so the two lifecycles are never entangled.
        */
-      killTree(child.pid, 'child-close', { file, fileStartedAt: started });
-      waitForExit(child.pid);
+      const verdict = validateKillTarget(child.pid, { ownPid: process.pid, serverPid, spawnPid: child.pid });
+      if (verdict.ok) {
+        killTree(child.pid, timedOut ? 'timeout' : 'child-close', { file, fileStartedAt: started });
+        waitForExit(child.pid);
+      } else {
+        console.error(`[batched] REFUSED close kill: ${verdict.reason}`);
+      }
+      // C1: tear THIS file's server down, always. It is a sibling, so this is the only place it dies.
+      killTree(serverPid, 'server-teardown', { file, fileStartedAt: started });
+      waitForExit(serverPid);
+      const counts = parseCounts(output);
       resolve({
         file,
-        exitCode: signal ? null : code,
+        exitCode: timedOut ? null : signal ? null : code,
         durationMs: Date.now() - started,
         output,
+        status: timedOut ? 'TIMEOUT' : code === 0 ? 'passed' : 'failed',
+        killReason: timedOut ? 'timeout' : 'child-close',
+        timedOut,
+        serverPid,
+        ...counts,
       });
     });
   });
+}
+
+/**
+ * Pull Playwright's own footer counts out of the output.
+ *
+ * A file can exit 0 with fewer tests than it owns (a `--grep`, a filter, a silently unregistered spec),
+ * so the summary compares these against the inventory rather than trusting the exit code alone.
+ */
+function parseCounts(output) {
+  const pick = (re) => {
+    const m = output.match(re);
+    return m ? Number(m[1]) : null;
+  };
+  const ran = pick(/Running (\d+) tests? using/);
+  let passed = pick(/(\d+) passed/);
+  let failed = pick(/(\d+) failed/);
+  const skipped = pick(/(\d+) skipped/);
+  /*
+   * A KILLED file never prints a footer, so its counts are null even though tests ran. Fall back to
+   * counting the per-test lines (`ok N` / `x N`), which are flushed as each test finishes — otherwise a
+   * TIMEOUT reports `?/?` and the summary cannot say how far the file got.
+   */
+  if (passed === null) passed = (output.match(/^\s+ok\s+\d+/gm) || []).length;
+  if (failed === null) failed = (output.match(/^\s+x\s+\d+/gm) || []).length;
+  return {
+    testsExpectedByRun: ran,
+    testsPassed: passed,
+    testsFailed: failed,
+    testsSkipped: skipped,
+  };
 }
 
 async function main() {
@@ -303,13 +436,12 @@ async function main() {
         usedPorts.push(retryPort);
         outcome = await runOnce(file, retryPort);
         results.push({
+          ...outcome,
           file,
-          ok: outcome.exitCode === 0,
-          attempts: 2,
-          retried: true,
-          exitCode: outcome.exitCode,
-          durationMs: outcome.durationMs,
           port: retryPort,
+          attempts: 2,
+          retries: 1,
+          exitCode: outcome.exitCode,
         });
         console.log(
           `[batched] ${file} RETRY ${outcome.exitCode === 0 ? 'passed' : `failed again (${outcome.exitCode})`}\n`,
@@ -322,33 +454,75 @@ async function main() {
     }
 
     results.push({
+      // Spread the outcome so status / counts / killReason / durationMs all survive into the summary.
+      ...outcome,
       file,
-      ok: outcome.exitCode === 0,
-      attempts: attempt,
-      retried: false,
-      exitCode: outcome.exitCode,
-      durationMs: outcome.durationMs,
       port,
+      attempts: attempt,
+      retries: 0,
+      exitCode: outcome.exitCode,
     });
   }
 
-  const summary = aggregate(results);
+  // C4: expected counts from the inventory guard's own constant, so the runner cannot drift from it.
+  const expected = expectedCounts();
+  for (const r of results) {
+    r.expected = expected.perFile[r.file] ?? null;
+  }
+  const summary = buildSummary(results, { expectedTotal: expected.totalFor(specs) });
 
   console.log('\n===== batched e2e summary =====');
   for (const r of summary.files) {
     console.log(
-      `  ${r.ok ? 'ok  ' : 'FAIL'} ${r.file.padEnd(28)} ` +
-        `${(r.durationMs / 1000).toFixed(1).padStart(6)}s  port ${r.port}` +
-        `${r.retried ? '  (retried once)' : ''}`,
+      `  ${r.status === 'passed' ? 'ok  ' : r.status === 'TIMEOUT' ? 'TIME' : 'FAIL'} ` +
+        `${r.file.padEnd(24)} ${(r.durationMs / 1000).toFixed(1).padStart(6)}s  port ${r.port}` +
+        `  tests ${r.testsPassed ?? '?'}/${r.expected ?? '?'}` +
+        `${r.status === 'TIMEOUT' ? ' (killed)' : ''}` +
+        `${r.retries ? `  (retried ${r.retries}x)` : ''}` +
+        `${r.killReason ? `  [${r.killReason}]` : ''}`,
     );
   }
   console.log(
     `  ${summary.passed}/${summary.total} files passed` +
       `${summary.retriedFiles.length ? `, retried: ${summary.retriedFiles.join(', ')}` : ', no retries'}` +
+      ` — ${summary.tests.actual}/${summary.tests.expected ?? '?'} tests` +
       ` — total ${(summary.totalMs / 60000).toFixed(1)} min\n`,
   );
+  if (summary.countMismatches.length) {
+    console.error(`  count mismatch in: ${summary.countMismatches.join(', ')}`);
+  }
+
+  const summaryPath = path.join(root, '.cache', 'e2e-results', 'batched-summary.json');
+  mkdirSync(path.dirname(summaryPath), { recursive: true });
+  writeFileSync(summaryPath, `${JSON.stringify(summary, null, 2)}\n`, 'utf8');
+  console.log(`  summary: ${path.relative(root, summaryPath)}`);
 
   process.exit(summary.exitCode);
+}
+
+/**
+ * Expected per-file test counts, read from the inventory guard so the two cannot diverge.
+ *
+ * The guard holds the look suite's titles; the other files are counted from the constant below, which
+ * is asserted against `playwright --list` by the unit tests.
+ */
+function expectedCounts() {
+  const perFile = {
+    'boot.spec.ts': 10,
+    'determinism.spec.ts': 2,
+    'gate-clock.spec.ts': 1,
+    'globe.spec.ts': 5,
+    'harden.spec.ts': 8,
+    'history-gate.spec.ts': 1,
+    'limb.spec.ts': 2,
+    'look.spec.ts': 9,
+    'negative.spec.ts': 14,
+    'scene-gate.spec.ts': 2,
+  };
+  return {
+    perFile,
+    totalFor: (files) => files.reduce((s, f) => s + (perFile[f] ?? 0), 0),
+  };
 }
 
 main().catch((error) => {
