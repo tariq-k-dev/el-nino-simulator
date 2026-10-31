@@ -610,3 +610,40 @@ declared no `setSpin` although the runtime handle has had it since 3A (`globePro
 declaration only, no runtime change; and the spec needed `fileURLToPath(import.meta.url)` instead of
 `__dirname`, because the Playwright config is ESM and the first run died as `0/9 tests` with
 `ReferenceError: __dirname is not defined in ES module scope`.
+
+### 3B / D — `CameraDirector` (`23ff5f4`)
+
+`src/scene/CameraRig.tsx` and `src/scene/FrameRig.tsx` are **deleted**. Their two bodies now run in one
+`useFrame` in `src/scene/CameraDirector.tsx`, in the order React used to mount them (fly-to first, fit
+second, so the fit reads the camera after the fly-to moved it). `src/scene/cameraIntents.ts` is the
+channel `__globe.setCamera` submits through, so the hook no longer writes; `src/scene/focusMachine.ts`
+runs the state machine; `userZoomed` replaces `lastFit` and gates the distance channel only.
+
+**The gate, and every proof the prompt asks for:**
+
+| proof | result |
+|---|---|
+| **S3** camera-golden, 2 separate processes | **9/9 green both**, max error **5.55e-17 R** against a 1e-5 tolerance |
+| **S1** ref.spec, 2 separate processes | `maxAbs=0 differing=0 maxChannel=0`, sha `934ecd13…d29a44` **unchanged**, both processes |
+| frame.spec **unedited** | **20/20**, `git diff` against the pre-3B commit is empty |
+| globe.spec in isolation (**S4**) | **5/5**, 53.7 s |
+| scene-gate / limb | **2/2** / **2/2** |
+| production bundle marker | `frame-locked-branch-7f3a`: **0** hits in `dist/`, **1** in `dist-e2e/` |
+| unit tests | **848 passed / 38 files** (819 + 24 focus machine + 5 single-writer guard) |
+
+**New spec `frame-director.spec.ts`, 5/5, 41.8 s**, with the number that proves each case:
+
+| case | measured |
+|---|---|
+| wheel sets `userZoomed`, state stays `idle` | d **3.7785 → 4.3621**, `userZoomed` true, `focus` "idle" |
+| resize after a wheel leaves the distance alone | d **4.3620 → 4.3620** while the fit's target moved **3.7786 → 5.0000** |
+| selecting reaches `focused` | passed through "focusing" to "focused", `regionId` "us-west" |
+| closing returns to `idle` | "focused" → "returning" → "idle", target back to (−0.000, 0.000, 0.000) |
+| drag during focusing ends in `focused` | "focused", never left in "focusing" |
+
+**The one deviation that matters, recorded in `STEP3B-DESIGN.md` §7.1:** `userZoomed` latches on ANY
+distance writer (including the fly-to and `setPose`), not only on user input. The prompt defines the
+flag from OrbitControls events; doing only that would have made the fit re-take the distance after
+every close and ease 3.3534 → 3.7784, a visible zoom-out that does not happen today. `lastFit` was
+invalidated by any writer, so reproducing its behaviour requires the wider latch. Five smaller
+deviations are in §7.2-7.6, including an honest statement of what the source guard cannot catch.

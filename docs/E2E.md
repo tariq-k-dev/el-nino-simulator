@@ -317,6 +317,8 @@ fetch genuinely pending and no progress events arrive — which is exactly what
 | look.spec.ts | 10.0 min raw / 320-324 s batched | 15 min |
 | negative.spec.ts | 4.7 min raw / 192 s batched | 8 min |
 | boot.spec.ts | 403-406 s | 10 min |
+| camera-golden.spec.ts | 125.3-129.0 s | 6 min |
+| frame-director.spec.ts | 41.8 s | 6 min |
 | harden.spec.ts | 110 s | 4 min |
 | globe.spec.ts | 54-61 s | 3 min |
 | gate-clock.spec.ts | 52 s | 2 min |
@@ -325,10 +327,12 @@ fetch genuinely pending and no progress events arrive — which is exactly what
 ### Expected counts
 
 `look.spec.ts` **9**, `negative.spec.ts` **14**, `globe.spec.ts` **5** = **28** for `e2e:look`.
-Full suite: boot 10, determinism 2, **frame 20**, gate-clock 1, globe 5, harden 8, history-gate 1,
-limb 2, look 9, negative 14, **ref 2**, scene-gate 2 = **76** (was 54 before Step 3A2 added
-`frame.spec.ts`; the 74 recorded earlier omitted `ref.spec.ts`'s two tests from the sum while the
-runner itself reported 76).
+Full suite: boot 10, **camera-golden 9**, determinism 2, **frame 20**, **frame-director 5**, gate-clock 1,
+globe 5, harden 8, history-gate 1, limb 2, look 9, negative 14, **ref 2**, scene-gate 2 = **90**
+(was 76 at the close of Step 3A2; Step 3B added `camera-golden.spec.ts` **9** and
+`frame-director.spec.ts` **5**). The 74 recorded in an earlier revision omitted `ref.spec.ts`'s two
+tests from the sum while the runner itself reported 76, which is how the arithmetic drifted from the
+table it was describing.
 The runner's `expectedCounts()` holds these and the summary fails on any mismatch, so a file that
 exits 0 having run fewer tests still fails the run. `frame.spec.ts` also carries a 5 min per-file
 backstop (2x its measured 125 s, rounded up).
@@ -385,6 +389,30 @@ installed under `VITE_E2E === '1' && ?debug`. That build-gate/probe-gate mismatc
 deliberately **not** fixed here — it is recorded in `docs/STEP3-FRAME.md` §5.
 
 **The one case that is not `framing=live`** is F1, whose subject is the locked default.
+
+### Golden camera poses (`camera-golden.spec.ts`, Step 3B)
+
+Eight recorded cases — four regions x (locked 1280x800, live 1440x900) — plus one comparison test.
+Camera position, quaternion, `controls.target` and distance are asserted against
+`tests/e2e/golden/camera-poses.json` within **1e-5 R**; `flyMs` is recorded but not asserted.
+
+**The spin must be pinned or the poses are not reproducible.** Measured without `setSpin(true, 0)`:
+`controls.target` differed by up to **8.36e-3 R** between loads, which would force a tolerance of
+0.084 R and make the comparison meaningless. With it, three separate processes agreed to **5.55e-17**.
+
+```bash
+UPDATE_GOLDEN=1 pnpm e2e:raw -- tests/e2e/camera-golden.spec.ts   # writes the fixture
+pnpm e2e:raw -- tests/e2e/camera-golden.spec.ts                   # verifies it
+```
+
+Regenerate **only before** a refactor. Full detail: `docs/STEP3B-GOLDEN.md`.
+
+### Director behaviours (`frame-director.spec.ts`, Step 3B)
+
+Five cases covering what is NEW rather than what is unchanged: a wheel sets `userZoomed` and leaves the
+machine `idle`; a resize afterwards does not move the distance; selecting reaches `focused` and the
+state is readable through `__frame.focus`; closing passes through `returning` to `idle` with the target
+back at the origin; a drag during `focusing` ends in `focused` (the fly-to is cancelled, not fought).
 
 ### The reference frame (`ref.spec.ts`)
 

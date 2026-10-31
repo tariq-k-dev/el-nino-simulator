@@ -121,3 +121,58 @@ The honest risk is in item 1's "no user-visible behaviour change" against a refa
 distance writer from `FrameRig.tsx:252` into a director running at a different `useFrame` priority.
 Mitigation, in the order the prompt asks for it: golden poses (step C) captured **before** any refactor,
 then compared after, then `ref.spec.ts` at strict 0 in two processes, then `frame.spec.ts` unedited.
+
+---
+
+## 7. As built (step D) — deviations from items 4 and 5
+
+Five, each a decision the prompt did not spell out and each recorded here rather than left in code.
+
+### 7.1 `userZoomed` latches on ANY distance writer, not only the user
+
+Item 4 defines the flag from OrbitControls `start` and `change` events. That is implemented verbatim.
+But the flag also replaces `FrameRig`'s `lastFit`, which was invalidated by any distance writer:
+
+    const userHasMoved = Math.abs(currentDistance - lastFit.current) >= LAST_FIT_EPSILON;
+
+A fly-to moved the distance, so `lastFit` went stale and the fit never re-took the distance again —
+measured after a close at d ≈ 3.35 rather than the fit's 3.7784 (`docs/STEP3B-DESIGN.md` §1). Setting
+the flag from user input only would have made the fit re-take the distance after every close and ease
+3.3534 → 3.7784, a visible zoom-out that does not happen today. **So the fly-to and `setPose` latch it
+too**, and `userZoomed` reads as "the fit must not write the distance". It gates the DISTANCE only; the
+offset still always follows the insets.
+
+### 7.2 The E2E hook submits synchronously, not on the next frame
+
+Item 4 puts `setPose(pose)` on the director. Deferring the write to the next `useFrame` would have moved
+every probe-driven pose one frame later, which is exactly the kind of timing change `ref.spec.ts`'s
+strict-0 comparison is sensitive to. `src/scene/cameraIntents.ts` therefore calls the director's setter
+synchronously; `setCamera` still resolves after two `requestAnimationFrame`s, unchanged.
+
+### 7.3 The frame rig's state lives in the director, not in a provider component
+
+Item 5 says `FrameRig` becomes "a pure provider of `(offset, dFit)`". It cannot stay a MOUNTED
+component and still be pure: publishing `(offset, dFit)` every frame from a component means a
+`useFrame`, which is the very thing this step removes. The director computes `(offset, dFit)` itself from `getInsets()` + `computeFrame` (the
+existing pure module) and applies both, so the provider is a pure FUNCTION rather than a mounted
+component. `src/scene/FrameRig.tsx` is deleted; `src/layout/frame.ts` is untouched.
+
+### 7.4 The probe's state type grew three fields, not zero
+
+`__frame` had to expose `focus`, `userZoomed` and `regionId` because the prompt requires them visible
+("state is visible"). That is an additive change to `FrameProbeState`, `FrameProbe` and
+`tests/e2e/globals.d.ts`; no existing field changed and no existing spec reads the new ones.
+
+### 7.5 Ordering is preserved by one callback, and asserted by the golden poses
+
+The two old `useFrame` callbacks ran fly-to-then-fit because of React's mount order. One callback runs
+them in that order explicitly. This is the change most likely to alter behaviour subtly, which is why
+S3 is captured against the pre-refactor code and why the measured post-refactor error is **5.55e-17 R**
+against a 1e-5 tolerance.
+
+### 7.6 What the guard does NOT catch, stated plainly
+
+`src/scene/GlobeScene.tsx` is allowlisted for its `<Canvas camera>` and `<OrbitControls>` props. A source
+scan cannot match JSX attribute syntax, so a NEW camera write added to that file as a prop would not be
+caught by `singleWriter.test.ts`. It would be caught by `camera-golden.spec.ts` and `ref.spec.ts` if it
+changed a pose, but the structural rule relies on review there. Recorded rather than papered over.
