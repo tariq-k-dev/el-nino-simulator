@@ -18,7 +18,8 @@
  * never appears in a production bundle.
  */
 
-import type * as THREE from 'three';
+import * as THREE from 'three';
+import { submitPose } from '@/scene/cameraIntents';
 import type { Insets } from '@/lib/viewport/insets';
 import type { GlobeLookFlags } from '@/scene/globeLook';
 
@@ -212,17 +213,28 @@ export function createGlobeProbe(input: GlobeProbeInput): GlobeProbe {
   /**
    * Park the camera and pause the spin.
    *
-   * Resolves on the next animation frame rather than immediately: the renderer
-   * draws on rAF, so a screenshot taken in the same task would capture the
-   * previous pose. `setSpinPaused` is what makes the pose stable — the planet
-   * advances 0.045 rad/s, which is ~2.6 px/s of drift at the default distance
-   * and enough to move a pin out of a sampled ring between two screenshots.
+   * ## It SUBMITS now; it does not write
+   *
+   * Before Step 3B this function assigned `camera.position` itself, which made the E2E hook the second
+   * of six camera writers. `CameraDirector` is now the only writer, so this hands the pose to the
+   * intent channel (`scene/cameraIntents.ts`) and the director performs the assignment. The write is
+   * still SYNCHRONOUS inside that call, deliberately: deferring it to the next `useFrame` would have
+   * moved every probe-driven pose one frame later and put `ref.spec.ts`'s strict-0 comparison at risk.
+   *
+   * The returned promise is unchanged in shape and meaning — it resolves after two animation frames,
+   * because the renderer draws on rAF and a screenshot taken in the same task would capture the
+   * previous pose. `setSpinPaused` is what makes the pose stable: the planet advances 0.045 rad/s,
+   * which is ~2.6 px/s of drift at the default distance and enough to move a pin out of a sampled ring
+   * between two screenshots.
    */
   const setCamera = (position: [number, number, number]): Promise<void> => {
     input.setSpinPaused?.(true);
-    input.camera.position.set(position[0], position[1], position[2]);
-    input.camera.lookAt(0, 0, 0);
-    input.camera.updateMatrixWorld(true);
+    /*
+     * `target: [0,0,0]` and not the live controls target: the old code called `lookAt(0,0,0)`, so the
+     * globe centre stays the aim point of a probe pose regardless of where a fly-to had left the
+     * orbit target. Reproducing that exactly is what keeps the reference frame's framing identical.
+     */
+    submitPose({ position, target: [0, 0, 0] });
     return new Promise((resolve) => {
       requestAnimationFrame(() => requestAnimationFrame(() => resolve()));
     });

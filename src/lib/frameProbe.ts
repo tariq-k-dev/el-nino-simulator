@@ -29,6 +29,9 @@ export interface FrameProbeSnapshot {
   settled: boolean;
   degenerate: boolean;
   cameraViewIsNull: boolean;
+  focus: 'idle' | 'focusing' | 'focused' | 'returning';
+  userZoomed: boolean;
+  regionId: string | null;
 }
 
 export interface FrameProbe {
@@ -40,6 +43,12 @@ export interface FrameProbe {
   readonly settled: boolean;
   readonly degenerate: boolean;
   readonly cameraViewIsNull: boolean;
+  /** Step 3B: the focus machine's state. */
+  readonly focus: 'idle' | 'focusing' | 'focused' | 'returning';
+  /** Step 3B: whether the fit's distance channel is switched off. */
+  readonly userZoomed: boolean;
+  /** Step 3B: the targeted region, or null. */
+  readonly regionId: string | null;
   /** One coherent read of every field, from the same frame. */
   snapshot(): FrameProbeSnapshot;
 }
@@ -66,6 +75,15 @@ function lockedState(camera: THREE.Camera): FrameProbeState {
      * backwards in the one case this field exists to catch.
      */
     cameraViewIsNull: view === null || view === undefined || view.enabled === false,
+    /*
+     * Step 3B fields, reported honestly for the locked case: no director state exists here, so the
+     * machine IS idle (nothing can be focusing on a page with no live rig), nothing has zoomed
+     * through the fit's channel, and no region is targeted. Filled in rather than defaulted by the
+     * reader, because `FrameProbeState` is a total type and a locked page must still answer.
+     */
+    focus: 'idle',
+    userZoomed: false,
+    regionId: null,
   };
 }
 
@@ -105,6 +123,15 @@ export function createFrameProbe(
     get cameraViewIsNull() {
       return state().cameraViewIsNull;
     },
+    get focus() {
+      return state().focus;
+    },
+    get userZoomed() {
+      return state().userZoomed;
+    },
+    get regionId() {
+      return state().regionId;
+    },
     snapshot() {
       const s = state();
       return {
@@ -116,6 +143,9 @@ export function createFrameProbe(
         settled: s.settled,
         degenerate: s.degenerate,
         cameraViewIsNull: s.cameraViewIsNull,
+        focus: s.focus,
+        userZoomed: s.userZoomed,
+        regionId: s.regionId,
       };
     },
   };

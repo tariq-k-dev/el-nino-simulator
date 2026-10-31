@@ -152,6 +152,8 @@ export const FILE_TIMEOUTS_MS = {
   // camera-golden.spec: 9 tests, each booting a page and waiting out a fly-to; the measured isolated
   // time is recorded in docs/STEP3B-GOLDEN.md and this is 2x that, rounded up.
   'camera-golden.spec.ts': 6 * 60_000,
+  // frame-director.spec: 5 cases, each booting a page; 2x the measured isolated time, rounded up.
+  'frame-director.spec.ts': 6 * 60_000,
   'globe.spec.ts': 3 * 60_000,
   'boot.spec.ts': 10 * 60_000,
   'harden.spec.ts': 4 * 60_000,

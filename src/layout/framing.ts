@@ -136,6 +136,17 @@ export interface FrameProbeState {
   degenerate: boolean;
   /** True when `camera.view` is null, i.e. no view offset is installed. */
   cameraViewIsNull: boolean;
+  /**
+   * Step 3B: the focus machine's state, published so a spec can poll a STATE rather than infer one
+   * from a pose. `'idle'` outside a selection; `'focusing'` while a fly-to is in flight;
+   * `'focused'` once it has arrived or the user took the camera; `'returning'` while the close
+   * animation runs.
+   */
+  focus: 'idle' | 'focusing' | 'focused' | 'returning';
+  /** Step 3B: has a writer other than the fit moved the distance? Gates the fit's distance channel. */
+  userZoomed: boolean;
+  /** Step 3B: the region being targeted, or null. */
+  regionId: string | null;
 }
 
 /** The mutable slot `FrameRig` writes into, so `__frame` can read the last rendered frame. */

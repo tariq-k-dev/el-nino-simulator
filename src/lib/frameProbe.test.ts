@@ -29,6 +29,10 @@ const liveState = (over: Partial<FrameProbeState> = {}): FrameProbeState => ({
   settled: true,
   degenerate: false,
   cameraViewIsNull: false,
+  /* Step 3B: the fixture needs the machine fields, which are now part of the total state type. */
+  focus: 'idle',
+  userZoomed: false,
+  regionId: null,
   ...over,
 });
 

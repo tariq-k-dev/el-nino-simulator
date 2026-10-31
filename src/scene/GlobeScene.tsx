@@ -14,8 +14,7 @@ import * as THREE from 'three';
 import type { RegionId, ScenarioMetrics } from '@/types/enso';
 import { Starfield } from '@/scene/Starfield';
 import { EARTH_RADIUS, SUN_POSITION } from '@/scene/constants';
-import { CameraRig } from '@/scene/CameraRig';
-import { FrameRig } from '@/scene/FrameRig';
+import { CameraDirector } from '@/scene/CameraDirector';
 import type { FrameProbeSink } from '@/layout/framing';
 import { createFrameProbe } from '@/lib/frameProbe';
 import { EarthSystem } from '@/scene/EarthSystem';
@@ -672,15 +671,20 @@ export function GlobeScene({
         <Preload all />
       </Suspense>
 
-      <CameraRig activeRegion={activeRegion} spin={spin} controlsRef={controlsRef} focusNonce={focusNonce} />
-
       {/*
-        Framing (step 3A2). Sits AFTER <CameraRig> for the same reason the rig above does: React runs
-        effects child-first, and the fly-to must be the writer that settles last inside a frame. In
-        locked mode this renders nothing and writes nothing, which is what keeps every legacy spec
-        byte-identical.
+        The ONE camera writer (step 3B). It replaces `<CameraRig>` (the fly-to) and `<FrameRig>` (the
+        view offset and the fit distance) with a single `useFrame` that runs both bodies in the order
+        they used to be mounted in: the fly-to first, then the fit, which reads the camera AFTER the
+        fly-to has moved it. In locked mode it installs no offset, makes no fit and leaves
+        `camera.view` null, so every legacy spec still measures the picture it always measured.
       */}
-      <FrameRig controlsRef={controlsRef} probe={frameProbe} />
+      <CameraDirector
+        activeRegion={activeRegion}
+        spin={spin}
+        controlsRef={controlsRef}
+        focusNonce={focusNonce}
+        probe={frameProbe}
+      />
 
       {/*
         Zoom bounds are expressed against the globe RADIUS, not as magic numbers.

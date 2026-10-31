@@ -522,6 +522,8 @@ function expectedCounts() {
     // 8 + 1, not 16: the eight per-case tests only WRITE under UPDATE_GOLDEN=1 and otherwise assert the
     // single comparison, so the file's honest size is 9.
     'camera-golden.spec.ts': 9,
+    // Step 3B: the five NEW director behaviours (wheel/flag, resize, select, close, drag-cancels-fly).
+    'frame-director.spec.ts': 5,
     'negative.spec.ts': 14,
     'ref.spec.ts': 2,
     'scene-gate.spec.ts': 2,

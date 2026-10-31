@@ -111,6 +111,12 @@ export interface FrameProbeHandle {
   readonly settled: boolean;
   readonly degenerate: boolean;
   readonly cameraViewIsNull: boolean;
+  /** Step 3B: the focus machine's state, polled by `frame-director.spec.ts`. */
+  readonly focus: 'idle' | 'focusing' | 'focused' | 'returning';
+  /** Step 3B: whether a non-fit writer owns the distance. */
+  readonly userZoomed: boolean;
+  /** Step 3B: the targeted region, or null. */
+  readonly regionId: string | null;
   snapshot(): {
     mode: 'live' | 'locked';
     insets: { top: number; right: number; bottom: number; left: number };
@@ -120,6 +126,9 @@ export interface FrameProbeHandle {
     settled: boolean;
     degenerate: boolean;
     cameraViewIsNull: boolean;
+    focus: 'idle' | 'focusing' | 'focused' | 'returning';
+    userZoomed: boolean;
+    regionId: string | null;
   };
 }
 
