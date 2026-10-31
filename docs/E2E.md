@@ -8,13 +8,67 @@ browser-free; this suite needs a browser, a built `dist/`, and the DuckDB wasm
 from a CDN.
 
 ```bash
-pnpm build      # the suite serves dist/, so build first
-pnpm e2e        # all specs — measured 5.0 min wall clock on this machine
-pnpm e2e:report # open the HTML report from the last run
+pnpm e2e         # BATCHED: one Playwright process per spec file (see below)
+pnpm e2e:raw     # single process, for a targeted run: pnpm e2e:raw -- --grep globe
+pnpm e2e:report  # open the HTML report from the last run
 
-pnpm build:e2e  # REQUIRED for the look specs: they need the VITE_E2E hooks
-pnpm e2e:look   # look specs + negative tests + the five globe zoom cases
+pnpm build:e2e   # REQUIRED for the look specs: they need the VITE_E2E hooks
+pnpm e2e:look    # builds, then look specs + negative tests + the five globe zoom cases
 ```
+
+### Two bundles, two directories
+
+`pnpm build` writes the PRODUCTION bundle to `dist/`. `pnpm build:e2e` writes the INSTRUMENTED
+bundle to **`dist-e2e/`**, and that is what Playwright serves.
+
+This matters because both used to write `dist/`: the gate's own `pnpm build` replaced the
+instrumented bundle, and `tests/e2e/global-setup.ts` then refused the next run with
+`STALE E2E BUNDLE ... dist/ was replaced since the build`. The guard was firing on the normal
+workflow, which teaches people to ignore guards. Now:
+
+| command | writes | serves |
+|---|---|---|
+| `pnpm build` | `dist/` | nothing (deploy artefact) |
+| `pnpm build:e2e` | `dist-e2e/` | Playwright, port from `E2E_PORT` (default 4197) |
+| `pnpm e2e:look` | runs `build:e2e` first | as above |
+
+### The batched runner (`pnpm e2e`)
+
+`scripts/e2e-batched.mjs` runs ONE Playwright process per spec file, sequentially. Reasons,
+all measured rather than theoretical:
+
+1. **The single-process full run crashed.** `browserContext.newPage: Target crashed`,
+   `worker process exited unexpectedly (code=3221225794)` — 0xC0000142 is a DLL init failure.
+   Chromium exhausts itself after a long serial run under SwiftShader (`workers: 1`, dozens of
+   1280×800 captures). Splitting per file gives each one a fresh browser and a fresh server.
+2. **Per-file ports.** `playwright.config.ts` reads `E2E_PORT`; the runner allocates a distinct
+   port per file, so a listener that has not released between files cannot answer the next file's
+   requests. That is how `ERR_CONNECTION_REFUSED` appeared mid-run in an earlier attempt.
+3. **Per-file artifacts directory,** because Playwright deletes `outputDir` at startup — with a
+   shared one, file N+1 wiped file N's trace mid-teardown and produced
+   `browserContext.close: ENOENT ... traces/<id>.trace`.
+4. **Traces are OFF in the batched runner** (`--trace=off`). The config's
+   `trace: 'retain-on-failure'` regularly lost the finalise race on this machine and the resulting
+   `ENOENT` was reported as the TEST's failure — 3.2 "failed" that way while passing on its own
+   minutes earlier. Teardown must never decide a result. `e2e:raw` keeps traces.
+5. **Retry once, only on a worker crash.** `scripts/lib/e2e-batch-core.mjs` holds the decision and
+   is unit-tested: crash code retries, **assertion failures never retry** (a retried red test turns
+   a broken product green in the summary), a second crash fails.
+6. **Cleanup between files, never during one.** After each file the runner kills the process TREE it
+   started (`taskkill /PID <pid> /T /F`), waits for it to disappear, and removes orphaned
+   `ms-playwright` browsers only — the user's own Chrome is never matched.
+
+Measured on this machine (SwiftShader, 1280×800):
+
+| file | wall |
+|---|---:|
+| `boot.spec.ts` (400 kbps case dominates) | 6.3 min |
+| `look.spec.ts` (10 tests) | 2.6 min |
+| `negative.spec.ts` (9 tests) | 2.1 min |
+| `globe.spec.ts` (5 tests) | 0.9–2.2 min |
+| `harden.spec.ts` | 2.9 min |
+| `limb.spec.ts` | 0.7 min |
+| `determinism.spec.ts`, `gate-clock.spec.ts`, `history-gate.spec.ts`, `scene-gate.spec.ts` | 0.3–1.1 min each |
 
 ### The look suite (`pnpm e2e:look`)
 

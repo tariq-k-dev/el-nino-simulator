@@ -5,7 +5,8 @@ After **2B-C2B Part 1** (E0, F1, F2) and **2B-C2B-F3FIX** (G0-G4). Gate
 tests, 25 files**, 0 test hooks in the production bundle. `pnpm e2e:look` **23 passed, 0
 skipped, 0 `test.fixme`**.
 
-HEAD at this checkpoint: `602208b`.
+HEAD after **2B-C2B Part 2**: see the git log in the final report. Gate green at every commit:
+**691 unit tests, 27 files**.
 
 | spec | result | measured |
 |---|---|---|
@@ -178,23 +179,52 @@ The handoff records the full suite crashing the worker (`Target crashed`,
 `code=3221225794` = 0xC0000142, a DLL init failure). That is an environment limit of a single
 long serial run under SwiftShader, not a spec failure; F6's batched runner in Part 2 is the fix.
 
-## NOT DONE - Part 2, to be re-sent
+## Part 2
 
-1. **F4 terminator audit** - `docs/globe-look/TERMINATOR-AUDIT.md` does not exist. The 3.4
-   metric still uses the 124.02->69.43 luma span; the audit (n-L profile, true day/night
-   levels, whether the segment contains the n-L = 0 crossing, 12-azimuth scan) has not run.
-2. **F5 redefine 3.4** - VISIBLE (`A >= 25`, `Ld/max(Ln,1) >= 3`) and SOFT (`S <= 0.25`) are
-   not implemented. The `width >= 6 % R` and `16/255` step gates are still LIVE, not retired.
-   N6 / N6b do not exist.
-3. **F6 batched e2e runner** - `scripts/e2e-batched.mjs` does not exist; `pnpm e2e` is still a
-   single Playwright process.
-4. **F7 close** - `docs/globe-look/SPEC.md` has not been regenerated as the single
-   check -> definition -> threshold -> measured -> negative-test table, and `docs/E2E.md` has
-   not been updated for `dist-e2e/`.
+### F4 - the terminator audit is DONE, and it STOPPED the redefinition (`5f23b50`)
 
-So: all thirteen look checks (3.1-3.9) are green with negative evidence, but 3.4 is still
-measured with a definition the handoff already suspects is an artifact of where the profile
-segment ended.
+`docs/globe-look/TERMINATOR-AUDIT.md` exists with the full 1 px table at all twelve azimuths.
+Headline findings, all measured:
+
+- The implemented lighting is **Lambert diffuse + an emissive night texture** (`Globe.tsx:314-316`,
+  `emissiveMap` with `emissiveIntensity` 0.18), **not** a smoothstep day/night mix. There is no
+  day-side plateau, which is why a 90 %->10 % width over the whole disc reported 188 % of R.
+- True levels: **day 62.31**, **night 5.17** (the old "night mean 11.04" was a different quantity).
+- The old 3.4 segment sits between n-L - +0.15 and +0.25 — **entirely on the day side, and it does
+  NOT contain the n-L = 0 crossing**, which is at r/R **0.829**.
+- **F4(e) STOP:** at the default view the `n-L = -0.25` point is at r/R **0.957**, outside F5's own
+  0.95 applicability bound, while F5 requires the default view to be IN the evaluated set. The
+  brief's "about 0.68 R" crossing is the **orthographic** value (actual perspective: 0.829).
+  Two options are written up in the audit; both need Tariq's decision.
+
+Two geometry bugs were caught by unit tests before any number became a threshold: `sunViewAngleDeg`
+used the look direction instead of the axis to the viewer (theta read 132.8 deg = 180 - 47.2), and
+the camera basis was mirrored (symptom: at az 150 the "day" band read **darker** than its "night"
+band, 27.6 vs 60.0). A third was a test fixture that put the camera 200 units away with a 326 px
+disc. `src/lib/look/terminatorGeometry.test.ts` (12 tests) now pins the conventions.
+
+### F6 - the batched runner is DONE (`02c5b81`, `f6adfef`, `6710154`)
+
+`scripts/e2e-batched.mjs` + `scripts/lib/e2e-batch-core.mjs` (15 unit tests). One process and one
+port per spec file, per-file artifacts dir, `--trace=off`, retry once only on a worker crash,
+tree-kill then wait, cleanup strictly `ms-playwright` between files. `pnpm e2e` calls it;
+`pnpm e2e:raw` keeps the old single-process behaviour.
+
+Three real defects were found by actually running it: a shared `outputDir` (file N+1 wiped file N
+mid-teardown), a path-vs-regex filter ("No tests found"), and trace teardown deciding results.
+`docs/E2E.md` documents all three so they are not rediscovered.
+
+### Still NOT DONE
+
+1. **3.4 is still measured with its OLD definition.** F5 was not implemented because F4(e) stopped
+   it; the `width >= 6 % R` and `16/255` step gates are **still live in code**, retired only in
+   intent. `docs/globe-look/SPEC.md` says so explicitly rather than pretending otherwise.
+2. **N6 / N6b / N6c do not exist** — they belong to the blocked redefinition. The mutation and
+   profile machinery they need IS built and unit-agnostic (`tests/e2e/look/terminatorProfile.ts`,
+   including `mutateTerminator` for the offline N6/N6b mutations), so implementing them after the
+   decision is mechanical.
+3. Every other check (3.1-3.3, 3.5-3.9) is green with negative evidence, and N1, N2, N3, N4, N5,
+   N7, N8, N9, N10 all go red under their defects.
 
 ## Spec source
 
