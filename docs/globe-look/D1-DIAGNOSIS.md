@@ -92,3 +92,46 @@ capture, and it moves pixels by 329 %.
   a light sitting far from the globe; that is what those numbers look like.
 - It does not re-derive the 4.1697 → 31.3786 standalone result. That probe placed its light
   differently and is not in dispute.
+
+---
+
+# N4 — the one negative that still cannot run, and why it is NOT the same failure
+
+After D2 fixed the delivery path, N1, N2, N3, N5, N7 and N8 all go red correctly under
+their defects. **N4 does not**, and its reason is different in kind from the old N1/N3/N4
+notes.
+
+The fill light is real, correctly placed and provably live: lights 4, intensity 0.32,
+position exactly (-5.2, -2.2, -4.6), parented to the scene root, survival probe clean,
+`frameAtProbe` advancing.
+
+What it does not do is reach the pixels anywhere near W1:
+
+| quantity | measured |
+|---|---:|
+| disc pixels | 333,185 |
+| pixels moved by more than 2/255 | **3** |
+| mean signed luma delta inside the disc | +0.069 |
+| max signed luma delta anywhere in the disc | **+2.51** (at r/R 0.977, −168°) |
+| W1 raw RGB, before → after | (0,4,28) → (0,4,**31**) |
+| W1 sigma-3 blurred peak, before → after | 4.95 → 6.02 |
+| W1 ratio, control → defect | 0.976 → 0.982 (gate 1.15) |
+
+The defect lifts W1's blue channel by 3/255 over a night ocean at ~5/255 luma, and moves
+three pixels in the entire disc. That is a property of `intensity: 0.32` against a sun of
+`intensity: 3.6`, not of the harness — no injection strategy changes it.
+
+## Three ways forward, all needing a decision
+
+1. **Raise the defect intensity** (e.g. 3.2, ten times the retired fill light). Rejected for
+   this run: the prompt names 0.32, and altering a defect until a test passes is the same
+   error class as tuning a threshold to a render.
+2. **Move W1** to r/R 0.977 at −168°, where the light actually lands. This EDITS the 3.3
+   gate to fit the defect, which is explicitly forbidden.
+3. **Change 3.3's metric** from a blurred-luma ratio to a per-channel blue difference, so a
+   3/255 blue lift in a dark window is detectable. This is the honest fix, and it changes
+   the definition behind a committed threshold, so it needs sign-off before implementation.
+
+N4 therefore stays `test.fixme` with these numbers in its own comment and here. It is not
+parked because delivery is broken — delivery is measured working. It is parked because 3.3's
+ratio gate is blind at this signal level.

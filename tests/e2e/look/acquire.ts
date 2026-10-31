@@ -85,6 +85,10 @@ export interface AcquireResult {
   /** The defect-free capture taken after uninstalling. */
   restored: Bitmap;
   probe: SurvivalProbe | null;
+  /** Frames taken under the live defect via `extraCaptures`, keyed by label. */
+  extras: Record<string, Bitmap>;
+  /** Survival probe re-run AFTER the extras — proves they were defect-bearing too. */
+  probeAfterExtras: SurvivalProbe | null;
   /** Ordered step names, for the ordering contract test and failure reports. */
   steps: string[];
   /** Baseline vs restored mean luma delta inside the disc, as a fraction. */
@@ -100,6 +104,19 @@ export interface AcquireOptions {
    * `pinEmissiveBoost`/`pinsHidden`, which need a pin identity rather than a point.
    */
   pinName?: string;
+  /**
+   * Extra captures taken while the defect is STILL LIVE, between the defect capture and
+   * the uninstall. Each entry is {label, flags}.
+   *
+   * Exists because some checks need more than one frame under the same defect. 3.6, for
+   * instance, compares pins-ON against a pins-OFF pair, and both of those "off" frames
+   * must carry the defect — otherwise the delta is pins-vs-no-pins and the injected light
+   * gets attributed to the pin. Taking them after `acquire` returns would be too late:
+   * acquire uninstalls on the way out, which is exactly what the first attempt at N1 got
+   * wrong ("the injected pointLight is not in the scene").
+   */
+  extraCaptures?: Array<{ label: string; flags: LayerFlags }>;
+
   /**
    * Injected seams, so the ordering contract can be unit-tested with a mock page.
    * Production callers never pass this; `defaultOps` supplies the real ones.
@@ -257,14 +274,28 @@ const DEFECT_SOURCE = function installDefectEngine(): void {
       /*
        * Lights go to the scene ROOT and the light object is REUSED, not recreated.
        *
-       * Re-adding per frame would grow the light list without bound; recreating it
-       * would reset `intensity`/`distance` on anything that wrote to them. The only
-       * per-frame work needed is to re-assert the position, because a parent group
-       * that rotates would otherwise take the light with it.
+       * Re-adding per frame would grow the light list without bound; recreating it would
+       * reset `intensity`/`distance` on anything that wrote to them. The only per-frame
+       * work needed is to re-assert the position, because a parent group that rotates
+       * would otherwise take the light with it.
        */
       const pin = pinsWorld().find((p) => p.name === state!.pinName);
       if (pin) light.position.set(pin.core[0], pin.core[1], pin.core[2]);
-      light.intensity = Number(params.intensity ?? 2);
+
+      /*
+       * The light follows the PIN LAYER, and this is load-bearing rather than tidy.
+       *
+       * 3.6 detects light cast by pins by differencing pins-ON against pins-OFF. A defect
+       * light that is present in BOTH frames cancels out of that difference and the check
+       * correctly reports no cast — measured: 123.542 vs 123.680, 0.112% against a 3%
+       * gate, with the light provably live in both. Gating the light on the same flag the
+       * pins themselves read makes the defect mean what N1 claims it means: "when the pins
+       * are drawn, they cast amber light onto the surface around them."
+       */
+      const flags = (
+        window as unknown as { __look: { get(): { pins: boolean } } }
+      ).__look.get();
+      light.intensity = flags.pins ? Number(params.intensity ?? 2) : 0;
       if (typeof light.distance === 'number') light.distance = Number(params.distance ?? 1);
       return;
     }
@@ -462,8 +493,21 @@ const DEFECT_SOURCE = function installDefectEngine(): void {
         else {
           const f = found as { intensity?: number; atSceneRoot?: boolean; position?: number[] };
           const want = Number(params.intensity ?? (name === 'pointLight' ? 2 : 0.32));
-          if (Math.abs((f.intensity ?? 0) - want) > 1e-6) {
-            failures.push(`light intensity is ${f.intensity}, expected ${want}`);
+          const pinsOn =
+            name === 'pointLight'
+              ? (window as unknown as { __look: { get(): { pins: boolean } } }).__look.get().pins
+              : true;
+          evidence.pinsOn = pinsOn;
+          const expectIntensity = name === 'pointLight' && !pinsOn ? 0 : want;
+          if (Math.abs((f.intensity ?? 0) - expectIntensity) > 1e-6) {
+            failures.push(`light intensity is ${f.intensity}, expected ${expectIntensity} (pins on: ${pinsOn})`);
+          }
+          // While pins are OFF the light must be DARK, or it cancels out of 3.6's difference.
+          if (name === 'pointLight' && !pinsOn && (f.intensity ?? 0) !== 0) {
+            failures.push('the pin light is still lit with the pin layer off, so 3.6 would cancel it');
+          }
+          if (name === 'pointLight' && pinsOn && (f.intensity ?? 0) === 0) {
+            failures.push('the pin light is dark with the pin layer ON, so it cannot cast');
           }
           if (name === 'pointLight' && !f.atSceneRoot) failures.push('light is not parented to the scene root');
           if (name === 'pointLight' && pinName) {
@@ -634,7 +678,14 @@ export async function installDefectEngine(page: Page): Promise<void> {
  * what keeps a pixel check from being able to mutate the scene it measures.
  */
 export async function acquire(page: Page, options: AcquireOptions = {}): Promise<AcquireResult> {
-  const { flags = {}, azimuth = 0, defect = null, pinName, ops = defaultOps(page) } = options;
+  const {
+    flags = {},
+    azimuth = 0,
+    defect = null,
+    pinName,
+    extraCaptures = [],
+    ops = defaultOps(page),
+  } = options;
   const steps: string[] = [];
 
   // (1) flags first: they change what is drawn, so everything downstream keys off them.
@@ -671,6 +722,8 @@ export async function acquire(page: Page, options: AcquireOptions = {}): Promise
       restored: baseline,
       geometry: geom,
       probe: null,
+      extras: {},
+      probeAfterExtras: null,
       steps,
       restoreDriftPct: 0,
     };
@@ -685,32 +738,54 @@ export async function acquire(page: Page, options: AcquireOptions = {}): Promise
   steps.push('waitFrames');
   await ops.waitFrames(3);
 
+  /**
+   * One survival probe. Defined as a closure because it runs twice when extras are taken:
+   * once before the defect capture and once after the extras, since the extras change
+   * layers and could in principle drop the defect.
+   */
+  const probeSnapshot = async (): Promise<SurvivalProbe> => {
+    const raw = await ops.probe(defect, pinName);
+    const failures = [...raw.failures];
+    if (raw.frameAtCapture <= raw.frameBefore) {
+      failures.push(
+        `renderer.info.render.frame did not advance after install (${raw.frameBefore} -> ${raw.frameAtCapture})`,
+      );
+    }
+    return {
+      defect: defect.name,
+      alive: failures.length === 0,
+      evidence: raw.evidence,
+      failures,
+      frameBefore: raw.frameBefore,
+      frameAtCapture: raw.frameAtCapture,
+    };
+  };
+
   // (5) SURVIVAL PROBE. Without this a negative test cannot distinguish "the check is
   // blind" from "the defect never reached the pixels" — which is the exact confusion
   // that parked N1/N3/N4 on `test.fixme` with no way to tell the two apart.
   steps.push('survivalProbe');
-  const raw = await ops.probe(defect, pinName);
-  const failures = [...raw.failures];
-  if (raw.frameAtCapture <= raw.frameBefore) {
-    failures.push(
-      `renderer.info.render.frame did not advance after install (${raw.frameBefore} -> ${raw.frameAtCapture})`,
-    );
-  }
-  const probe: SurvivalProbe = {
-    defect: defect.name,
-    alive: failures.length === 0,
-    evidence: raw.evidence,
-    failures,
-    frameBefore: raw.frameBefore,
-    frameAtCapture: raw.frameAtCapture,
-  };
+  const probe = await probeSnapshot();
   if (!probe.alive) {
-    throw new Error(`defect lost before capture: ${failures.join('; ')}`);
+    throw new Error(`defect lost before capture: ${probe.failures.join('; ')}`);
   }
 
   // (6) the capture the checks will analyse.
   steps.push('captureDefect');
   const frame = await ops.capture();
+
+  // (6b) extra frames, still under the defect.
+  const extras: Record<string, Bitmap> = {};
+  if (extraCaptures.length > 0) {
+    steps.push('extraCaptures');
+    for (const extra of extraCaptures) {
+      await ops.setLayers(extra.flags);
+      extras[extra.label] = await ops.capture();
+    }
+    // The extras changed layers, so re-assert that the defect came through them.
+    steps.push('survivalProbeAfterExtras');
+  }
+  const probeAfterExtras = extraCaptures.length > 0 ? await probeSnapshot() : null;
 
   // (7) uninstall.
   steps.push('uninstallDefect');
@@ -727,6 +802,8 @@ export async function acquire(page: Page, options: AcquireOptions = {}): Promise
     restored,
     geometry: geom,
     probe,
+    extras,
+    probeAfterExtras,
     steps,
     restoreDriftPct: discDriftPct(baseline, restored, geom),
   };

@@ -19,16 +19,18 @@
 import type { Bitmap, DiscGeometry } from '../../../src/lib/look/helpers';
 import {
   annulus,
+  bilinearLuma,
   blurLuma,
+  checkMonotonicOutward,
+  collectDiscPixels,
+  insideDisc,
+  isClipped,
+  labelBlobs,
   luma,
   lumaAt,
   median,
+  monotonicStartOffset,
 } from '../../../src/lib/look/helpers';
-
-/** Luma at one pixel. Local so the signature stays `(bitmap, geometry)`. */
-function px(img: Bitmap, x: number, y: number): number {
-  return lumaAt(img, x, y);
-}
 
 /** HSL-style saturation of an RGB triple, 0 when the pixel is black. */
 export function saturationOf(r: number, g: number, b: number): number {
@@ -144,96 +146,75 @@ export function checkRingCast(
 // ------------------------------------------------------------------------- 3.2 glare ---
 
 export interface GlareCheck {
-  valid: boolean;
-  invalidReason: string;
-  pass: boolean;
   clipped: number;
   largestBlob: number;
-  discPixels: number;
-}
-
-/** 3.2 — no clipped pixels and no blob larger than 12 px inside the disc. */
-export function checkGlare(img: Bitmap, geom: DiscGeometry): GlareCheck {
-  const r = Math.round(geom.r);
-  let discPixels = 0;
-  let sum = 0;
-  const coords: number[] = [];
-  for (let y = Math.max(0, Math.floor(geom.cy - r)); y <= Math.min(img.height - 1, Math.ceil(geom.cy + r)); y += 1) {
-    for (let x = Math.max(0, Math.floor(geom.cx - r)); x <= Math.min(img.width - 1, Math.ceil(geom.cx + r)); x += 1) {
-      if ((x - geom.cx) ** 2 + (y - geom.cy) ** 2 > r * r) continue;
-      discPixels += 1;
-      const o = (y * img.width + x) * 4;
-      const l = luma(img.data[o], img.data[o + 1], img.data[o + 2]);
-      sum += l;
-      // Clipped = any channel at the ceiling, which is what a blown specular looks like.
-      if (img.data[o] >= 254 || img.data[o + 1] >= 254 || img.data[o + 2] >= 254) {
-        coords.push(y * img.width + x);
-      }
-    }
-  }
-  /*
-   * Input validity BEFORE the verdict. An all-black frame trivially has zero clipped
-   * pixels and zero blobs, so it would sail through the rule while measuring nothing —
-   * the null-vs-null failure this whole family exists to prevent.
-   */
-  const discMean = discPixels > 0 ? sum / discPixels : 0;
-  if (discPixels === 0) {
-    return { valid: false, invalidReason: 'the disc sampled no pixels', pass: false, clipped: 0, largestBlob: 0, discPixels };
-  }
-  if (discMean < 3) {
-    return {
-      valid: false,
-      invalidReason: `the disc is black (mean luma ${discMean.toFixed(2)})`,
-      pass: false,
-      clipped: 0,
-      largestBlob: 0,
-      discPixels,
-    };
-  }
-  const largestBlob = largestComponent(coords, img.width);
-  return {
-    valid: true,
-    invalidReason: '',
-    pass: coords.length === 0 && largestBlob <= 12,
-    clipped: coords.length,
-    largestBlob,
-    discPixels,
-  };
+  blobCount: number;
+  blobs: Array<{ size: number; w: number; h: number; cx: number; cy: number; rOverR: number }>;
+  /** False when the frame carries no disc content, so the numbers mean nothing. */
+  valid: boolean;
+  invalidReason: string | null;
+  pass: boolean;
 }
 
 /**
- * Largest 4-connected component size among `indices` (flat pixel indices).
+ * 3.2 — no clipped pixels and no blob larger than 12 px inside the disc.
  *
- * Iterative, and it never spreads an array into a call. `Math.min(...xs)` on an
- * all-white 1280×800 frame is one component of ~1 M points and blows the stack — measured,
- * not theorised. Everything here is loops.
+ * Ported verbatim from the committed `checkGlare` in `measure.ts` rather than imported,
+ * because `measure.ts` imports `./capture` and this module must stay pure. The arithmetic,
+ * the thresholds and the invalid-input rules are identical; the ONLY difference is that the
+ * blob labelling comes from `labelBlobs` in `src/lib/look/helpers.ts`, which is the same
+ * function `measure.ts` uses.
+ *
+ * Input validity comes FIRST. An all-black frame has zero clipped pixels and zero blobs, so
+ * it would "pass" the glare rule perfectly while measuring nothing — the null-vs-null trap
+ * the whole spec family exists to avoid. N5 feeds exactly that frame to prove the guard.
  */
-export function largestComponent(indices: number[], width: number): number {
-  if (indices.length === 0) return 0;
-  const set = new Set(indices);
-  const seen = new Set<number>();
-  let best = 0;
-  for (const start of indices) {
-    if (seen.has(start)) continue;
-    let size = 0;
-    const stack = [start];
-    seen.add(start);
-    while (stack.length > 0) {
-      const cur = stack.pop() as number;
-      size += 1;
-      const x = cur % width;
-      const neighbours = [cur - width, cur + width];
-      if (x > 0) neighbours.push(cur - 1);
-      if (x < width - 1) neighbours.push(cur + 1);
-      for (const n of neighbours) {
-        if (!set.has(n) || seen.has(n)) continue;
-        seen.add(n);
-        stack.push(n);
-      }
+export function checkGlare(img: Bitmap, geom: DiscGeometry): GlareCheck {
+  const clipped = collectDiscPixels(img, geom, (r, g, b) => isClipped(r, g, b));
+  const bright = collectDiscPixels(img, geom, (_r, _g, _b, l) => l >= 250);
+  const blobs = labelBlobs(bright.points);
+
+  let sum = 0;
+  let max = 0;
+  let n = 0;
+  const y0 = Math.max(0, Math.floor(geom.cy - geom.r));
+  const y1 = Math.min(img.height - 1, Math.ceil(geom.cy + geom.r));
+  const x0 = Math.max(0, Math.floor(geom.cx - geom.r));
+  const x1 = Math.min(img.width - 1, Math.ceil(geom.cx + geom.r));
+  for (let y = y0; y <= y1; y += 1) {
+    for (let x = x0; x <= x1; x += 1) {
+      if (!insideDisc(geom, x, y)) continue;
+      const l = lumaAt(img, x, y);
+      sum += l;
+      if (l > max) max = l;
+      n += 1;
     }
-    if (size > best) best = size;
   }
-  return best;
+  const mean = n ? sum / n : 0;
+
+  let invalidReason: string | null = null;
+  if (n === 0) invalidReason = 'no pixels inside the disc';
+  else if (max === 0) invalidReason = `disc is entirely black (mean ${mean.toFixed(2)}, max ${max})`;
+  else if (mean < 1) invalidReason = `disc mean luma ${mean.toFixed(4)} is indistinguishable from black`;
+
+  const largestBlob = blobs.length ? blobs[0].size : 0;
+  return {
+    clipped: clipped.points.length,
+    largestBlob,
+    blobCount: blobs.length,
+    blobs: blobs.slice(0, 8).map((b) => ({
+      size: b.size,
+      w: b.width,
+      h: b.height,
+      cx: Math.round(b.cx),
+      cy: Math.round(b.cy),
+      rOverR: +Math.hypot(b.cx - geom.cx, b.cy - geom.cy).toFixed(3) / geom.r,
+    })),
+    valid: invalidReason === null,
+    invalidReason,
+    // INVALID input cannot pass: a null measurement is not a clean one.
+    pass: invalidReason === null && clipped.points.length === 0 && largestBlob <= 12,
+  };
 }
 
 // --------------------------------------------------------------------- 3.1 rim ---
@@ -249,89 +230,116 @@ export interface RimCheck {
   failures: string[];
 }
 
-/** Offsets sampled outward from the fitted limb, in px. */
-const RIM_OFFSETS = [-6, 60] as const;
+/** 3.1's thresholds, in one place, so the negative test can quote them. */
+export const RIM_GATES = {
+  peakMax: 110,
+  shellMinusBackgroundMax: 2,
+  worstIncreaseOutwardMax: 1,
+  maxAbsStepBeyond2px: 16,
+} as const;
 
-/** 3.1 — soft monotonic halo, no hard edge. Pure: one bitmap, one geometry. */
-export function checkRim(img: Bitmap, geom: DiscGeometry, rays = 16, samplesPerRay = 67): RimCheck {
-  const profile: number[][] = [];
+/**
+ * 3.1 — soft monotonic halo, no hard edge. Pure: one bitmap, one geometry.
+ *
+ * This is a faithful port of `measureRim`'s arithmetic, not a re-derivation: same
+ * 16 rays, same -6..+60 px offsets, same BILINEAR sampling of the luma plane (the fitted
+ * origin is sub-pixel, and every threshold here is a per-255 step on a 1 px grid),
+ * same mean-per-offset profile, and the same helpers for the monotonic start and the
+ * check itself. Re-implementing it by eye is how the first attempt reported a control
+ * `shellMinusBackground` of 94.2 against a gate of 2 — a wrong measurement, not a defect.
+ *
+ * `outermostOpaqueOffset` is a camera input, so it is a parameter rather than being read
+ * from `__globe` here; the caller in a spec passes the value `measureRim` computes.
+ */
+export function checkRim(
+  img: Bitmap,
+  geom: DiscGeometry,
+  opts: {
+    rays?: number;
+    inside?: number;
+    outside?: number;
+    /** Outermost opaque silhouette (cloud deck / overlay) in px past the limb. */
+    outermostOpaqueOffset: number;
+    /** The atmosphere shell's silhouette, as a fraction of R_fit (1.1 by default). */
+    shellScale?: number;
+  },
+): RimCheck {
+  const { rays = 16, inside = 6, outside = 60, outermostOpaqueOffset, shellScale = 1.1 } = opts;
+  const offsets: number[] = [];
+  for (let o = -inside; o <= outside; o += 1) offsets.push(o);
+
+  const perRay: Array<Array<{ r: number; luma: number }>> = [];
   for (let i = 0; i < rays; i += 1) {
     const angle = (i / rays) * Math.PI * 2;
     const cos = Math.cos(angle);
     const sin = Math.sin(angle);
-    const row: number[] = [];
-    for (let s = 0; s < samplesPerRay; s += 1) {
-      const offset = RIM_OFFSETS[0] + (s * (RIM_OFFSETS[1] - RIM_OFFSETS[0])) / (samplesPerRay - 1);
-      const x = Math.round(geom.cx + (geom.r + offset) * cos);
-      const y = Math.round(geom.cy + (geom.r + offset) * sin);
-      if (x < 0 || y < 0 || x >= img.width || y >= img.height) {
-        row.push(Number.NaN);
-        continue;
-      }
-      row.push(px(img, x, y));
+    const profile: Array<{ r: number; luma: number }> = [];
+    for (const o of offsets) {
+      const r = geom.r + o;
+      profile.push({ r: o, luma: bilinearLuma(img, geom.cx + cos * r, geom.cy + sin * r) });
     }
-    profile.push(row);
+    perRay.push(profile);
   }
-  const meanByOffset: number[] = [];
-  for (let s = 0; s < samplesPerRay; s += 1) {
-    const vals: number[] = [];
-    for (const row of profile) {
-      const v = row[s];
-      if (Number.isFinite(v)) vals.push(v);
-    }
-    meanByOffset.push(vals.length > 0 ? vals.reduce((a, b) => a + b, 0) / vals.length : Number.NaN);
-  }
+
+  const meanByOffset = offsets.map((o, idx) => ({
+    offset: o,
+    luma: perRay.reduce((sum, p) => sum + p[idx].luma, 0) / rays,
+  }));
 
   let peak = -Infinity;
-  let peakIdx = 0;
-  for (let s = 0; s < meanByOffset.length; s += 1) {
-    if (Number.isFinite(meanByOffset[s]) && meanByOffset[s] > peak) {
-      peak = meanByOffset[s];
-      peakIdx = s;
+  let peakOffsetPx = 0;
+  for (const row of meanByOffset) {
+    if (row.luma > peak) {
+      peak = row.luma;
+      peakOffsetPx = row.offset;
     }
   }
-  const peakOffsetPx =
-    RIM_OFFSETS[0] + (peakIdx * (RIM_OFFSETS[1] - RIM_OFFSETS[0])) / (samplesPerRay - 1);
 
-  // Background = the outermost sample, which is sky on every ray.
-  const background = meanByOffset[meanByOffset.length - 1];
-  const shellMinusBackground = peak - background;
+  const peakRowOffset = meanByOffset.reduce((best, row) => (row.luma > best.luma ? row : best)).offset;
+  const startOffset = monotonicStartOffset(peakRowOffset, outermostOpaqueOffset);
+  const monotonicCheck = checkMonotonicOutward(
+    perRay.map((p, i) => ({ deg: (i / rays) * 360, points: p.map((row) => ({ offset: row.r, luma: row.luma })) })),
+    startOffset,
+  );
+  const worstIncreaseOutward =
+    monotonicCheck.worstIncrease > -Infinity ? monotonicCheck.worstIncrease : 0;
 
-  // Worst outward rise past the monotonic start offset, per ray.
-  const startOffset = 3;
-  let worstIncreaseOutward = 0;
-  for (const row of profile) {
-    for (let s = 1; s < row.length; s += 1) {
-      const offset = RIM_OFFSETS[0] + (s * (RIM_OFFSETS[1] - RIM_OFFSETS[0])) / (samplesPerRay - 1);
-      if (offset < startOffset) continue;
-      const a = row[s - 1];
-      const b = row[s];
-      if (!Number.isFinite(a) || !Number.isFinite(b)) continue;
-      worstIncreaseOutward = Math.max(worstIncreaseOutward, b - a);
-    }
-  }
+  // Value at the shell silhouette vs the far background, as an ABSOLUTE difference.
+  const shellOffset = geom.r * (shellScale - 1);
+  const shellRow = meanByOffset.reduce((best, row) =>
+    Math.abs(row.offset - shellOffset) < Math.abs(best.offset - shellOffset) ? row : best,
+  );
+  const bgRow = meanByOffset[meanByOffset.length - 1];
+  const shellMinusBackground = Math.abs(shellRow.luma - bgRow.luma);
 
   let maxAbsStepBeyond2px = 0;
-  for (let s = 1; s < meanByOffset.length; s += 1) {
-    const offset = RIM_OFFSETS[0] + (s * (RIM_OFFSETS[1] - RIM_OFFSETS[0])) / (samplesPerRay - 1);
-    if (offset < 2) continue;
-    const a = meanByOffset[s - 1];
-    const b = meanByOffset[s];
-    if (!Number.isFinite(a) || !Number.isFinite(b)) continue;
-    maxAbsStepBeyond2px = Math.max(maxAbsStepBeyond2px, Math.abs(b - a));
+  for (let i = 1; i < meanByOffset.length; i += 1) {
+    if (meanByOffset[i].offset <= 2) continue;
+    const step = Math.abs(meanByOffset[i].luma - meanByOffset[i - 1].luma);
+    if (step > maxAbsStepBeyond2px) maxAbsStepBeyond2px = step;
   }
 
   const failures: string[] = [];
-  if (!(peak <= 110)) failures.push(`halo peak ${peak.toFixed(1)} exceeds 110/255`);
-  if (!(peakOffsetPx >= 0)) failures.push(`halo peak at ${peakOffsetPx.toFixed(1)}px is inside the limb`);
-  if (!(shellMinusBackground <= 2)) {
-    failures.push(`shell minus background ${shellMinusBackground.toFixed(2)} exceeds 2/255`);
+  if (!(peak <= RIM_GATES.peakMax)) {
+    failures.push(`halo peak ${peak.toFixed(1)} exceeds ${RIM_GATES.peakMax}/255`);
   }
-  if (!(worstIncreaseOutward <= 1)) {
-    failures.push(`worst outward rise ${worstIncreaseOutward.toFixed(2)} exceeds 1/255`);
+  if (!(peakOffsetPx >= 0)) {
+    failures.push(`halo peak at ${peakOffsetPx}px is inside the limb`);
   }
-  if (!(maxAbsStepBeyond2px <= 16)) {
-    failures.push(`max abs step ${maxAbsStepBeyond2px.toFixed(2)} exceeds 16/255`);
+  if (!(shellMinusBackground <= RIM_GATES.shellMinusBackgroundMax)) {
+    failures.push(
+      `shell minus background ${shellMinusBackground.toFixed(2)} exceeds ${RIM_GATES.shellMinusBackgroundMax}/255`,
+    );
+  }
+  if (!(worstIncreaseOutward <= RIM_GATES.worstIncreaseOutwardMax)) {
+    failures.push(
+      `worst outward rise ${worstIncreaseOutward.toFixed(2)} exceeds ${RIM_GATES.worstIncreaseOutwardMax}/255`,
+    );
+  }
+  if (!(maxAbsStepBeyond2px <= RIM_GATES.maxAbsStepBeyond2px)) {
+    failures.push(
+      `max abs step ${maxAbsStepBeyond2px.toFixed(2)} exceeds ${RIM_GATES.maxAbsStepBeyond2px}/255`,
+    );
   }
 
   return {
