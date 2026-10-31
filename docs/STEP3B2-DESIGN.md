@@ -200,9 +200,64 @@ Interpolation (a second pure export, `arcStep`):
 | U9 | drawer opened during the fly-to → final pin at the NEW free-rect centre ≤ 0.75 px |
 | U10 | the 15 rects of 3A step C unchanged; only the Reset control adds a rect |
 
-## 8. Contradiction check
+## 8. Contradiction check — TWO CONTRADICTIONS FOUND. STOPPED HERE.
 
-The audit does **not** contradict items 5 or 6 of the prompt. The only surprise is that the polar
-limits are the OrbitControls defaults and therefore clamp nothing (§2), which is why every analytic
-expectation in step E reduces to the unclamped case while the clamp code and its unit tests exist for
-the data-driven future. Proceeding.
+The polar limits are the OrbitControls defaults and therefore clamp nothing (§2) — that is a
+non-contradiction and every analytic expectation in step E would reduce to the unclamped case.
+But the audit found **two contradictions between items 5/6 and the rest of the prompt**. Per the
+prompt's own rule ("If the audit contradicts items 5 or 6, write the contradiction and STOP") the
+step stopped at the end of B. Nothing in C-G was attempted.
+
+### C1 — constant distance vs U2's 1 px containment (unimplementable, quantified)
+
+Item 6 says the live fly-to "writes direction only (never the distance)" and S8 forbids the distance
+dipping at all. The distance at select time is `d_fit` for the rect as it was BEFORE the drawer
+opened. The drawer widens the right inset 316 → 418, which narrows the free rect and raises the
+containment distance. With the distance frozen, the silhouette radius cannot shrink to the new
+`rMax`:
+
+| viewport | free (cards) | free (drawer) | d_fit closed | d_contain open | disc px at frozen d | new rMax | **overflow, per side** |
+|---|---|---|---|---|---|---:|---:|
+| 1440x900 | 763.16 x 781.75 | 661.16 x 781.75 | 3.7786 | 4.3572 | 357.58 | 306.58 | **51.00 px** |
+| 1280x720 | 603.16 x 601.75 | 501.16 x 601.75 | 3.8935 | 4.6943 | 276.88 | 226.58 | **50.30 px** |
+| 1280x800 | 603.16 x 681.75 | 501.16 x 681.75 | 4.2828 | 5.1885 → clamped 5.0 | 277.58 | 226.58 | **51.00 px** |
+
+U2 requires that overflow to be **≤ 1 px**. It is 50-51 px, i.e. 50x the bound, at every spec
+viewport. The only ways to satisfy U2 are to let the live fly-to increase the distance to the new
+`d_contain` — which U3 (`select without zoom leaves the distance unchanged within 0.001`) forbids —
+or to shrink the disc by changing `re`/`dMax`, which changes the shipped look. So U2 and
+U3+item 6 cannot both hold. Note that U9 (drawer opened during the fly-to, pin at the NEW free-rect
+centre within 0.75 px) is satisfiable and independent: the *pin* can be centred while the *globe*
+overflows the rect. U2 as written is about the silhouette, not the pin.
+
+### C2 — `frame.spec.ts:606` asserts the exact behaviour item 5 removes (S2 blocks the fix)
+
+`frame.spec.ts` F8 opens the drawer through the California card, which selects the region and starts
+the fly-to, then asserts:
+
+- `frame.spec.ts:136-140` — `aim` is `project(__globe.target())`, i.e. the projection of
+  `controls.target`;
+- `frame.spec.ts:604-606` — `expect(aimMoved, …)` where `aimMoved = |controls.target|`, asserted
+  `> 0.1` R, with the comment "the aim really did leave the origin, so switching the oracle was
+  necessary rather than a convenient way to pass".
+
+Item 5 requires `controls.target` to **stay at the origin** in live mode. Under the face-pin policy
+`|controls.target|` is exactly `0.000`, so that assertion is a hard red in `frame.spec.ts` — an
+existing spec file, which S2 forbids editing and which step C's brief requires to stay "green and
+unedited". The same case's other two assertions (`errX`/`errY` < 0.75 px) would still pass, because
+the globe centre stays on the free centre; and `frame-director.spec.ts:203` (`|target| < 0.05` after a
+close) would still pass. So it is exactly one assertion — but it is an assertion whose stated purpose
+is to certify the aim-at-pin behaviour that 3B2 replaces.
+
+Resolution requires a decision the prompt does not supply: either F8's `aimMoved` assertion is
+retired/relaxed under a named waiver (an edit to an existing spec, S2), or live mode keeps
+`controls.target` on the pin (which reinstates the +462 px overflow item 5 exists to remove).
+
+### What was done before stopping
+
+Committed and green: P0 (prompt + `scripts/tmp-contain.mjs` removal, 2 commits), A (this memo),
+B (`src/camera/facing.ts`, `src/camera/easing.ts`, 32 new unit tests, gate green at **880 unit tests /
+39 files**, `pnpm build` clean). The pure core is independent of both contradictions: `facingPose`
+and `arcStep` are correct geometry whatever the director policy turns out to be, and C2 concerns the
+director, not this module.
+
