@@ -55,6 +55,18 @@ function selectSpecs(filters) {
  * MSYS mangles `//PID` into a literal path and taskkill silently does nothing, which is the
  * handoff's documented gotcha. `spawnSync` with an argv array avoids the shell entirely.
  */
+/** Wait until `pid` is gone, so the next file cannot race a dying process. */
+function waitForExit(pid, timeoutMs = 15_000) {
+  if (!pid || process.platform !== 'win32') return;
+  const started = Date.now();
+  while (Date.now() - started < timeoutMs) {
+    const q = spawnSync('tasklist', ['/FI', `PID eq ${pid}`, '/NH'], { encoding: 'utf8' });
+    const stillThere = q.stdout && new RegExp(`^\\D*${pid}\\b`, 'm').test(q.stdout) && !/No tasks/i.test(q.stdout);
+    if (!stillThere) return;
+    spawnSync(process.execPath, ['-e', 'setTimeout(()=>{},150)']);
+  }
+}
+
 function killTree(pid) {
   if (!pid) return;
   if (process.platform === 'win32') {
@@ -102,7 +114,25 @@ function runOnce(file, port) {
        * Windows because the separator in the pattern is `/` and in the file is `\\`. A unique
        * filename is unambiguous and cannot collide, since spec names are distinct.
        */
-      [playwrightBin, 'test', file, '--reporter=list'],
+      [
+        playwrightBin,
+        'test',
+        file,
+        '--reporter=list',
+        /*
+         * A PRIVATE artifacts directory per file, and this is load-bearing.
+         *
+         * Playwright deletes `outputDir` when a run starts. With the config's shared
+         * `.cache/e2e-results`, the next file's process wiped the directory while the previous
+         * file's Chromium was still flushing its trace, and the symptom was
+         * `browserContext.close: ENOENT ... traces/<id>.trace` on that file's FIRST test — after
+         * which the server had been torn down and every later test in the file got
+         * ERR_CONNECTION_REFUSED. Two failures that looked like product bugs and were one
+         * shared-directory race.
+         */
+        '--output',
+        path.join('.cache', 'e2e-results', file.replace('.spec.ts', '')),
+      ],
       {
         cwd: root,
         env: {
@@ -129,8 +159,14 @@ function runOnce(file, port) {
     });
 
     child.on('close', (code, signal) => {
-      // The child is gone, but its server may not be. Kill the tree while the pid is still valid.
+      /*
+       * The child is gone, but its server may not be, and its trace writer may still be flushing.
+       * Kill the tree while the pid is valid, then WAIT for the tree to actually disappear: the
+       * next file deletes and recreates its own artifacts dir, and a lingering process from this
+       * one is what produced the trace ENOENT.
+       */
       killTree(child.pid);
+      waitForExit(child.pid);
       resolve({
         file,
         exitCode: signal ? null : code,
