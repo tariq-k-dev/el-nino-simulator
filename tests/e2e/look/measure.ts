@@ -336,7 +336,14 @@ export async function measureGlare(
 
 export interface SpecularMaskResult {
   lookup(x: number, y: number): boolean;
-  summary: { pixels: number; threshold: string; dilationPx: number; bbox: [number, number, number, number] | null };
+  summary: {
+    pixels: number;
+    threshold: string;
+    dilationPx: number;
+    bbox: [number, number, number, number] | null;
+    /** The specular state found at acquisition — proof that nothing was forced. */
+    measuredWith: { intensity: number | null; overlay: boolean };
+  };
 }
 
 /**
@@ -354,26 +361,51 @@ export async function measureSpecularMask(
   page: Page,
   geom: DiscGeometry,
 ): Promise<SpecularMaskResult> {
-  // ON: the approved look's specular sources (material lobe + overlay).
+  /*
+   * AS SHIPPED, not forced.
+   *
+   * This used to call `specularIntensity(0.18)` before its "on" capture, which was correct
+   * while 0.18 was the shipped value and silently wrong after 38aa091 set it to 0. The
+   * consequence was measured: the "on" frame carried a material specular term the product
+   * does not render, so the mask described the PRE-FIX glint — 105,313 px, wide enough to
+   * excuse regions the shipped overlay never lights.
+   *
+   * The definition now has no override in it:
+   *
+   *     mask = |luma(F_as_shipped) - luma(F_all_specular_off)| > 3, dilated 8 px
+   *
+   * `F_as_shipped` is read, not written: whatever `__look.specularIntensity()` reports at
+   * acquisition is the state captured, and the report says so. `F_all_specular_off` is that
+   * same state with the overlay flag false and the intensity at 0.
+   *
+   * The mask is computed BEFORE any defect is installed and the committed state is restored
+   * afterwards, so a negative test can never widen the mask it is about to be judged by.
+   */
+  const shipped = await page.evaluate(() => ({
+    intensity: window.__look!.specularIntensity(),
+    overlay: Boolean(window.__globe!.lookFlags().specular),
+  }));
+
   await setLayers(page, { stars: false, pins: false, rings: false });
-  await page.evaluate(() => {
-    window.__look!.specularIntensity(0.18);
-    window.__globe!.setLookFlags({ specular: true });
-  });
+
+  // ON: the look exactly as found — no value is set here.
   const on = await capture(page);
 
-  // OFF: both specular paths disabled.
+  // OFF: both specular paths disabled, same flags, same frozen clock.
   await page.evaluate(() => {
     window.__look!.specularIntensity(0);
     window.__globe!.setLookFlags({ specular: false });
   });
   const off = await capture(page);
 
-  // Restore the committed look before returning.
-  await page.evaluate(() => {
-    window.__look!.specularIntensity(0);
-    window.__globe!.setLookFlags({ specular: true });
-  });
+  // Restore the state that was found, not a hardcoded guess.
+  await page.evaluate(
+    (state: { intensity: number | null; overlay: boolean }) => {
+      window.__look!.specularIntensity(state.intensity ?? 0);
+      window.__globe!.setLookFlags({ specular: state.overlay });
+    },
+    shipped,
+  );
   await setLayers(page, ALL_LAYERS);
   await twoFrames(page);
 
@@ -398,6 +430,8 @@ export async function measureSpecularMask(
       threshold: '3/255',
       dilationPx: 8,
       bbox: m.pixels ? [x0, y0, x1, y1] : null,
+      /** The state the mask was measured in, so a report can prove no override was applied. */
+      measuredWith: shipped,
     },
   };
 }
@@ -423,7 +457,7 @@ export interface BlueCircleResult {
     excluded: boolean;
     pass: boolean;
   }>;
-  glintMask: { pixels: number; threshold: string; dilationPx: number; bbox: [number, number, number, number] | null };
+  glintMask: SpecularMaskResult['summary'];
 }
 
 /**

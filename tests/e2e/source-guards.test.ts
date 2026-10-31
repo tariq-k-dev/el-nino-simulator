@@ -137,6 +137,78 @@ describe('no silently skipped tests', () => {
   });
 });
 
+// --------------------------------------------------- no forced specular override ---
+
+describe('the specular mask measures the shipped state', () => {
+  /**
+   * `measureSpecularMask` must not FORCE a specular intensity.
+   *
+   * It did: `window.__look.specularIntensity(0.18)` before the "on" capture. That was right
+   * while 0.18 was shipped and silently wrong once 38aa091 set it to 0 — the mask then
+   * described a material lobe the product does not render (105,313 px, wide enough to excuse
+   * regions the shipped overlay never lights). A numeric argument is the whole defect, so the
+   * guard is `specularIntensity(<number>)` appearing anywhere inside the function.
+   *
+   * Restoring the state that was FOUND is still required: a sentinel that leaves the scene on a
+   * different look poisons whatever runs next.
+   */
+  it('measureSpecularMask never sets a numeric specularIntensity', async () => {
+    const src = await readFile(path.join(REPO, 'tests/e2e/look/measure.ts'), 'utf8');
+    const start = src.indexOf('export async function measureSpecularMask(');
+    expect(start, 'measureSpecularMask is missing').toBeGreaterThan(-1);
+    // The function ends at the next top-level divider comment.
+    const end = src.indexOf('// ------------------------------------------------------- 3.3 blue-circle guard');
+    expect(end).toBeGreaterThan(start);
+    /*
+     * Comments are stripped first: the doc block legitimately NAMES the old override to explain
+     * why it was wrong, and a guard that cannot tell prose from code would forbid documenting
+     * the bug it exists to prevent.
+     */
+    const body = stripComments(src.slice(start, end));
+
+    /*
+     * `specularIntensity(0)` is REQUIRED — it is the "off" half of the difference. What is
+     * forbidden is a NON-ZERO literal, which can only be a forced "on" state.
+     */
+    const forced = [...body.matchAll(/specularIntensity\(\s*(\d*\.?\d+)\s*\)/g)]
+      .map((m) => Number(m[1]))
+      .filter((v) => v !== 0);
+    expect(
+      forced,
+      `measureSpecularMask forces a specular intensity: ${forced.join(', ')}. ` +
+        `It must capture the shipped state as found — the only permitted argument is a variable.`,
+    ).toEqual([]);
+
+    // And it must read the state rather than assume it.
+    expect(body, 'the mask no longer reads the live specular state').toContain('specularIntensity()');
+    // And it must put it back.
+    expect(body, 'the mask does not restore the state it found').toContain('specularIntensity(state.intensity');
+  });
+
+  it('no test forces the pre-fix 0.18 look outside a negative defect', async () => {
+    /*
+     * 0.18 is the PRE-FIX value. It may appear as a negative defect's restored state (N4's
+     * whole point is reproducing the old clipping), but it must never be presented as the
+     * shipped look — and the glint sentinel must never set it, or the sentinel would guard a
+     * render the product does not produce.
+     */
+    const offenders: string[] = [];
+    for (const { abs, rel } of await sources()) {
+      if (!rel.startsWith('tests/') && !rel.startsWith('src/')) continue;
+      // The defect engine owns the restored value on purpose.
+      if (rel === 'tests/e2e/look/acquire.ts') continue;
+      // Pure docs of the rule's constants.
+      if (rel === 'tests/e2e/source-guards.test.ts') continue;
+      const src = stripComments(await readFile(abs, 'utf8'));
+      if (/specularIntensity\(\s*0\.18\s*\)/.test(src)) offenders.push(rel);
+    }
+    expect(
+      offenders,
+      `These files force specularIntensity(0.18), the pre-fix look:\n  ${offenders.join('\n  ')}`,
+    ).toEqual([]);
+  });
+});
+
 // ------------------------------------------------------------- spread guards ---
 
 /**
