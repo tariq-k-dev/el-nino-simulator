@@ -121,15 +121,25 @@ export function computeFrame(input: FrameInput): Frame {
   const hasInner = innerW > 0 && innerH > 0;
 
   /*
-   * The free rectangle: the inner rectangle shrunk by the padding, which is the rectangle the
-   * globe's silhouette may occupy. Reported, and used for the centre — the padding is symmetric,
-   * so shrinking does not move the centre, and `dx`/`dy` are therefore the same with or without
-   * it. That is deliberate: the offset is a property of the LAYOUT, and must not change because
-   * the fit's padding was tuned.
+   * `free` is the rectangle the INSETS leave — padding is NOT subtracted from it.
+   *
+   * That is the prompt's own definition (`r_max = 0.5 * min(freeW, freeH) - padding`) and it is the
+   * one that keeps the two reported numbers independent: `free` answers "what did the layout
+   * leave?", `rMax` answers "how big may the disc be?", and the difference between them is exactly
+   * the padding. Folding the padding into `free` would make `rMax` equal half of `free` and there
+   * would be nowhere left to see the margin that F4 measures.
    */
-  const freeW = Math.max(0, innerW - 2 * padding);
-  const freeH = Math.max(0, innerH - 2 * padding);
+  const freeW = innerW;
+  const freeH = innerH;
 
+  /*
+   * The centre of the free rectangle.
+   *
+   * Written as `inset + half` rather than `(inset + W - other) / 2` so it is obvious that moving a
+   * panel on ONE side moves the centre by HALF of that panel's thickness: a full-width header of
+   * 118.25 px lowers the centre by 59.125, which is the number every viewport below reports for
+   * `dy`.
+   */
   const centreX = insets.left + innerW / 2;
   const centreY = insets.top + innerH / 2;
 
@@ -137,23 +147,19 @@ export function computeFrame(input: FrameInput): Frame {
   const dy = centreY - H / 2;
 
   /*
-   * The disc is a circle in a rectangle, so the smaller side decides. Subtracting the padding from
-   * BOTH sides here (rather than only from one) is the whole reason `free` is built above with
-   * `innerW - 2 * padding`: at 1280x800 that is 277.578 px, where using the inner rectangle's own
-   * half-width would silently budget 301.578 and push the disc 24 px past the padding on two
-   * sides. The two differ by exactly `padding`, which is the kind of error that reads as "nearly
-   * right" in a table.
+   * The disc is a circle in a rectangle, so the smaller side decides, and the padding comes off
+   * once — it is the fit's margin, applied from the inside of the free rectangle.
    */
-  const rMax = 0.5 * Math.min(freeW, freeH);
+  const rMax = 0.5 * Math.min(freeW, freeH) - padding;
 
   /*
    * Degenerate: nothing to centre in, or no room left for a disc once the padding is taken.
    *
-   * Reported as a flag AND as the honest numbers (zero offset, `dTarget = d0`), because a
-   * consumer that silently clamped would hide that the layout no longer fits — the same reasoning
-   * as `Insets.degenerate`.
+   * Reported as a flag AND as the honest numbers (zero offset, `dTarget = d0`), because a consumer
+   * that silently clamped would hide that the layout no longer fits — the same reasoning as
+   * `Insets.degenerate`.
    */
-  const degenerate = !hasInner || !(freeW > 0) || !(freeH > 0);
+  const degenerate = !hasInner || !(rMax > 0);
 
   /*
    * Focal length in px, from the VERTICAL fov and the FULL viewport height.

@@ -55,29 +55,32 @@ describe('computeFrame — offset', () => {
     const f = frameFor(1280, 800, NO_INSETS);
     expect(f.dx).toBe(0);
     expect(f.dy).toBe(0);
-    // free = the viewport minus padding on all four sides, so its centre IS the viewport centre.
-    expect(f.free.x).toBe(FRAME_PADDING_PX);
-    expect(f.free.y).toBe(FRAME_PADDING_PX);
+    // With no insets, `free` IS the viewport, so its centre is the viewport centre.
+    expect(f.free).toEqual({ x: 0, y: 0, w: 1280, h: 800 });
     expect(f.free.x + f.free.w / 2).toBeCloseTo(640, 9);
     expect(f.free.y + f.free.h / 2).toBeCloseTo(400, 9);
+    // …and rMax is the free height's half minus the padding, which is the fit's margin.
+    expect(f.rMax).toBeCloseTo(400 - FRAME_PADDING_PX, 9);
   });
 
   it('reproduces the Step 3A free centre at 1440x900 by hand arithmetic', () => {
     /*
      * Hand arithmetic, from the measured insets:
      *
-     *   freeW = 1440 - 360.844 - 316 - 48 = 715.156 ... no: padding is applied once per side
-     *   freeW = 1440 - 360.844 - 316 - 2*24 = 715.156
-     *   freeH =  900 - 118.25  -   0 - 2*24 = 733.750
-     *   cx    = 360.844 + 715.156/2 + 24   = 742.422
-     *   cy    = 118.25  + 733.750/2 + 24   = 509.125
+     *   freeW = 1440 - 360.844 - 316 = 763.156
+     *   freeH =  900 - 118.25   -   0 = 781.750
+     *   cx    = 360.844 + 763.156/2   = 742.422
+     *   cy    = 118.25  + 781.750/2   = 509.125
+     *
+     * The centre is independent of the fit's padding — the padding is symmetric, so it cannot move
+     * it, and `rMax` is where the padding shows up (357.578, not 390.875).
      *
      * which is the figure step C of 3A shipped (`docs/STEP3-STATUS.md`), so the two halves of the
      * work agree on where the free rectangle is rather than merely both being self-consistent.
      */
     const f = frameFor(1440, 900, { left: 360.844, right: 316, top: 118.25, bottom: 0 });
-    expect(f.free.w).toBeCloseTo(715.156, 6);
-    expect(f.free.h).toBeCloseTo(733.75, 6);
+    expect(f.free.w).toBeCloseTo(763.156, 6);
+    expect(f.free.h).toBeCloseTo(781.75, 6);
     expect(f.free.x + f.free.w / 2).toBeCloseTo(742.422, 6);
     expect(f.free.y + f.free.h / 2).toBeCloseTo(509.125, 6);
     // dx/dy are measured from the VIEWPORT centre, which is the whole point of the sign.
@@ -88,7 +91,7 @@ describe('computeFrame — offset', () => {
   it('a left-only inset moves the centre right by exactly half of it', () => {
     // One-sided insets are the cleanest check that this is a centre calculation and not a shift.
     const f = frameFor(1000, 800, { left: 200, right: 0, top: 0, bottom: 0 });
-    // freeW = 1000 - 200 - 48 = 752; centre = 200 + 376 + 24 = 600 = viewport centre + 100.
+    // freeW = 1000 - 200 = 800; centre = 200 + 400 = 600 = viewport centre + 100.
     expect(f.dx).toBeCloseTo(100, 9);
     expect(f.dy).toBeCloseTo(0, 9);
   });
@@ -111,7 +114,7 @@ describe('computeFrame — fit distance', () => {
   it('zooms out for a small free rectangle, by the tangent-length formula', () => {
     const f = frameFor(1024, 768, LIVE_INSETS);
     const focal = 768 / 2 / Math.tan((FOV * Math.PI) / 180 / 2);
-    const rMax = 0.5 * Math.min(1024 - 360.844 - 316 - 48, 768 - 118.3 - 0 - 48);
+    const rMax = 0.5 * Math.min(1024 - 360.844 - 316, 768 - 118.3 - 0) - FRAME_PADDING_PX;
     expect(f.rMax).toBeCloseTo(rMax, 9);
     expect(f.dContain).toBeCloseTo(Math.sqrt(RE * RE + ((focal * RE) / rMax) ** 2), 9);
     expect(f.dTarget).toBeGreaterThan(D0);
@@ -159,10 +162,11 @@ describe('computeFrame — degenerate', () => {
     expect(f.rMax).toBe(0);
   });
 
-  it('flags a free rectangle smaller than the padding', () => {
-    // 800 wide with 380+380 of insets leaves 40 px, less than the 48 px of padding.
+  it('flags a free rectangle smaller than twice the padding', () => {
+    // 800 wide with 380+380 of insets leaves 40 px, so 20 - 24 is negative: no room for a disc.
     const f = frameFor(800, 800, { left: 380, right: 380, top: 0, bottom: 0 });
     expect(f.degenerate).toBe(true);
+    expect(f.rMax).toBe(0);
     expect(f.dTarget).toBe(D0);
   });
 
@@ -233,6 +237,9 @@ describe('computeFrame — numeric oracle (real camera, real projection)', () =>
        */
       const freeCx = frame.free.x + frame.free.w / 2;
       const freeCy = frame.free.y + frame.free.h / 2;
+      // The free rectangle IS the inset rectangle, so this is also the inset rectangle's centre.
+      expect(frame.free.x).toBeCloseTo(insets.left, 9);
+      expect(frame.free.y).toBeCloseTo(insets.top, 9);
 
       expect(centrePx.x).toBeCloseTo(freeCx, 2); // 0.01 px
       expect(centrePx.y).toBeCloseTo(freeCy, 2);
