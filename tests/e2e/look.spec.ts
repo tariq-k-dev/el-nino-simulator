@@ -25,6 +25,9 @@ import {
 } from './look/measure';
 import { openGlobe, capture, setLayers, settleAt } from './look/capture';
 import { requireValidPins } from './look/pinValidity';
+import { acquireGlintFrames } from './look/glintAcquire';
+import { measureGlint } from './look/glint';
+import { GLINT_GATE, GLINT_RECORDED } from './look/glintConstants';
 
 const AZIMUTHS = Array.from({ length: 12 }, (_, i) => i * 30);
 
@@ -478,6 +481,54 @@ test.describe('globe look', () => {
           `(max(3%, 1.5 x noise ${r.noisePct}%)) — the pin is casting light on the surface`,
       ).toBe(true);
     }
+  });
+
+  // ------------------------------------------------------- 3.9 glint -----
+  test('3.9 glint: the accepted attenuated look, as shipped', async ({ page }) => {
+    /*
+     * REGRESSION SENTINEL for the approved glint. Every other look property has a negative test;
+     * this one had a verdict and no guard, so a change to the overlay strength, the bloom or the
+     * tone mapping could halve the glint with the whole suite green.
+     *
+     * The metric is a DIFFERENCE IMAGE — luma(as shipped) minus luma(all specular off) — because
+     * peak-luma-in-a-window counts cloud tops (~210) and once reported "92% retained peak" for a
+     * build that had lost half its specular.
+     *
+     * `acquireGlintFrames` calls `assertShippedLook` before capturing: the first attempt at this
+     * measurement forced `specularIntensity(0.18)`, the PRE-FIX value, and reported 164.07/15469
+     * against the recorded 88.52/9594. That guard is why the reproduction below is exact.
+     */
+    const frames = await acquireGlintFrames(page);
+    const stats = measureGlint(frames.current, frames.off, frames.geometry);
+
+    console.log(`[glint] conditions ${JSON.stringify(frames.conditions)}`);
+    console.log(
+      `[glint] max=${stats.max.toFixed(2)} (gate ${GLINT_GATE.maxMin}..${GLINT_GATE.maxMax}) ` +
+        `area6=${stats.area6} (gate ${GLINT_GATE.area6Min}..${GLINT_GATE.area6Max}) ` +
+        `centroid=${JSON.stringify(stats.centroid)} r/R=${stats.centroidROverR?.toFixed(4)} ` +
+        `maxAt=${JSON.stringify(stats.maxAt)} (recorded ${GLINT_RECORDED.max}/${GLINT_RECORDED.area6})`,
+    );
+    await writeResult('glint', { conditions: frames.conditions, stats });
+
+    // Inputs before verdicts: a null measurement must not read as a clean one.
+    expect(stats.valid, `the frames cannot support a comparison: ${stats.invalidReason}`).toBe(true);
+    expect(frames.geometry.r, 'no disc was found').toBeGreaterThan(0);
+    expect(Number.isFinite(stats.max), 'max(D) is NaN').toBe(true);
+
+    expect(
+      stats.max,
+      `glint peak ${stats.max.toFixed(2)} is outside [${GLINT_GATE.maxMin}, ${GLINT_GATE.maxMax}] — ` +
+        `recorded ${GLINT_RECORDED.max}. A fall means the glint was lost; a rise means the clipped ` +
+        `blowout the attenuation removed is back.`,
+    ).toBeGreaterThanOrEqual(GLINT_GATE.maxMin);
+    expect(stats.max).toBeLessThanOrEqual(GLINT_GATE.maxMax);
+
+    expect(
+      stats.area6,
+      `glint area6 ${stats.area6} is outside [${GLINT_GATE.area6Min}, ${GLINT_GATE.area6Max}] — ` +
+        `recorded ${GLINT_RECORDED.area6}`,
+    ).toBeGreaterThanOrEqual(GLINT_GATE.area6Min);
+    expect(stats.area6).toBeLessThanOrEqual(GLINT_GATE.area6Max);
   });
 
   // ------------------------------------------------------- 3.7 console -----

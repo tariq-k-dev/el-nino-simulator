@@ -41,6 +41,9 @@ import { openGlobe, capture, setLayers, settleAt, cameraGeometry } from './look/
 import { acquire, installDefectEngine, type LayerFlags } from './look/acquire';
 import { checkGlare, checkLocalPeak, checkPins, checkRim, checkRingCast } from './look/analysis';
 import { requireValidPins } from './look/pinValidity';
+import { acquireGlintFrames } from './look/glintAcquire';
+import { measureGlint } from './look/glint';
+import { GLINT_GATE, GLINT_VIEW } from './look/glintConstants';
 import type { Bitmap, DiscGeometry } from '../../src/lib/look/helpers';
 import { focalPxFromFov, shellSilhouetteOffsetPx } from '../../src/lib/look/helpers';
 import { SHELLS } from '../../src/scene/constants';
@@ -470,6 +473,119 @@ test.describe('negative tests: each check fails when its defect is present', () 
         `The ~3/255 blue lift is invisible to a luma ratio gate, which is why the faithful defect restores the material.`,
     );
     await writeResult('negative-n4-light-only', { control: w1Control, lightOnly: w1LightOnly });
+  });
+
+  // --------------------------------------------------------------------- N9 ---
+  test('N9: the glint sentinel FAILS when the specular overlay is off', async ({ page }) => {
+    /*
+     * The sentinel's own signal, at the smallest possible change: turn the overlay off and the
+     * shipped render IS the "all specular off" frame, so the difference collapses to a rounding
+     * residual. If the sentinel still passed, it would be measuring something other than glint.
+     */
+    const control = await acquireGlintFrames(page);
+    const controlStats = measureGlint(control.current, control.off, control.geometry);
+    expect(controlStats.valid, `control frames invalid: ${controlStats.invalidReason}`).toBe(true);
+    expect(
+      controlStats.max,
+      `control glint peak ${controlStats.max.toFixed(2)} already below the gate`,
+    ).toBeGreaterThanOrEqual(GLINT_GATE.maxMin);
+
+    /*
+     * Defect: overlay off, material still at the shipped si 0. Both "frames" are then the same
+     * render, which is exactly what N9 claims the sentinel must notice.
+     */
+    await settleAt(page, GLINT_VIEW.azimuth);
+    await setLayers(page, { stars: false, pins: false, rings: false, clouds: true });
+    await page.evaluate(() => {
+      window.__look!.specularIntensity(0);
+      window.__globe!.setLookFlags({ specular: false });
+    });
+    const withOverlayOff = await capture(page);
+    const alsoOff = await capture(page);
+
+    const defectStats = measureGlint(withOverlayOff, alsoOff, control.geometry);
+
+    console.log(
+      `[N9] control max=${controlStats.max.toFixed(2)} area6=${controlStats.area6} | ` +
+        `defect max=${defectStats.valid ? defectStats.max.toFixed(2) : 'INVALID'} ` +
+        `area6=${defectStats.area6} valid=${defectStats.valid} reason=${defectStats.invalidReason}`,
+    );
+    await writeResult('negative-n9', { control: controlStats, defect: defectStats });
+
+    /*
+     * With the overlay off there is nothing left to difference, so the honest outcome is an
+     * INVALID measurement (max 0 => "the toggle did not take effect"). Either way the sentinel
+     * must not pass: an invalid input cannot satisfy a numeric window.
+     */
+    const passed = defectStats.valid && defectStats.max >= GLINT_GATE.maxMin && defectStats.max <= GLINT_GATE.maxMax;
+    expect(passed, 'the 3.9 sentinel PASSED with the overlay off, so it is not measuring glint').toBe(false);
+    expect(defectStats.max, 'the overlay-off difference must collapse, not stay near 88').toBeLessThan(
+      GLINT_GATE.maxMin,
+    );
+
+    // Restore the shipped overlay for whatever runs next.
+    await page.evaluate(() => window.__globe!.setLookFlags({ specular: true }));
+  });
+
+  // -------------------------------------------------------------------- N10 ---
+  test('N10: the glint sentinel FAILS when si 1.0 and the roughness floor are restored', async ({
+    page,
+  }) => {
+    /*
+     * The pre-fix blowout, reproduced: `specularIntensity` 1.0 with the roughness map detached
+     * (floor 0 => water is a mirror). That is the state 38aa091 removed because it clipped, and it
+     * is also what the sentinel's UPPER bound exists for — the attenuation must not silently
+     * revert.
+     *
+     * The mask/defect is installed through the same page-side engine every other negative uses, so
+     * it is torn down by `afterEach` and never exists in source.
+     */
+    const control = await acquireGlintFrames(page);
+    const controlStats = measureGlint(control.current, control.off, control.geometry);
+    expect(controlStats.valid, `control frames invalid: ${controlStats.invalidReason}`).toBe(true);
+    expect(controlStats.max).toBeGreaterThanOrEqual(GLINT_GATE.maxMin);
+    expect(controlStats.max, `control already over the upper bound: ${controlStats.max}`).toBeLessThanOrEqual(
+      GLINT_GATE.maxMax,
+    );
+
+    // Defect: full specular, no roughness floor.
+    await page.evaluate(() => {
+      const d = (
+        window as unknown as {
+          __defects: { install(n: string, p: Record<string, unknown>): void };
+        }
+      ).__defects;
+      d.install('fillLightWithSpecular', { specularIntensity: 1, roughness: 0 });
+    });
+    // The defect engine needs frames to re-apply through onBeforeRender.
+    await page.evaluate(
+      () => new Promise<void>((r) => requestAnimationFrame(() => requestAnimationFrame(() => r()))),
+    );
+
+    const on = await capture(page);
+    await page.evaluate(() => window.__globe!.setLookFlags({ specular: false }));
+    const off = await capture(page);
+    await page.evaluate(() => window.__globe!.setLookFlags({ specular: true }));
+
+    const defectStats = measureGlint(on, off, control.geometry);
+
+    console.log(
+      `[N10] control max=${controlStats.max.toFixed(2)} area6=${controlStats.area6} ` +
+        `(gate ${GLINT_GATE.maxMin}..${GLINT_GATE.maxMax} / ${GLINT_GATE.area6Min}..${GLINT_GATE.area6Max}) | ` +
+        `defect max=${defectStats.max.toFixed(2)} area6=${defectStats.area6} centroid=${JSON.stringify(defectStats.centroid)}`,
+    );
+    await writeResult('negative-n10', { control: controlStats, defect: defectStats });
+
+    expect(defectStats.valid, `defect frames invalid: ${defectStats.invalidReason}`).toBe(true);
+    // The verdict, then the SIGNAL in the expected direction.
+    const overPeak = defectStats.max > GLINT_GATE.maxMax;
+    const overArea = defectStats.area6 > GLINT_GATE.area6Max;
+    expect(
+      overPeak || overArea,
+      `the 3.9 sentinel PASSED with si 1.0 and no roughness floor: max ${defectStats.max.toFixed(2)} ` +
+        `(gate max ${GLINT_GATE.maxMax}), area6 ${defectStats.area6} (gate max ${GLINT_GATE.area6Max})`,
+    ).toBe(true);
+    expect(defectStats.max, 'the defect must ADD specular, not remove it').toBeGreaterThan(controlStats.max);
   });
 
   // --------------------------------------------------------------------- N5 ---
