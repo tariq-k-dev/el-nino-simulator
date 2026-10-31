@@ -209,6 +209,50 @@ describe('the specular mask measures the shipped state', () => {
   });
 });
 
+// ------------------------------------------------ retired terminator gates ---
+
+describe('the retired 3.4 gates are not asserted anywhere', () => {
+  /**
+   * Two metrics were RETIRED in 2B-C2B-P2FIX and must not come back as gates:
+   *
+   *   - the `width >= 6 % R_fit` gate (segment endpoints of a Lambert profile that has no plateau),
+   *   - the fixed `16/255` cross-terminator step (inherited from a metric that no longer exists, and
+   *     at az 60 it measured texture noise where the terminator is off the planet).
+   *
+   * Both survive as INFORMATIONAL columns in the report — printed, never asserted. This guard is what
+   * keeps that distinction from eroding: a `toBeGreaterThanOrEqual(6)` on widthPctR, or a
+   * `toBeLessThanOrEqual(16)` around a crossTerminatorStep, is a gate no matter what the comment says.
+   */
+  it('no spec asserts widthPctR >= 6 % or a 16/255 step', async () => {
+    const offenders: string[] = [];
+    for (const { abs, rel } of await sources()) {
+      if (!rel.startsWith('tests/e2e/')) continue;
+      if (rel === 'tests/e2e/source-guards.test.ts') continue;
+      const src = stripComments(await readFile(abs, 'utf8'));
+      // A width gate on the retired percentage.
+      if (/widthPctR[^;]*toBe(GreaterThanOrEqual|LessThanOrEqual)\(\s*\d/.test(src)) offenders.push(`${rel}: widthPctR assertion`);
+      // A step gate on the retired constant, or on the derived 16.
+      if (/crossTerminatorStep[^;]*toBe(GreaterThanOrEqual|LessThanOrEqual)\(/.test(src)) {
+        offenders.push(`${rel}: crossTerminatorStep assertion`);
+      }
+    }
+    expect(
+      offenders,
+      `These retired 3.4 gates are still asserted:\n  ${offenders.join('\n  ')}`,
+    ).toEqual([]);
+  });
+
+  it('the replacement gate exists and is unit-tested', async () => {
+    // Presence only: the definitions live in terminatorProfile.ts and are tested in terminator.test.ts.
+    const impl = await readFile(path.join(REPO, 'tests/e2e/look/terminatorProfile.ts'), 'utf8');
+    for (const required of ['evaluateTerminator', 'softMaxS', 'visibleMinA', 'rOverROracle']) {
+      expect(impl, `terminatorProfile.ts lost "${required}"`).toContain(required);
+    }
+    const tests = await readFile(path.join(REPO, 'tests/e2e/look/terminator.test.ts'), 'utf8');
+    expect(tests, 'the terminator gate has no synthetic-curve tests').toContain('synthetic curves');
+  });
+});
+
 // ------------------------------------------------------------- spread guards ---
 
 /**
