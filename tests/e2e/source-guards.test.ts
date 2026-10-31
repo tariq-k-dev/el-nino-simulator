@@ -93,34 +93,46 @@ describe('no silently skipped tests', () => {
     ).toEqual([]);
   });
 
-  it('the one permitted fixme is N4 and it still carries its measurements', async () => {
+  it('no negative test is parked: the fixme set is empty', async () => {
     /*
-     * N4 is allowed to stay fixme only while it explains itself. If someone "fixes" it by
-     * deleting the numbers, this fails — because the numbers ARE the evidence that 3.3's
-     * ratio gate is blind at low signal, and the next reader should not rediscover it.
+     * This guard used to assert that N4 — and only N4 — was still `test.fixme`, and that its
+     * justification still carried its measurements. Both facts changed in 2B-C2B.
+     *
+     * N4 is no longer parked. It was parked because 3.3's ratio gate could not see a 3/255
+     * blue lift, and the reason for THAT was that the defect restored only half of itself:
+     * the cool fill light without the material specular that made it visible. The original
+     * defect — recovered from git as `2e27939^` (light, position (-5.2,-2.2,-4.6), intensity
+     * 0.32, #2f6fb8) plus `38aa091^` (specularIntensity 0.18, roughness floor 0) — moves W1
+     * far past 1.15, so the metric is untouched and the test now runs and fails correctly.
+     *
+     * The rule this file enforces is unchanged: a `fixme` is permitted only with a name, the
+     * measurements that justify it, and a plan. The set is now empty, and this asserts that
+     * literally — an empty set is what "no negative test is parked" means, and it fails if
+     * anyone adds one back without the written justification the other guards demand.
      */
     const src = await readFile(path.join(REPO, 'tests/e2e/negative.spec.ts'), 'utf8');
-    /*
-     * Take the TITLE, which is the first quoted string AFTER the `// allow-skip:` marker
-     * closes — not the first quote on the line, which is inside the marker's own reason.
-     */
     const fixmes = [
       ...src.matchAll(/\btest\.fixme\s*\([^\n]*\n\s*'([^']+)'/g),
       ...src.matchAll(/\btest\.fixme\s*\(\s*'([^']+)'/g),
     ].map((m) => m[1]);
-    expect(fixmes, `unexpected fixme set: ${fixmes.join(', ')}`).toHaveLength(1);
-    expect(fixmes[0]).toContain('N4');
+    expect(fixmes, `unexpected fixme set: ${fixmes.join(', ')}`).toEqual([]);
 
-    const block = src.slice(
-      src.indexOf('N4 IS `test.fixme` ON PURPOSE'),
-      src.indexOf('test.fixme(', src.indexOf('N4 IS `test.fixme` ON PURPOSE')),
-    );
-    for (const required of ['333,185', '+0.069', '+2.51', '(0,4,31)', '0.976 -> 0.982', 'intensity: 0.32']) {
-      expect(block, `N4's justification lost its measurement "${required}"`).toContain(required);
+    /*
+     * And the faithful defect must still carry its git provenance. These strings are the
+     * evidence that the defect is the REAL one rather than one restated to pass; editing them
+     * out would turn N4 back into a test that proves nothing about the look.
+     */
+    for (const required of ['2e27939', '38aa091', '0.18', '1.15']) {
+      expect(src, `N4 lost its provenance string "${required}"`).toContain(required);
     }
-    // And it must still name the three options rather than just giving up.
-    for (const option of ['raise the defect intensity', 'move W1', "change 3.3's metric"]) {
-      expect(block, `N4's justification no longer names the option "${option}"`).toContain(option);
+    /*
+     * The light's exact place and level live in the defect engine, not in the spec — the spec
+     * passes params only for the material half, so the caller cannot restate the defect. Pin
+     * the coordinates where they actually are.
+     */
+    const engine = await readFile(path.join(REPO, 'tests/e2e/look/acquire.ts'), 'utf8');
+    for (const required of ['-5.2, -2.2, -4.6', '0x2f6fb8', '0.32']) {
+      expect(engine, `the faithful N4 defect lost "${required}"`).toContain(required);
     }
   });
 });

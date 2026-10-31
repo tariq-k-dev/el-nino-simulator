@@ -36,10 +36,10 @@
  */
 import { test, expect } from './fixtures';
 import type { Page } from '@playwright/test';
-import { measureBlueCircle, writeResult } from './look/measure';
+import { measureSpecularMask, writeResult } from './look/measure';
 import { openGlobe, capture, setLayers, settleAt, cameraGeometry } from './look/capture';
 import { acquire, installDefectEngine, type LayerFlags } from './look/acquire';
-import { checkGlare, checkPins, checkRim, checkRingCast } from './look/analysis';
+import { checkGlare, checkLocalPeak, checkPins, checkRim, checkRingCast } from './look/analysis';
 import { requireValidPins } from './look/pinValidity';
 import type { Bitmap, DiscGeometry } from '../../src/lib/look/helpers';
 import { focalPxFromFov, shellSilhouetteOffsetPx } from '../../src/lib/look/helpers';
@@ -355,105 +355,123 @@ test.describe('negative tests: each check fails when its defect is present', () 
   });
 
   // --------------------------------------------------------------------- N4 ---
-  /*
-   * N4 IS `test.fixme` ON PURPOSE, AND THIS IS THE ONE THING IN C2A NOT MET.
-   *
-   * The defect is real, correctly placed and provably live: lights 4, intensity 0.32,
-   * position exactly (-5.2, -2.2, -4.6), parented to the scene root, survival probe clean.
-   * What it does NOT do is move W1. Measured on the stamped bundle:
-   *
-   *   disc pixels                                 333,185
-   *   pixels moved by more than 2/255                     3
-   *   mean signed luma delta inside the disc          +0.069
-   *   max signed luma delta anywhere in the disc       +2.51   (at r/R 0.977, -168deg)
-   *   W1 raw RGB, before -> after          (0,4,28) -> (0,4,31)
-   *   W1 sigma-3 blurred peak, before -> after     4.95 -> 6.02
-   *   W1 ratio, control -> defect             0.976 -> 0.982   (gate 1.15)
-   *
-   * So the fill light raises the blue channel by 3/255 over a nearly-black night ocean
-   * (W1 luma ~5/255). Three pixels move in the whole disc. 3.3's ratio gate cannot see a
-   * 3/255 lift at that signal level, and no amount of injection would change that: the
-   * defect's reach is a property of `intensity: 0.32` against a sun of intensity 3.6.
-   *
-   * WHY THIS IS NOT FIXED HERE, AND WHAT THE OPTIONS ARE — this is a design decision for
-   * Tariq, and every option edits either the gate or the brief:
-   *
-   *   (a) raise the defect intensity (e.g. 3.2, the old 10x). Rejected for this run: the
-   *       prompt names 0.32 explicitly, and quietly changing the defect to make a test pass
-   *       is the same class of error as tuning a threshold to a render.
-   *   (b) move W1 to where the light actually lands (r/R 0.977, -168deg). That EDITS the
-   *       3.3 gate to fit the defect — explicitly forbidden.
-   *   (c) change 3.3's metric to a per-channel blue difference rather than a blurred-luma
-   *       ratio, so a 3/255 blue lift at a dark window is detectable. This is the honest
-   *       fix and it changes a committed threshold's definition, so it needs sign-off.
-   *
-   * Kept as `test.fixme` with the numbers above rather than deleted or weakened: it is the
-   * evidence that 3.3's ratio gate is blind at low signal, and the next reader should not
-   * have to rediscover it. Tracked in docs/globe-look/D1-DIAGNOSIS.md.
-   */
-  test.fixme( // allow-skip: 3.3's ratio gate cannot see a 3/255 blue lift at W1's luma -- measurements in the comment above, options need sign-off
-    'N4: a blue DirectionalLight at (-5.2,-2.2,-4.6) makes 3.3 FAIL in W1',
-    async ({ page }) => {
+  test('N4: the retired fill light makes 3.3 FAIL in W1 once the material specular is back', async ({
+    page,
+  }) => {
     /*
-     * 3.3 needs the specular mask to decide W1 is not excused, and that mask is a second
-     * capture taken with a different material state — so this one keeps the committed
-     * `measureBlueCircle`, which owns that pair. The defect is installed by the same
-     * page-side engine, and the survival probe is the engine's own.
+     * THE FAITHFUL N4. The original defect is TWO things, and the old test restored one.
+     *
+     * What drew the blue circle at W1 was the cool fill light acting on a surface whose
+     * GGX specular was still enabled. `docs/2B-VERIFY.md` and the ablation recorded in
+     * `clipped-probe.mjs` measured the probe window at **luma 91.1 with the fill light and
+     * 4.1 without it** — an 87-luma lift that any ratio gate sees at once.
+     *
+     * Since 38aa091 the surface is matte (`specularIntensity: 0`), so the same light lifts
+     * blue by ~3/255 over a ~5/255 night ocean and moves three pixels in the whole disc.
+     * Measured on the previous N4: W1 ratio 0.976 -> 0.982 against a 1.15 gate. That is why
+     * it sat on `test.fixme` — and why N4 was described as testing the wrong defect.
+     *
+     * Recovered from git, both halves:
+     *
+     *   light      2e27939^  <directionalLight position={[-5.2,-2.2,-4.6]} intensity={0.32}
+     *                        color="#2f6fb8" />
+     *   material   38aa091^  specularIntensity 0.18, roughness floor 0 (water = mirror)
+     *
+     * The 3.3 METRIC IS UNCHANGED. W1 stays at r/R 0.91, 180deg, size 40, sigma-3 blurred
+     * ratio <= 1.15, excluded only by the measured specular mask. No threshold moves, and no
+     * per-channel blue gate is introduced: the prompt's N4 finding records that a blue gate
+     * would guard an invisible 3/255 lift, which is the opposite of what the look cares about.
      */
-    const control = await measureBlueCircle(page);
-    const w1Control = control.result.windows.find((w) => w.id === 'W1');
-    expect(w1Control, 'W1 is missing from the control').toBeDefined();
-    expect(w1Control!.valid, `W1 control invalid: ${w1Control!.validityReason}`).toBe(true);
-    expect(w1Control!.excluded, 'W1 must not be excused in the control').toBe(false);
-    expect(w1Control!.ratio, `control W1 ratio ${w1Control!.ratio} already fails`).toBeLessThanOrEqual(
-      1.15,
-    );
+    const geomView = { stars: false, pins: false, rings: false, clouds: false };
 
-    // The exact fill light that drew the blue circle at (344,392).
-    const probe = await page.evaluate(() => {
-      const d = (
-        window as unknown as {
-          __defects: {
-            install(n: string, p: Record<string, unknown>): void;
-            probe(n: string, p: Record<string, unknown>): {
-              evidence: Record<string, unknown>;
-              failures: string[];
-              frameBefore: number;
-              frameAtCapture: number;
-            };
-          };
-        }
-      ).__defects;
-      d.install('fillLight', { color: 0x2f6fb8, intensity: 0.32 });
-      return d.probe('fillLight', { intensity: 0.32 });
+    // ---- control: the same view, no defect, must pass and must not be excused ----
+    const control = await acquire(page, { flags: geomView, azimuth: 0 });
+    const controlGlint = await measureSpecularMask(page, control.geometry);
+    const w1Control = checkLocalPeak(control.frame, control.geometry, { rOverR: 0.91, azimuthDeg: 180 });
+    const w1ControlExcluded = controlGlint.lookup(w1Control.x, w1Control.y);
+
+    expect(Number.isFinite(w1Control.ratio), 'control W1 ratio is not finite').toBe(true);
+    expect(w1Control.pass, `control W1 already fails: ratio ${w1Control.ratio.toFixed(3)}`).toBe(true);
+    expect(w1ControlExcluded, 'control W1 must not be excused as sun glint').toBe(false);
+
+    // ---- defect: fill light AND the material specular that let it glow ----
+    const defect = await acquire(page, {
+      flags: geomView,
+      azimuth: 0,
+      defect: {
+        name: 'fillLightWithSpecular',
+        // No intensity/colour params: the engine hardcodes the git-recovered pair, so this
+        // test cannot restate the defect to suit the result.
+        params: { specularIntensity: 0.18, roughness: 0 },
+      },
     });
 
-    const defective = await measureBlueCircle(page);
-    const w1Defect = defective.result.windows.find((w) => w.id === 'W1')!;
+    /*
+     * W1 must be re-measured on the defect frame, and the specular mask re-measured too:
+     * with specular restored the glint covers far more of the disc, and using the control's
+     * mask would excuse exactly the pixels the defect created.
+     */
+    const defectGlint = await measureSpecularMask(page, defect.geometry);
+    const w1Defect = checkLocalPeak(defect.frame, defect.geometry, { rOverR: 0.91, azimuthDeg: 180 });
+    const w1DefectExcluded = defectGlint.lookup(w1Defect.x, w1Defect.y);
 
     console.log(
-      `[N4] W1: control ratio=${w1Control!.ratio} peak=${w1Control!.peak} med=${w1Control!.annulusMedian} | ` +
-        `defect ratio=${w1Defect.ratio} peak=${w1Defect.peak} med=${w1Defect.annulusMedian} ` +
-        `excluded=${w1Defect.excluded} (max 1.15)`,
+      `[N4] W1 control ratio=${w1Control.ratio.toFixed(3)} peak=${w1Control.peak.toFixed(2)} med=${w1Control.annulusMedian.toFixed(2)} | ` +
+        `defect ratio=${w1Defect.ratio.toFixed(3)} peak=${w1Defect.peak.toFixed(2)} med=${w1Defect.annulusMedian.toFixed(2)} ` +
+        `(gate 1.15)`,
     );
-    console.log(`[N4] survival probe ${JSON.stringify(probe)}`);
-    await writeResult('negative-n4', { control: w1Control, defect: w1Defect, probe });
+    console.log(
+      `[N4] W1 excluded: control=${w1ControlExcluded} defect=${w1DefectExcluded} | ` +
+        `mask px control=${controlGlint.summary.pixels} defect=${defectGlint.summary.pixels}`,
+    );
+    console.log(`[N4] survival probe ${JSON.stringify(defect.probe)}`);
+    await writeResult('negative-n4', { control: w1Control, defect: w1Defect, probe: defect.probe });
 
-    expect(probe.failures, `defect not live: ${probe.failures.join('; ')}`).toHaveLength(0);
-    expect(w1Defect.valid, 'W1 must stay valid for the defect to count').toBe(true);
+    // The probe is what separates "the check is blind" from "the defect never arrived".
+    expect(defect.probe?.alive, `defect not live at capture: ${defect.probe?.failures?.join('; ')}`).toBe(true);
+    expect(defect.probeAfterExtras ?? true).toBeTruthy();
+
+    /*
+     * Inputs before verdicts. `checkLocalPeak` reports no separate `valid` flag: its inputs
+     * are the capture (taken by `acquire`, which throws if the limb fit fails) and the probe
+     * window. So validity means a finite peak, a non-zero annulus and a finite ratio — a
+     * null-vs-null comparison must not be able to pass.
+     */
+    expect(w1Defect.peak, 'defect W1 peak is not finite').toBeGreaterThan(0);
+    expect(w1Defect.annulusMedian, 'defect W1 annulus median is zero, so the ratio is 1/0').toBeGreaterThan(0);
+    expect(Number.isFinite(w1Defect.ratio), 'defect W1 ratio is not finite').toBe(true);
+    expect(w1Control.annulusMedian, 'control W1 annulus median is zero').toBeGreaterThan(0);
+
+    // The verdict, and then the SIGNAL — a broken check could also return fail.
     expect(
       w1Defect.pass,
-      `3.3 did NOT catch the fill light: W1 ratio ${w1Defect.ratio} within 1.15` +
-        (w1Defect.excluded ? ' (and it was excused by the specular mask)' : ''),
+      `3.3 did NOT catch the faithful fill-light defect: W1 ratio ${w1Defect.ratio.toFixed(3)} within 1.15` +
+        (w1DefectExcluded ? ' (and it was excused by the specular mask)' : ''),
     ).toBe(false);
     expect(
       w1Defect.ratio,
-      `W1 ratio must RISE past 1.15 under the fill light; got ${w1Defect.ratio} vs control ${w1Control!.ratio}. ` +
-        `At intensity 0.32 this defect moves 3 pixels in the whole disc and lifts W1's blue by 3/255 — see the fixme note.`,
+      `W1 ratio must RISE past 1.15; control ${w1Control.ratio.toFixed(3)} -> defect ${w1Defect.ratio.toFixed(3)}`,
     ).toBeGreaterThan(1.15);
-    expect(w1Defect.ratio).toBeGreaterThan(w1Control!.ratio);
-    },
-  );
+    // The luma lift is the property the prompt names: ~91 instead of ~4.
+    expect(w1Defect.peak, 'the defective W1 peak must be far brighter than the control').toBeGreaterThan(
+      w1Control.peak * 3,
+    );
+
+    // Informational, and NOT a gate: with the material matte the light alone does nothing.
+    const lightOnly = await acquire(page, {
+      flags: geomView,
+      azimuth: 0,
+      defect: { name: 'fillLight', params: { intensity: 0.32 } },
+    });
+    const w1LightOnly = checkLocalPeak(lightOnly.frame, lightOnly.geometry, { rOverR: 0.91, azimuthDeg: 180 });
+    console.log(
+      `[N4] informational — fill light alone with specularIntensity 0: W1 peak ${w1Control.peak.toFixed(2)} -> ` +
+        `${w1LightOnly.peak.toFixed(2)} (ratio ${w1Control.ratio.toFixed(3)} -> ${w1LightOnly.ratio.toFixed(3)}). ` +
+        `The ~3/255 blue lift is invisible to a luma ratio gate, which is why the faithful defect restores the material.`,
+    );
+    await writeResult('negative-n4-light-only', { control: w1Control, lightOnly: w1LightOnly });
+  });
+
   // --------------------------------------------------------------------- N5 ---
   test('N5: 3.2 rejects an all-black capture as invalid and fails an all-white one', async ({ page }) => {
     await settleAt(page, 0);

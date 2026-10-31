@@ -52,6 +52,8 @@ export type DefectName =
   | 'mirrorSurface'
   | 'atmosphereOpaque'
   | 'fillLight'
+  /** The faithful N4: the retired cool fill light AND the material specular that made it glow. */
+  | 'fillLightWithSpecular'
   | 'pinEmissiveBoost'
   | 'pinsHidden';
 
@@ -300,8 +302,36 @@ const DEFECT_SOURCE = function installDefectEngine(): void {
       return;
     }
 
-    if (name === 'fillLight' && light) {
-      light.intensity = Number(params.intensity ?? 0.32);
+    if (name === 'fillLight' || name === 'fillLightWithSpecular') {
+      if (light) light.intensity = Number(params.intensity ?? 0.32);
+      /*
+       * Re-assert the material half every frame, the same way every other defect does. A
+       * React re-render triggered by the `setLayers` calls inside `measureBlueCircle` can
+       * rebuild the surface material, and a one-shot write would then be lost silently —
+       * exactly the failure mode D1 diagnosed for the point light.
+       */
+      const savedSpecular: Array<{ mat: MatLike; key: string; value: unknown }> = [];
+      if (name === 'fillLightWithSpecular') {
+        w.__scene.traverse((o) => {
+          const m = o as ObjLike;
+          if (!m.isMesh || !m.material) return;
+          if (m.material.type !== 'MeshPhysicalMaterial') return;
+          /*
+           * Snapshot the originals BEFORE overwriting, and restore them from that snapshot.
+           * Hardcoding 0 / 0.9 here would break the moment GLOBE_LOOK.surface changes, and a
+           * defect that leaves the scene in a state it did not find it in poisons the next
+           * negative test.
+           */
+          savedSpecular.push(
+            { mat: m.material, key: 'specularIntensity', value: m.material.specularIntensity },
+            { mat: m.material, key: 'roughness', value: m.material.roughness },
+            { mat: m.material, key: 'roughnessMap', value: m.material.roughnessMap },
+          );
+          m.material.specularIntensity = Number(params.specularIntensity ?? 0.18);
+          m.material.roughnessMap = null;
+          m.material.roughness = Number(params.roughness ?? 0);
+        });
+      }
       return;
     }
 
@@ -395,7 +425,18 @@ const DEFECT_SOURCE = function installDefectEngine(): void {
         if (pin) light.position.set(pin.core[0], pin.core[1], pin.core[2]);
         scene.add(light);
         addedRootLight = true;
-      } else if (name === 'fillLight') {
+      } else if (name === 'fillLight' || name === 'fillLightWithSpecular') {
+        /*
+         * The light retired by 2e27939, at its exact recorded place and intensity.
+         *
+         * `position` and `intensity` are NOT parameters with defaults chosen here — they are
+         * the values read out of `git show 2e27939^:src/scene/GlobeScene.tsx`:
+         *
+         *     <directionalLight position={[-5.2, -2.2, -4.6]} intensity={0.32} color="#2f6fb8" />
+         *
+         * N4's whole claim is about THAT light, so a caller cannot quietly restate it. The
+         * params below exist only so the informational variant can report what it used.
+         */
         light = new Three.DirectionalLight(Number(params.color ?? 0x2f6fb8), Number(params.intensity ?? 0.32));
         light.position.set(-5.2, -2.2, -4.6);
         light.name = '__negative_fillLight';
@@ -404,13 +445,57 @@ const DEFECT_SOURCE = function installDefectEngine(): void {
         addedRootLight = true;
       }
 
+      /*
+       * The second half of the faithful N4, and the reason the ORIGINAL N4 could not fail.
+       *
+       * The blue circle at W1 was never the fill light acting on a matte surface. It was the
+       * fill light acting on a surface with three's GGX specular enabled: `specularIntensity`
+       * was 0.18 before 38aa091, and `clipped-probe.mjs` measured the probe window at luma
+       * 91.1 with the fill light versus 4.1 without it. Since 38aa091 the surface is matte
+       * (`specularIntensity: 0`) and the same light lifts blue by ~3/255 — invisible, which
+       * is why the old N4 measured a 0.976 -> 0.982 ratio and was parked.
+       *
+       * So the faithful defect restores BOTH halves, from git:
+       *   - the light: 2e27939^, position (-5.2, -2.2, -4.6), intensity 0.32, #2f6fb8;
+       *   - the material: 38aa091^, specularIntensity 0.18 with the roughness map detached
+       *     so water is the mirror the roughness floor existed to prevent (floor 0 gave a
+       *     ~14 px blown disc at 0.037% clipped, per that commit's own message).
+       *
+       * `roughnessFloor: 0` is expressed as `roughnessMap = null` + `roughness = 0`, which is
+       * what the probe did and what "no floor" means on the material.
+       */
+      const savedSpecular: Array<{ mat: MatLike; key: string; value: unknown }> = [];
+      if (name === 'fillLightWithSpecular') {
+        w.__scene.traverse((o) => {
+          const m = o as ObjLike;
+          if (!m.isMesh || !m.material) return;
+          if (m.material.type !== 'MeshPhysicalMaterial') return;
+          /*
+           * Snapshot the originals BEFORE overwriting, and restore them from that snapshot.
+           * Hardcoding 0 / 0.9 here would break the moment GLOBE_LOOK.surface changes, and a
+           * defect that leaves the scene in a state it did not find it in poisons the next
+           * negative test.
+           */
+          savedSpecular.push(
+            { mat: m.material, key: 'specularIntensity', value: m.material.specularIntensity },
+            { mat: m.material, key: 'roughness', value: m.material.roughness },
+            { mat: m.material, key: 'roughnessMap', value: m.material.roughnessMap },
+          );
+          m.material.specularIntensity = Number(params.specularIntensity ?? 0.18);
+          m.material.roughnessMap = null;
+          m.material.roughness = Number(params.roughness ?? 0);
+        });
+      }
+
       state = {
         name,
         params,
         pinName,
         light,
         prevOnBeforeRender: scene.onBeforeRender ?? null,
-        saved: [],
+        // The faithful N4 writes material values on every frame, so its originals are
+        // snapshotted once here and replayed by the generic restore path on uninstall.
+        saved: savedSpecular,
         addedRootLight,
         installedFrame: w.__gl.info.render.frame,
       };
@@ -475,7 +560,7 @@ const DEFECT_SOURCE = function installDefectEngine(): void {
       });
       evidence.lights = lights;
 
-      if (name === 'pointLight' || name === 'fillLight') {
+      if (name === 'pointLight' || name === 'fillLight' || name === 'fillLightWithSpecular') {
         let found: Record<string, unknown> | null = null;
         scene.traverse((o) => {
           const l = o as ObjLike & { isLight?: boolean; intensity?: number; distance?: number; position?: { x: number; y: number; z: number }; parent?: { uuid?: string } };
@@ -522,6 +607,30 @@ const DEFECT_SOURCE = function installDefectEngine(): void {
               if (d > 1e-6) failures.push(`light is ${d.toFixed(4)} world units from the pin core, expected 0`);
             }
           }
+        }
+      }
+
+      if (name === 'fillLightWithSpecular') {
+        // The material half must be provably live too, or this is just the old N4 again.
+        let mat: Record<string, unknown> | null = null;
+        scene.traverse((o) => {
+          const m = o as ObjLike;
+          if (!m.isMesh || m.material?.type !== 'MeshPhysicalMaterial') return;
+          mat = {
+            specularIntensity: m.material.specularIntensity,
+            roughness: m.material.roughness,
+            hasRoughnessMap: m.material.roughnessMap !== null,
+          };
+        });
+        evidence.earthSurface = mat;
+        if (!mat) failures.push('the Earth surface material is not in the scene');
+        else {
+          const s = mat as { specularIntensity?: unknown; hasRoughnessMap?: boolean };
+          const want = Number(params.specularIntensity ?? 0.18);
+          if (Math.abs(Number(s.specularIntensity) - want) > 1e-6) {
+            failures.push(`specularIntensity is ${s.specularIntensity}, expected ${want}`);
+          }
+          if (s.hasRoughnessMap) failures.push('roughnessMap is still attached, so the roughness floor still applies');
         }
       }
 

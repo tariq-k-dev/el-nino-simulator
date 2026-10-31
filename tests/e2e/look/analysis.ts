@@ -387,6 +387,9 @@ export interface LocalPeakCheck {
   ratio: number;
   peak: number;
   annulusMedian: number;
+  /** The probe window's centre in CSS px, so a caller can ask what mask covers it. */
+  x: number;
+  y: number;
   pass: boolean;
 }
 
@@ -410,7 +413,7 @@ export function checkLocalPeak(
   const ring = annulusLuma(blurred, img, wx, wy, 8, 20, (x, y) => inDisc(geom, x, y));
   const annulusMedian = ring.count > 0 ? median(ring.values) : 0;
   const ratio = annulusMedian === 0 ? Number.POSITIVE_INFINITY : peak / annulusMedian;
-  return { ratio, peak, annulusMedian, pass: ratio <= 1.15 };
+  return { ratio, peak, annulusMedian, x: wx, y: wy, pass: ratio <= 1.15 };
 }
 
 /**
