@@ -518,6 +518,10 @@ function expectedCounts() {
     'look.spec.ts': 9,
     // Step 3A2: F1-F10, with F2/F3/F4 parameterised over four viewports and F8 over two.
     'frame.spec.ts': 20,
+    // Step 3B: four regions x two modes/modes-viewports are recorded cases, plus ONE comparison test.
+    // 8 + 1, not 16: the eight per-case tests only WRITE under UPDATE_GOLDEN=1 and otherwise assert the
+    // single comparison, so the file's honest size is 9.
+    'camera-golden.spec.ts': 9,
     'negative.spec.ts': 14,
     'ref.spec.ts': 2,
     'scene-gate.spec.ts': 2,

@@ -29,6 +29,15 @@ export interface GlobeProbeHandle {
   pinAnchors(): Array<{ id: string; world: [number, number, number] }>;
   setCamera(position: [number, number, number]): Promise<void>;
   setAzimuth(deg: number): Promise<void>;
+  /**
+   * Freeze the planet at an absolute Y rotation (`frozen = true`), or release it.
+   *
+   * Present on the runtime handle since 3A (`globeProbe.ts:269`) but missing from this mirror until
+   * 3B, where `camera-golden.spec.ts` needs it: a fly-to's target is
+   * `regionDirection(id, spin.current.y)` (`CameraRig.tsx:54`), so without pinning the phase the end
+   * pose differs between loads by up to 8.4e-3 R in `controls.target`. Type-only addition.
+   */
+  setSpin(frozen: boolean, angle: number): void;
   defaultOrbit(): { distance: number; elevationDeg: number };
   /** Flip internal look flags (the raw store; `__look.set` is the narrow API). */
   setLookFlags(patch: Record<string, boolean>): Record<string, boolean>;

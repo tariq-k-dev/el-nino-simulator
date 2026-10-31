@@ -149,6 +149,9 @@ export const FILE_TIMEOUTS_MS = {
   // up to 5 min (the rounding is upward on purpose: a backstop that fires one second late is a
   // slow run, one that fires one second early is a false TIMEOUT).
   'frame.spec.ts': 5 * 60_000,
+  // camera-golden.spec: 9 tests, each booting a page and waiting out a fly-to; the measured isolated
+  // time is recorded in docs/STEP3B-GOLDEN.md and this is 2x that, rounded up.
+  'camera-golden.spec.ts': 6 * 60_000,
   'globe.spec.ts': 3 * 60_000,
   'boot.spec.ts': 10 * 60_000,
   'harden.spec.ts': 4 * 60_000,
