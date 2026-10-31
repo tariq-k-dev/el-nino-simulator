@@ -325,9 +325,11 @@ fetch genuinely pending and no progress events arrive — which is exactly what
 ### Expected counts
 
 `look.spec.ts` **9**, `negative.spec.ts` **14**, `globe.spec.ts` **5** = **28** for `e2e:look`.
-Full suite: boot 10, determinism 2, gate-clock 1, globe 5, harden 8, history-gate 1, limb 2, look 9,
-negative 14, scene-gate 2 = **54**. The runner's `expectedCounts()` holds these and the summary fails on
-any mismatch, so a file that exits 0 having run fewer tests still fails the run.
+Full suite: boot 10, determinism 2, **frame 20**, gate-clock 1, globe 5, harden 8, history-gate 1,
+limb 2, look 9, negative 14, scene-gate 2 = **74** (was 54 before Step 3A2 added `frame.spec.ts`).
+The runner's `expectedCounts()` holds these and the summary fails on any mismatch, so a file that
+exits 0 having run fewer tests still fails the run. `frame.spec.ts` also carries a 5 min per-file
+backstop (2x its measured 125 s, rounded up).
 
 ### The launch and poll method that works on this machine
 
@@ -351,6 +353,36 @@ present — a **page reload** to restore the surface. That is 7 reloads. `look.s
 |---|---|---|
 | `e2e:look` (batched) | **3/3 files, 28/28 tests, 0 retries** | 9.4 min |
 | full `pnpm e2e` (batched) | **10/10 files, 54/54 tests, 0 retries** | 20.0 min |
+
+## Framing modes (Step 3A2) — locked and live
+
+`tests/e2e/frame.spec.ts` drives the globe framing, and the framing is **opt-in** in the E2E build so
+that every legacy spec keeps measuring the picture it has always measured.
+
+| build | URL | mode | camera |
+|---|---|---|---|
+| production | anything | **live** | view offset + fit distance |
+| `pnpm build:e2e` | no `framing` param | **locked** | untouched — identical to pre-3A2 |
+| `pnpm build:e2e` | `?framing=live` | **live** | view offset + fit distance |
+
+Locked is the default because the alternative inverts the risk: a spec that forgets a parameter would
+silently measure a different framing and blame the look. `resolveFramingMode` fails closed on
+anything that is not exactly `framing=live` (unit-tested in `src/layout/framing.test.ts`).
+
+**What locked guarantees**, and how it is proved:
+
+| guarantee | proof |
+|---|---|
+| no view offset, `camera.view` null | F1 asserts `mode === 'locked'`, `cameraViewIsNull`, and projection-matrix element `[8]` (the x-shear a view offset writes) is 0 |
+| the distance never moves | F1 asserts `__globe.distance() === 3.3534`; `globe.spec.ts` 5/5 green |
+| pixels are byte-identical | `ref.spec.ts` residual **exactly 0**, PNG sha256 unchanged, in two separate runner processes |
+| the locked branch is not in the production bundle | `grep` for `frame-locked-branch-7f3a` in `dist/assets/*.js`: **0 hits** in `dist/`, exactly **1** in `dist-e2e/` |
+
+Two frames specs need `?debug` as well as `framing=live`, because `__globe` and `__frame` are both
+installed under `VITE_E2E === '1' && ?debug`. That build-gate/probe-gate mismatch is pre-existing and
+deliberately **not** fixed here — it is recorded in `docs/STEP3-FRAME.md` §5.
+
+**The one case that is not `framing=live`** is F1, whose subject is the locked default.
 
 ### The reference frame (`ref.spec.ts`)
 

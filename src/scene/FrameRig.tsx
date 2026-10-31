@@ -120,14 +120,52 @@ function LiveFrameRig({ controlsRef, probe }: FrameRigProps) {
   const camera = useThree((state) => state.camera) as THREE.PerspectiveCamera;
   const size = useThree((state) => state.size);
 
-  /** The eased offset currently installed in the projection matrix, in px. */
+  /** The offset currently INSTALLED in the projection matrix, in px. */
   const appliedOffset = useRef({ dx: 0, dy: 0 });
+  /**
+   * The offset the ease has reached, in px — always at least as far along as `appliedOffset`.
+   *
+   * Two values rather than one, and the reason is a measured stall. Gating the PROJECTION WRITE on
+   * "changed by more than 0.01 px" is right (a sub-hundredth shift is not worth rebuilding a matrix
+   * for), but gating the EASE on the same test deadlocks: the remaining error shrinks by ~9 % per
+   * frame, so once it drops under `0.01 / 0.09 ≈ 0.11 px` the step becomes smaller than the write
+   * threshold, nothing is applied, and the eased value never advances again. Measured before this
+   * fix: the offset stalled at `dx 22.3653` against a target of `22.4219` — 0.057 px short, forever,
+   * which is outside the 0.05 px settle window and failed every case in `frame.spec.ts` that waits
+   * on `settled`.
+   *
+   * Easing an ideal value that always advances, and letting the projection chase it in 0.01 px
+   * steps, keeps the write rule AND converges.
+   */
+  const easedOffset = useRef({ dx: 0, dy: 0 });
   /** The (w, h) the offset was installed for; a resize invalidates it. */
   const appliedSize = useRef({ w: 0, h: 0 });
   /** The distance this rig last wrote — the `userZoomed` stand-in. See the header. */
   const lastFit = useRef<number | null>(null);
   /** Whether an offset has been applied yet: the first one snaps, later ones ease. */
   const hasApplied = useRef(false);
+  /**
+   * Does the rig currently own the distance, i.e. has nothing else moved the camera?
+   *
+   * Published so the probe can describe the distance honestly: while the rig drives it, "settled"
+   * means the ease has ARRIVED at `dTarget`; while another writer owns it (a region fly-to, the
+   * user's wheel), the rig is not animating the distance at all and "settled" must not demand that
+   * the camera reach a target it is deliberately not pursuing. Without this flag the probe could
+   * never report settled on any page with an open region drawer — which is precisely the case F8
+   * exists to measure.
+   */
+  const rigOwnsDistance = useRef(true);
+  /**
+   * The last few distances, so "settled" can mean "not moving" without declaring stillness on a
+   * single quiet frame.
+   *
+   * A ring rather than one previous value: a fly-to damps ASYMPTOTICALLY (0.0006^dt per frame), so
+   * consecutive-frame deltas fall under any threshold long before the motion has visually stopped.
+   * Measured on an open drawer with the fly-to in flight: the distance sat at 2.596 for four polls
+   * 200 ms apart while still creeping, and a one-sample test called it settled and let a spec read a
+   * value 0.0004 away from the one it settled at.
+   */
+  const recentDistances = useRef<number[]>([]);
 
   useFrame((_, delta) => {
     const controls = controlsRef.current;
@@ -159,16 +197,25 @@ function LiveFrameRig({ controlsRef, probe }: FrameRigProps) {
        * Frame-rate independent exponential: `1 - exp(-dt / tau)`. `delta` is clamped because a
        * long frame (tab regaining focus, a SwiftShader capture) would otherwise take a very large
        * step and the ease would read as a jump — the same reasoning as `CameraRig.tsx:91`.
+       *
+       * Eased from `easedOffset`, NOT from `appliedOffset`: see the comment on those two refs for
+       * the stall that caused.
        */
       const dt = Math.min(delta, 1 / 30);
       const k = 1 - Math.exp(-dt / FRAME_TIME_CONSTANT_S);
-      nextDx = appliedOffset.current.dx + (frame.dx - appliedOffset.current.dx) * k;
-      nextDy = appliedOffset.current.dy + (frame.dy - appliedOffset.current.dy) * k;
-      // Settle exactly, so "within 0.01 px" is reachable rather than merely asymptotic.
+      nextDx = easedOffset.current.dx + (frame.dx - easedOffset.current.dx) * k;
+      nextDy = easedOffset.current.dy + (frame.dy - easedOffset.current.dy) * k;
+      // Land exactly, so the dead zone below has a fixed point and the tail is not asymptotic.
       if (Math.abs(frame.dx - nextDx) < OFFSET_EPSILON_PX) nextDx = frame.dx;
       if (Math.abs(frame.dy - nextDy) < OFFSET_EPSILON_PX) nextDy = frame.dy;
     }
+    easedOffset.current = { dx: nextDx, dy: nextDy };
 
+    /*
+     * The write rule, exactly as specified: touch the projection only when the value moved by more
+     * than 0.01 px. `easedOffset` genuinely reaches the target, so this converges instead of
+     * stalling — the projection trails the ease by up to one epsilon and then catches it.
+     */
     const moved =
       Math.abs(nextDx - appliedOffset.current.dx) > OFFSET_EPSILON_PX ||
       Math.abs(nextDy - appliedOffset.current.dy) > OFFSET_EPSILON_PX;
@@ -201,6 +248,7 @@ function LiveFrameRig({ controlsRef, probe }: FrameRigProps) {
     if (lastFit.current === null) lastFit.current = currentDistance;
 
     const userHasMoved = Math.abs(currentDistance - lastFit.current) >= LAST_FIT_EPSILON;
+    rigOwnsDistance.current = !userHasMoved;
     if (!userHasMoved && Math.abs(frame.dTarget - currentDistance) > 1e-6) {
       const dt = Math.min(delta, 1 / 30);
       const k = first || reduced ? 1 : 1 - Math.exp(-dt / FRAME_TIME_CONSTANT_S);
@@ -221,9 +269,51 @@ function LiveFrameRig({ controlsRef, probe }: FrameRigProps) {
 
     if (probe) {
       const camDistance = camera.position.distanceTo(controls.target);
-      const dx = appliedOffset.current.dx;
-      const dy = appliedOffset.current.dy;
+      /*
+       * Report the EASED value, not the installed one. The installed projection trails the ease by
+       * up to 0.01 px by design, so reporting it would make `settled` unreachable for any target
+       * that is not an exact multiple of the write threshold — the same stall the two refs exist to
+       * avoid, one layer up.
+       */
+      const dx = easedOffset.current.dx;
+      const dy = easedOffset.current.dy;
       const pxError = Math.max(Math.abs(frame.dx - dx), Math.abs(frame.dy - dy));
+      /*
+       * "Settled" = the frame has stopped changing, in BOTH channels that the rig can move.
+       *
+       *   offset    — within 0.05 px of target, always required;
+       *   distance  — if the rig owns it, within 0.0005 of target; if another writer owns it, merely
+       *               not moving (|current - previous| < 2e-4).
+       *
+       * The second branch is what makes an open region drawer measurable at all: the fly-to parks
+       * the camera at ~2.6 and the fit's target for the narrowed free rect is 5.0, so a rule of
+       * "must reach the target" is unsatisfiable forever and every wait on `settled` times out.
+       * Measured before this fix: F8 at 1440x900 and 1280x720 both timed out after 5 s with the
+       * offset already correct to 0.03 px.
+       */
+      const recent = recentDistances.current;
+      recent.push(camDistance);
+      if (recent.length > 4) recent.shift();
+      /*
+       * Still = the last four frames span less than 2e-4. The SPAN, not the frame-to-frame delta:
+       * a slow constant drift has a tiny per-frame delta and a large span, which is exactly the
+       * signature of a damped fly-to in its tail.
+       */
+      /*
+       * A fold, not `Math.max(...recent)`: `tests/e2e/source-guards.test.ts` forbids spreading into
+       * Math.min/max anywhere in `src/` (a 1M-point array blows the stack), and the guard is right
+       * to apply here even though this array is capped at four.
+       */
+      let lo = Infinity;
+      let hi = -Infinity;
+      for (const v of recent) {
+        if (v < lo) lo = v;
+        if (v > hi) hi = v;
+      }
+      const spread = recent.length < 4 ? Infinity : hi - lo;
+      const distanceQuiet = spread < 2e-4;
+      const distanceArrived = Math.abs(frame.dTarget - camDistance) < 0.0005;
+      const distanceSettled = rigOwnsDistance.current ? distanceArrived && distanceQuiet : distanceQuiet;
       probe.current = {
         state: {
           mode: 'live',
@@ -231,7 +321,7 @@ function LiveFrameRig({ controlsRef, probe }: FrameRigProps) {
           free: { ...frame.free },
           target: { dx: frame.dx, dy: frame.dy, d: frame.dTarget },
           current: { dx, dy, d: camDistance },
-          settled: pxError < 0.05 && Math.abs(frame.dTarget - camDistance) < 0.0005,
+          settled: pxError < 0.05 && distanceSettled,
           degenerate: frame.degenerate,
           // `enabled` too: `clearViewOffset()` leaves `view` non-null (three
           // PerspectiveCamera.js:202-212), so a null check alone reports the inverse of the truth.

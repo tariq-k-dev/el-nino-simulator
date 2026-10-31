@@ -21,6 +21,8 @@ export interface GlobeProbeHandle {
   project(point?: [number, number, number]): { x: number; y: number; behind: boolean };
   discRadiusPx(): number;
   distance(): number;
+  /** The orbit target in world space; equals the globe centre until a fly-to moves it. */
+  target(): [number, number, number];
   insets(): { top: number; right: number; bottom: number; left: number };
   pins(): Array<{ id: string; x: number; y: number; behind: boolean; facing: boolean }>;
   /** Pin core positions in WORLD space, for negative tests that inject at a pin. */
@@ -83,6 +85,35 @@ export interface EngineStoreProbe {
   };
 }
 
+
+/**
+ * Mirrors `FrameProbe` from src/lib/frameProbe.ts.
+ *
+ * Every field is a getter over the rig's latest frame, so a poll reads the live value rather than a
+ * snapshot taken when the page loaded. `snapshot()` is the coherent read for assertions that must
+ * not straddle two frames.
+ */
+export interface FrameProbeHandle {
+  readonly mode: 'live' | 'locked';
+  readonly insets: { top: number; right: number; bottom: number; left: number };
+  readonly free: { x: number; y: number; w: number; h: number };
+  readonly target: { dx: number; dy: number; d: number };
+  readonly current: { dx: number; dy: number; d: number };
+  readonly settled: boolean;
+  readonly degenerate: boolean;
+  readonly cameraViewIsNull: boolean;
+  snapshot(): {
+    mode: 'live' | 'locked';
+    insets: { top: number; right: number; bottom: number; left: number };
+    free: { x: number; y: number; w: number; h: number };
+    target: { dx: number; dy: number; d: number };
+    current: { dx: number; dy: number; d: number };
+    settled: boolean;
+    degenerate: boolean;
+    cameraViewIsNull: boolean;
+  };
+}
+
 declare global {
   interface Window {
     /** Long-task durations collected by the PerformanceObserver in case b. */
@@ -104,6 +135,10 @@ declare global {
     __bootErrors?: Array<{ kind: string; message: string; stack: string }>;
     /** E2E-only, ?debug only: three.js handles for visual QA. */
     __globe?: GlobeProbeHandle;
+    /** E2E-only, ?debug only: the framing probe (step 3A2). Same gate as `__globe`. */
+    __frame?: FrameProbeHandle;
+    /** Set only when the locked branch of `FrameRig` ran; absent in a live page. */
+    __frameLocked?: string;
     __scene?: unknown;
     /** E2E-only, ?debug only: the three.js namespace, so negative tests can construct
      * a real light to inject into the live scene. */

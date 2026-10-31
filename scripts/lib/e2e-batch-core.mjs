@@ -145,6 +145,10 @@ export const FILE_TIMEOUTS_MS = {
   'negative.spec.ts': 8 * 60_000,
   // ref.spec: measured 17.1 s per process (three separate runs, B3.4) -> 2x = 34.2 s, rounded to 1 min.
   'ref.spec.ts': 1 * 60_000,
+  // frame.spec: measured 120-125 s for all 20 cases in one batched process -> 2x = 250 s, rounded
+  // up to 5 min (the rounding is upward on purpose: a backstop that fires one second late is a
+  // slow run, one that fires one second early is a false TIMEOUT).
+  'frame.spec.ts': 5 * 60_000,
   'globe.spec.ts': 3 * 60_000,
   'boot.spec.ts': 10 * 60_000,
   'harden.spec.ts': 4 * 60_000,

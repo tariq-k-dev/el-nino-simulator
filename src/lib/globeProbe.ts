@@ -37,6 +37,16 @@ export interface GlobeProbe {
   discRadiusPx(): number;
   /** Camera distance from the orbit target, in scene units. */
   distance(): number;
+  /**
+   * The orbit target in world space.
+   *
+   * Needed by any spec that wants to know where the camera is AIMED, as opposed to where the world
+   * origin is. The two are the same until a region fly-to moves the target onto a pin, after which
+   * projecting `[0,0,0]` answers a different question — measured: with the drawer open at 1440x900
+   * the world origin projects 124 px from the free centre while the target lands on it exactly,
+   * which is the framing working, not failing.
+   */
+  target(): [number, number, number];
   /** Current occluder insets, in CSS pixels. */
   insets(): Insets;
   /**
@@ -244,6 +254,10 @@ export function createGlobeProbe(input: GlobeProbeInput): GlobeProbe {
     discRadiusPx,
     pinAnchors: () => input.pins?.() ?? [],
     distance,
+    target: () => {
+      const t = input.getTarget();
+      return [t.x, t.y, t.z];
+    },
     insets: () => input.readInsets(),
     pins,
     lookFlags: () => input.readLookFlags(),

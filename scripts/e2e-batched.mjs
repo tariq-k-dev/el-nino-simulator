@@ -516,6 +516,8 @@ function expectedCounts() {
     'history-gate.spec.ts': 1,
     'limb.spec.ts': 2,
     'look.spec.ts': 9,
+    // Step 3A2: F1-F10, with F2/F3/F4 parameterised over four viewports and F8 over two.
+    'frame.spec.ts': 20,
     'negative.spec.ts': 14,
     'ref.spec.ts': 2,
     'scene-gate.spec.ts': 2,
