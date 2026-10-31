@@ -389,3 +389,33 @@ going lossy.
 **Known open question:** the cross-load control pair flipped by 0.7152 luma over 213–221 px inside the
 real `negative.spec` process (twice), and no D8 arm reproduced it. See
 `docs/globe-look/SPEC.md` §5.5 and `docs/STEP3-DIAG.md`. It is not covered by this spec's result.
+
+## Known load-sensitive test (Step 3A waiver)
+
+`tests/e2e/globe.spec.ts:305` — **"zoom still works after a region fly-to"**, assertion at
+`globe.spec.ts:345`.
+
+| | |
+|---|---|
+| assertion | `after > before + 0.02` |
+| measured on failure | **3.3779 → 3.3665** (needed > **3.397931150930327**) |
+| wheel sequence | 6 × `mouse.wheel(0, 120)` at 80 ms intervals (`:335-336`) |
+| settle before measuring | **500 ms** (`:338`) |
+| where it failed | once, in a **20.3 min** full batched run, near the end of the run |
+| load at the time | Hermes **564** and **274**, python **222** CPU-seconds; zero retries |
+| isolation rerun | **5/5 passed, 52.3 s**, same bundle `srcHash 8917ea9a14ab` |
+
+**The cause is UNEXPLAINED and is accepted as a waiver by Tariq's decision.** It was **not**
+attributed by ablation — the `data-occluder` markup was deliberately not ablated, so nothing here
+should be read as clearing it. What supports the waiver instead is the layout evidence: the C.5 probe
+compared `getBoundingClientRect` for all 15 panel/viewport combinations (canvas, header, deck, cards,
+drawer at 1440x900, 1280x720 and 1920x1080) before and after the markers were added and found them
+**identical**, so the markers do not move anything.
+
+**Rule from Step 3A2 on:** any failure of this test — in a full run *or* in isolation — is treated as
+a **real regression**, because Step 3A2 changes camera and zoom behaviour. The waiver applies only to
+this one occurrence against a bundle that predates those changes.
+
+**Operating advice:** close heavy background apps (JetBrains indexers, extra Chrome profiles, Python
+jobs) before a full `pnpm e2e`. The run that failed took 20.3 min; the same suite on a quiet machine
+was ~10 min, and this test measures a time-based settle, not a state.

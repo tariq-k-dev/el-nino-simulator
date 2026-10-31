@@ -319,3 +319,12 @@ these had to be rewritten to drop `Math.min(...spread)` before the gate would pa
 B3 (reference frame) needs D8 re-run **inside the negative-spec process state** to settle whether
 reading (2) or (3) is real, or an explicit decision to take the D8 result at face value and let
 ref.spec's strict 0 stand. Step C (insets registry) was not started.
+
+## Step 3A closes — with a documented F waiver
+
+Step 3A is **closed**. Final gate: **784 unit tests in 33 files**, `tsc -b` / `lint` / `test` /
+`build` all exit 0. Full batched e2e: **56 tests ran, 55 passed**, one failure
+(`globe.spec.ts "zoom still works after a region fly-to"`) accepted as a load-sensitive Playwright
+artifact — see "Known load-sensitive test" in `docs/E2E.md`. Nothing was changed to make it pass: no
+threshold, timeout, retry or test body. Five commits carry the step: the uTime gates, the N10
+frame-identity re-spec, the strict-0 reference frame, the occluder registry, and this waiver.
