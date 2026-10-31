@@ -55,7 +55,13 @@ export type DefectName =
   /** The faithful N4: the retired cool fill light AND the material specular that made it glow. */
   | 'fillLightWithSpecular'
   | 'pinEmissiveBoost'
-  | 'pinsHidden';
+  | 'pinsHidden'
+  /** Albedo-neutral surface: textures removed, flat per-channel means in linear space. */
+  | 'flatAlbedo'
+  /** N6c: a white AmbientLight at the scene root, which lifts the emissive night floor. */
+  | 'ambientLight'
+  /** N6d: a two-texel toon ramp, i.e. a genuinely hard terminator in a live render. */
+  | 'toonTerminator';
 
 export interface DefectSpec {
   name: DefectName;
@@ -208,6 +214,14 @@ const DEFECT_SOURCE = function installDefectEngine(): void {
     emissiveIntensity?: number;
     visible?: boolean;
     uuid?: string;
+    /** three's Color on the new defects. */
+    color?: unknown;
+    emissive?: unknown;
+    /** Texture slots the flat-albedo probe removes. */
+    map?: unknown;
+    emissiveMap?: unknown;
+    /** Present on every three material; the flat-albedo probe stores its save slot here. */
+    userData: Record<string, unknown>;
     [key: string]: unknown;
   }
   interface ObjLike {
@@ -234,6 +248,8 @@ const DEFECT_SOURCE = function installDefectEngine(): void {
       install(name: string, params: Record<string, unknown>, pinName?: string): void;
       uninstall(): void;
       probe(name: string, params: Record<string, unknown>, pinName?: string): Record<string, unknown>;
+      /** Per-channel means of the day and night textures in LINEAR space. */
+      textureMeans(): Record<string, number[]>;
     };
   };
 
@@ -256,6 +272,27 @@ const DEFECT_SOURCE = function installDefectEngine(): void {
     }
   `;
 
+  /*
+   * Engine-scope accumulators, not install-scope.
+   *
+   * `apply()` is defined OUTSIDE `install()` (it is called from a chained `onBeforeRender`), so it
+   * cannot see install's locals — the first attempt to keep them there failed to compile with
+   * "Cannot find name 'savedFlat'". They live here, cleared at the start of every install.
+   */
+  let savedFlat: Array<{ mat: MatLike; key: string; value: unknown }> = [];
+  /** Material uuids already snapshotted, so a rebuild is captured exactly once. */
+  let savedFlatSeen = new Set<string>();
+
+  /**
+   * The PRISTINE surface textures, captured once before anything is flattened.
+   *
+   * Per-instance snapshots were not enough: R3F rebuilds the surface material on a React re-render,
+   * and a rebuild that happens AFTER the restore loop leaves a fresh material in whatever state the
+   * last write put it. Restoring from a single pristine record — re-applied to every instance found —
+   * is robust to any number of rebuilds in any order.
+   */
+  let pristineSurface: { map: unknown; emissiveMap: unknown; color: unknown; emissive: unknown } | null = null;
+
   let state: {
     name: string;
     params: Record<string, unknown>;
@@ -263,6 +300,8 @@ const DEFECT_SOURCE = function installDefectEngine(): void {
     light?: LightLike;
     prevOnBeforeRender: (() => void) | null;
     saved: Array<{ mat: MatLike; key: string; value: unknown }>;
+    /** Material originals for defects that re-apply every frame; may grow after install. */
+    savedExtra?: Array<{ mat: MatLike; key: string; value: unknown }>;
     addedRootLight: boolean;
     installedFrame: number;
   } | null = null;
@@ -299,6 +338,53 @@ const DEFECT_SOURCE = function installDefectEngine(): void {
       ).__look.get();
       light.intensity = flags.pins ? Number(params.intensity ?? 2) : 0;
       if (typeof light.distance === 'number') light.distance = Number(params.distance ?? 1);
+      return;
+    }
+
+    if (name === 'flatAlbedo') {
+      /*
+       * Re-asserted every frame like every other defect: `setLayers` triggers a React re-render and
+       * R3F can rebuild the surface material, which would silently restore the textures mid-measurement.
+       * The values come back off the stored descriptor, never a captured material reference.
+       */
+      const Three = w.__THREE as unknown as { Color: new (v: unknown) => unknown };
+      const level = Number(params.level ?? 1);
+      const dayMean = (params.dayMean as number[] | undefined) ?? [1, 1, 1];
+      const nightMean = (params.nightMean as number[] | undefined) ?? [0, 0, 0];
+      const toTriple = (v: number[]): string =>
+        `rgb(${v.map((c) => Math.round(Math.max(0, Math.min(1, c)) * 255)).join(',')})`;
+      w.__scene.traverse((o) => {
+        const m = o as ObjLike;
+        if (!m.isMesh || !m.material) return;
+        if (m.material.type !== 'MeshPhysicalMaterial') return;
+        /*
+         * SNAPSHOT EVERY NEW MATERIAL INSTANCE, not just the one seen at install.
+         *
+         * `setLayers` re-renders React and R3F rebuilds the surface material; `fitLimb` swaps it
+         * outright. A one-shot snapshot captured the OLD instance, so restoring it put the textures
+         * back on an object nothing renders while the NEW material stayed flattened — measured as
+         * `map=false emissiveMap=false` after uninstall. This is the same seam D1 diagnosed for the
+         * injected light, and the fix is the same: re-snapshot by identity each frame.
+         */
+        const seen = savedFlatSeen;
+        const uuid = (m.material.uuid ?? 'unknown') as string;
+        if (!seen.has(uuid)) {
+          seen.add(uuid);
+          savedFlat.push(
+            { mat: m.material, key: 'map', value: m.material.map },
+            { mat: m.material, key: 'emissiveMap', value: m.material.emissiveMap },
+            { mat: m.material, key: 'color', value: m.material.color },
+            { mat: m.material, key: 'emissive', value: m.material.emissive },
+          );
+        }
+        m.material.map = null;
+        m.material.emissiveMap = null;
+        (m.material as { color?: unknown }).color = new Three.Color(
+          toTriple([Math.min(1, dayMean[0] * level), Math.min(1, dayMean[1] * level), Math.min(1, dayMean[2] * level)]),
+        );
+        (m.material as { emissive?: unknown }).emissive = new Three.Color(toTriple(nightMean));
+        m.material.needsUpdate = true;
+      });
       return;
     }
 
@@ -412,6 +498,15 @@ const DEFECT_SOURCE = function installDefectEngine(): void {
   w.__defects = {
     install(name, params, pinName) {
       this.uninstall();
+      savedFlat = [];
+      savedFlatSeen = new Set<string>();
+      /*
+       * Declared at the TOP of install, not next to its only user: the flat-albedo block runs during
+       * install and pushes into this array, and a `const` declared further down is in the temporal
+       * dead zone at that moment — the first run failed with "Cannot access 'savedFlat' before
+       * initialization", which is the browser telling us the order was wrong.
+       */
+
       const scene = w.__scene;
       const Three = w.__THREE;
       let light: LightLike | undefined;
@@ -445,6 +540,132 @@ const DEFECT_SOURCE = function installDefectEngine(): void {
         addedRootLight = true;
       }
 
+      if (name === 'flatAlbedo') {
+        /*
+         * THE ALBEDO-NEUTRAL PROBE.
+         *
+         * Purpose: separate geography from shading. With the clock frozen the terminator is a fixed
+         * great circle, so a 0.02-wide n·L bin is a thin geographic strip and its median luma is
+         * whatever land, ocean or ice that strip happens to cross. Removing the textures makes the
+         * surface a pure function of n·L, so any remaining step in the curve is the SHADER, not the
+         * coastline.
+         *
+         * The flat colours are the per-channel means of the textures in LINEAR space, read by
+         * `__defects.textureMeans()` and passed in as params — computed from the real textures, not
+         * hardcoded. Averaging in sRGB would be wrong: the mean of 0.0 and 1.0 is 0.5 there but 0.21
+         * in linear, and three multiplies in linear, so an sRGB mean makes a mostly-dark ocean far
+         * too bright.
+         *
+         * Day colour scales by `level` (clamped per channel); the night colour is unchanged, because
+         * the night side is an emissive floor and the probe must not disturb what it measures against.
+         */
+        const Three = w.__THREE as unknown as { Color: new (v: unknown) => unknown };
+        const level = Number(params.level ?? 1);
+        const dayMean = (params.dayMean as number[] | undefined) ?? [1, 1, 1];
+        const nightMean = (params.nightMean as number[] | undefined) ?? [0, 0, 0];
+        if (!pristineSurface) {
+          w.__scene.traverse((o) => {
+            const m = o as ObjLike;
+            if (pristineSurface) return;
+            if (!m.isMesh || m.material?.type !== 'MeshPhysicalMaterial') return;
+            if (m.material.map === null || m.material.map === undefined) return;
+            pristineSurface = {
+              map: m.material.map,
+              emissiveMap: m.material.emissiveMap,
+              color: m.material.color,
+              emissive: m.material.emissive,
+            };
+          });
+        }
+        const dayLin: [number, number, number] = [
+          Math.min(1, (dayMean[0] ?? 1) * level),
+          Math.min(1, (dayMean[1] ?? 1) * level),
+          Math.min(1, (dayMean[2] ?? 1) * level),
+        ];
+        const toTriple = (v: number[]): string =>
+          `rgb(${v.map((c) => Math.round(Math.max(0, Math.min(1, c)) * 255)).join(',')})`;
+
+        w.__scene.traverse((o) => {
+          const m = o as ObjLike;
+          if (!m.isMesh || !m.material) return;
+          if (m.material.type !== 'MeshPhysicalMaterial') return;
+          /*
+           * Record the originals through the engine's OWN `saved` mechanism, not a userData slot.
+           * The generic restore replays `saved` first on uninstall, so anything written to userData
+           * is already gone by the time a per-defect block could read it — which is exactly how the
+           * first version leaked (the surface came back still flattened). One mechanism, one order.
+           */
+          savedFlat.push(
+            { mat: m.material, key: 'map', value: m.material.map },
+            { mat: m.material, key: 'emissiveMap', value: m.material.emissiveMap },
+            { mat: m.material, key: 'color', value: m.material.color },
+            { mat: m.material, key: 'emissive', value: m.material.emissive },
+          );
+          m.material.map = null;
+          m.material.emissiveMap = null;
+          (m.material as { color?: unknown }).color = new Three.Color(toTriple(dayLin));
+          /*
+           * `emissive` is MULTIPLIED by the night texture when `emissiveMap` is present, so with the
+           * map gone the emissive colour carries the night mean itself. `emissiveIntensity` (0.18)
+           * is left untouched: the night floor must keep the level it has in the real render.
+           */
+          (m.material as { emissive?: unknown }).emissive = new Three.Color(toTriple(nightMean));
+          m.material.needsUpdate = true;
+        });
+        return;
+      }
+
+      if (name === 'ambientLight') {
+        /*
+         * N6c. A white AmbientLight lifts EVERY surface uniformly, including the emissive night
+         * floor — which is exactly why it destroys the day/night separation that 3.4's VISIBLE
+         * predicate exists to measure. No positional falloff to worry about.
+         */
+        const Amb = (w.__THREE as unknown as { AmbientLight: new (c: number, i: number) => LightLike }).AmbientLight;
+        light = new Amb(Number(params.color ?? 0xffffff), Number(params.intensity ?? 3));
+        light.name = '__negative_ambientLight';
+        light.userData.__negativeInjected = true;
+        scene.add(light);
+        addedRootLight = true;
+      }
+
+      if (name === 'toonTerminator') {
+        /*
+         * N6d. Replace the Earth surface with a MeshToonMaterial driven by a two-texel gradient map,
+         * which quantises n·L to two levels — a genuinely hard terminator that no amount of albedo
+         * smoothing can hide. The flat colours are passed in so the surface stays albedo-neutral:
+         * this defect must be the ONLY difference from the flat control.
+         */
+        const Three = w.__THREE as unknown as {
+          DataTexture: new (data: Uint8Array, w: number, h: number, fmt: unknown) => unknown;
+          RedFormat?: unknown;
+          RGBAFormat?: unknown;
+          NearestFilter: unknown;
+          MeshToonMaterial: new (opts: Record<string, unknown>) => MatLike;
+          Color: new (v: unknown) => unknown;
+          Vector2?: unknown;
+        };
+        // Two texels, dark then light, nearest-sampled: the classic toon ramp.
+        const ramp = new Uint8Array([0, 0, 0, 255, 255, 255, 255, 255]);
+        const gradientMap = new Three.DataTexture(ramp, 2, 1, Three.RGBAFormat ?? 1023);
+        (gradientMap as { magFilter?: unknown; minFilter?: unknown; needsUpdate?: boolean }).magFilter = Three.NearestFilter;
+        (gradientMap as { magFilter?: unknown; minFilter?: unknown; needsUpdate?: boolean }).minFilter = Three.NearestFilter;
+        (gradientMap as { needsUpdate?: boolean }).needsUpdate = true;
+
+        w.__scene.traverse((o) => {
+          const m = o as ObjLike;
+          if (!m.isMesh || !m.material) return;
+          if (m.material.type !== 'MeshPhysicalMaterial') return;
+          const toon = new Three.MeshToonMaterial({
+            color: params.dayColor ?? 0xffffff,
+            gradientMap,
+          });
+          const mesh = o as unknown as { material: MatLike };
+          mesh.material = toon;
+        });
+        return;
+      }
+
       /*
        * The second half of the faithful N4, and the reason the ORIGINAL N4 could not fail.
        *
@@ -469,6 +690,7 @@ const DEFECT_SOURCE = function installDefectEngine(): void {
        * what the probe did and what "no floor" means on the material.
        */
       const savedSpecular: Array<{ mat: MatLike; key: string; value: unknown }> = [];
+      /** Flat-albedo originals; replayed by the generic restore before any per-defect block. */
       if (name === 'fillLightWithSpecular') {
         w.__scene.traverse((o) => {
           const m = o as ObjLike;
@@ -499,7 +721,13 @@ const DEFECT_SOURCE = function installDefectEngine(): void {
         prevOnBeforeRender: scene.onBeforeRender ?? null,
         // The faithful N4 writes material values on every frame, so its originals are
         // snapshotted once here and replayed by the generic restore path on uninstall.
+        /*
+         * `saved` is spent by the generic restore; `savedExtra` is the flat-albedo set, which may
+         * GROW after this point when apply() snapshots a rebuilt material. Both are live references,
+         * so anything pushed later is still restored.
+         */
         saved: savedSpecular,
+        savedExtra: savedFlat,
         addedRootLight,
         installedFrame: w.__gl.info.render.frame,
       };
@@ -535,7 +763,27 @@ const DEFECT_SOURCE = function installDefectEngine(): void {
       scene.onBeforeRender = closing.prevOnBeforeRender;
       if (closing.light) scene.remove(closing.light);
       // Undo the material writes by putting back the values that were read at install.
-      for (const s of closing.saved) s.mat[s.key] = s.value;
+      for (const sv of closing.saved) sv.mat[sv.key] = sv.value;
+      for (const sv of closing.savedExtra ?? []) sv.mat[sv.key] = sv.value;
+      /*
+       * Then force the PRISTINE surface back, whatever instances exist now.
+       *
+       * This runs after the generic replay on purpose: a material rebuilt during the measurements was
+       * never in `savedExtra`, and one rebuilt after the replay would keep the flat values. Applying
+       * the pristine record to every MeshPhysicalMaterial present is idempotent and order-free.
+       */
+      if (closing.name === 'flatAlbedo' && pristineSurface) {
+        const pr = pristineSurface;
+        scene.traverse((o) => {
+          const m = o as ObjLike;
+          if (!m.isMesh || m.material?.type !== 'MeshPhysicalMaterial') return;
+          (m.material as { map?: unknown }).map = pr.map;
+          (m.material as { emissiveMap?: unknown }).emissiveMap = pr.emissiveMap;
+          (m.material as { color?: unknown }).color = pr.color;
+          (m.material as { emissive?: unknown }).emissive = pr.emissive;
+          m.material.needsUpdate = true;
+        });
+      }
       // Any defect may have touched materials; a rebuild is the cheapest honest reset.
       scene.traverse((o) => {
         const m = o as ObjLike;
@@ -564,11 +812,16 @@ const DEFECT_SOURCE = function installDefectEngine(): void {
       });
       evidence.lights = lights;
 
-      if (name === 'pointLight' || name === 'fillLight' || name === 'fillLightWithSpecular') {
+      if (name === 'pointLight' || name === 'fillLight' || name === 'fillLightWithSpecular' || name === 'ambientLight') {
         let found: Record<string, unknown> | null = null;
         scene.traverse((o) => {
           const l = o as ObjLike & { isLight?: boolean; intensity?: number; distance?: number; position?: { x: number; y: number; z: number }; parent?: { uuid?: string } };
-          const wanted = name === 'pointLight' ? '__negative_pointLight' : '__negative_fillLight';
+          const wanted =
+            name === 'pointLight'
+              ? '__negative_pointLight'
+              : name === 'ambientLight'
+                ? '__negative_ambientLight'
+                : '__negative_fillLight';
           if (l.name !== wanted) return;
           found = {
             intensity: l.intensity,
@@ -636,6 +889,38 @@ const DEFECT_SOURCE = function installDefectEngine(): void {
           }
           if (s.hasRoughnessMap) failures.push('roughnessMap is still attached, so the roughness floor still applies');
         }
+      }
+
+      if (name === 'flatAlbedo') {
+        // The textures must be GONE and the colours flat, or this is not an albedo-neutral probe.
+        let mat: Record<string, unknown> | null = null;
+        scene.traverse((o) => {
+          const m = o as ObjLike;
+          if (!m.isMesh || m.material?.type !== 'MeshPhysicalMaterial') return;
+          mat = {
+            hasMap: m.material.map !== null && m.material.map !== undefined,
+            hasEmissiveMap: m.material.emissiveMap !== null && m.material.emissiveMap !== undefined,
+            color: (m.material.color as { getHexString?: () => string } | undefined)?.getHexString?.(),
+            emissive: (m.material.emissive as { getHexString?: () => string } | undefined)?.getHexString?.(),
+          };
+        });
+        evidence.earthSurface = mat;
+        if (!mat) failures.push('the Earth surface material is not in the scene');
+        else {
+          const f = mat as { hasMap?: boolean; hasEmissiveMap?: boolean };
+          if (f.hasMap) failures.push('map is still attached — the probe is not albedo-neutral');
+          if (f.hasEmissiveMap) failures.push('emissiveMap is still attached — the night side still has texture');
+        }
+      }
+
+      if (name === 'toonTerminator') {
+        let toon = 0;
+        scene.traverse((o) => {
+          const m = o as ObjLike;
+          if (m.isMesh && m.material?.type === 'MeshToonMaterial') toon += 1;
+        });
+        evidence.toonMeshes = toon;
+        if (toon === 0) failures.push('no MeshToonMaterial was installed');
       }
 
       if (name === 'atmosphereOpaque') {
@@ -710,6 +995,53 @@ const DEFECT_SOURCE = function installDefectEngine(): void {
 
       evidence.frameAtProbe = gl.info.render.frame;
       return { evidence, failures, frameBefore: 0, frameAtCapture: gl.info.render.frame } as Record<string, unknown>;
+    },
+
+    /**
+     * Per-channel means of the Earth's day and night textures, in LINEAR space.
+     *
+     * Read from the live textures rather than hardcoded, so the albedo-neutral probe uses the same
+     * pixels the render does. sRGB texels are linearised before averaging — three multiplies in
+     * linear light, so an sRGB mean of a mostly-dark ocean comes out far too bright.
+     */
+    textureMeans() {
+      const out: Record<string, number[]> = {};
+      const meanOf = (tex: unknown): number[] | null => {
+        const t = tex as { image?: { width?: number; height?: number } } | null;
+        const img = t?.image;
+        if (!img || !img.width || !img.height) return null;
+        const canvas = document.createElement('canvas');
+        canvas.width = img.width;
+        canvas.height = img.height;
+        const ctx = canvas.getContext('2d');
+        if (!ctx) return null;
+        ctx.drawImage(img as CanvasImageSource, 0, 0);
+        const data = ctx.getImageData(0, 0, img.width, img.height).data;
+        const toLin = (v: number): number => {
+          const c = v / 255;
+          return c <= 0.04045 ? c / 12.92 : Math.pow((c + 0.055) / 1.055, 2.4);
+        };
+        let r = 0;
+        let g = 0;
+        let b = 0;
+        const n = img.width * img.height;
+        for (let i = 0; i < data.length; i += 4) {
+          r += toLin(data[i]);
+          g += toLin(data[i + 1]);
+          b += toLin(data[i + 2]);
+        }
+        return [r / n, g / n, b / n];
+      };
+
+      w.__scene.traverse((o) => {
+        const m = o as ObjLike;
+        if (!m.isMesh || m.material?.type !== 'MeshPhysicalMaterial') return;
+        const day = meanOf(m.material.map);
+        const night = meanOf(m.material.emissiveMap);
+        if (day) out.day = day;
+        if (night) out.night = night;
+      });
+      return out;
     },
   };
 };
