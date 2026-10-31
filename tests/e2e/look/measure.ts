@@ -620,8 +620,14 @@ export async function measureTerminator(
     if (line.length) lines.push(line);
   }
 
-  const tMin = Math.min(...lines.map((l) => l[0].t));
-  const tMax = Math.max(...lines.map((l) => l[l.length - 1].t));
+  // Loops, not spreads: `lines` is bounded at 5 but the pattern is the one that blew the
+  // stack in `labelBlobs`, and a bound that lives only in a caller's head is not a bound.
+  let tMin = Infinity;
+  let tMax = -Infinity;
+  for (const l of lines) {
+    if (l[0].t < tMin) tMin = l[0].t;
+    if (l[l.length - 1].t > tMax) tMax = l[l.length - 1].t;
+  }
   const merged: Array<{ t: number; luma: number }> = [];
   for (let t = tMin; t <= tMax; t += 1) {
     const vals: number[] = [];
@@ -648,8 +654,13 @@ export async function measureTerminator(
     .slice(falloff.start, falloff.end + 1)
     .map((p2) => ({ r: p2.t, luma: p2.luma }));
 
-  const hi = Math.max(...windowed.map((p) => p.luma));
-  const lo = Math.min(...windowed.map((p) => p.luma));
+  // Same reasoning: `windowed` is a slice of the terminator profile, i.e. pixel-derived.
+  let hi = -Infinity;
+  let lo = Infinity;
+  for (const p2 of windowed) {
+    if (p2.luma > hi) hi = p2.luma;
+    if (p2.luma < lo) lo = p2.luma;
+  }
   const highLevel = lo + (hi - lo) * 0.9;
   const lowLevel = lo + (hi - lo) * 0.1;
   const w = transitionWidth(windowed, highLevel, lowLevel);
@@ -876,9 +887,21 @@ export async function measurePinGates(
       const r = med(pixels.map((p) => p[0]));
       const g = med(pixels.map((p) => p[1]));
       const b = med(pixels.map((p) => p[2]));
+      /*
+       * Saturation by loop over each pixel's three channels.
+       *
+       * The spread here is over ONE RGB triple, so it is safe — but `pixels` itself is a
+       * core region whose size is only bounded by the pin's projected radius, and the same
+       * pattern one line away would be over ~1 M values. Looping removes the question.
+       */
       const sat = pixels.map((p) => {
-        const mx = Math.max(...p);
-        return mx === 0 ? 0 : (mx - Math.min(...p)) / mx;
+        let mx = p[0];
+        let mn = p[0];
+        for (let i = 1; i < p.length; i += 1) {
+          if (p[i] > mx) mx = p[i];
+          if (p[i] < mn) mn = p[i];
+        }
+        return mx === 0 ? 0 : (mx - mn) / mx;
       });
       sample = {
         pixels,

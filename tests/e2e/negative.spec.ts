@@ -369,7 +369,9 @@ test.describe('negative tests: each check fails when its defect is present', () 
    * evidence that 3.3's ratio gate is blind at low signal, and the next reader should not
    * have to rediscover it. Tracked in docs/globe-look/D1-DIAGNOSIS.md.
    */
-  test.fixme('N4: a blue DirectionalLight at (-5.2,-2.2,-4.6) makes 3.3 FAIL in W1', async ({ page }) => {
+  test.fixme( // allow-skip: 3.3's ratio gate cannot see a 3/255 blue lift at W1's luma -- measurements in the comment above, options need sign-off
+    'N4: a blue DirectionalLight at (-5.2,-2.2,-4.6) makes 3.3 FAIL in W1',
+    async ({ page }) => {
     /*
      * 3.3 needs the specular mask to decide W1 is not excused, and that mask is a second
      * capture taken with a different material state — so this one keeps the committed
@@ -428,8 +430,8 @@ test.describe('negative tests: each check fails when its defect is present', () 
         `At intensity 0.32 this defect moves 3 pixels in the whole disc and lifts W1's blue by 3/255 — see the fixme note.`,
     ).toBeGreaterThan(1.15);
     expect(w1Defect.ratio).toBeGreaterThan(w1Control!.ratio);
-  });
-
+    },
+  );
   // --------------------------------------------------------------------- N5 ---
   test('N5: 3.2 rejects an all-black capture as invalid and fails an all-white one', async ({ page }) => {
     await settleAt(page, 0);

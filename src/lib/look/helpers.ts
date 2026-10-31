@@ -188,6 +188,34 @@ export function annulus(
   return { mean: count ? sum / count : NaN, count };
 }
 
+/**
+ * Largest value in an array, by loop.
+ *
+ * `Math.max(...xs)` passes one ARGUMENT per element, and V8 caps arguments in the low
+ * hundreds of thousands. A 1280x800 capture is ~1 M pixels, so the spread form throws
+ * "Maximum call stack size exceeded" on exactly the frame the negative suite feeds it —
+ * measured, not theorised (see `labelBlobs`, and N5's all-white case). An empty array
+ * yields `fallback` rather than -Infinity, because every caller here wants a 0.
+ */
+export function maxOf(values: ArrayLike<number>, fallback = 0): number {
+  let best = -Infinity;
+  for (let i = 0; i < values.length; i += 1) {
+    const v = values[i];
+    if (v > best) best = v;
+  }
+  return best === -Infinity ? fallback : best;
+}
+
+/** Smallest value in an array, by loop. The mirror of `maxOf`; see its note. */
+export function minOf(values: ArrayLike<number>, fallback = 0): number {
+  let best = Infinity;
+  for (let i = 0; i < values.length; i += 1) {
+    const v = values[i];
+    if (v < best) best = v;
+  }
+  return best === Infinity ? fallback : best;
+}
+
 /** Median of a numeric array. Mutates nothing; returns NaN on empty. */
 export function median(values: number[]): number {
   if (values.length === 0) return NaN;

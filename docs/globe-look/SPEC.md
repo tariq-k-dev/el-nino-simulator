@@ -1,30 +1,30 @@
 # SPEC — the globe look, as checks
 
 One row per check. "Negative test" names the test that proves the check can go RED; where
-that is `fixme`, the delivery failure is recorded in `tests/e2e/negative.spec.ts` and in
+that is `fixme` (N4 only), the cause is measured and recorded in `tests/e2e/negative.spec.ts` and in
 `3B-1-STATUS.md`.
 
 | Check | Definition in words | Threshold | Measured | Negative test |
 |---|---|---|---|---|
-| **3.1 rim peak** | Mean luma along 16 rays at offset 0 = the FITTED limb; the maximum of that mean profile. | <= 110/255 | **93.9** at +1 px | N3 (fixme) |
-| **3.1 monotonic** | On every ray, luma must fall strictly outward from `max(peak, outermost opaque silhouette + 1 px)`. | rise <= 1/255 | **0.44/255** from +3 px | N3 (fixme) |
-| **3.1 silhouette** | Difference between the mean profile at the shell silhouette and the far background. | <= 2/255 | **0.31/255** | N3 (fixme) |
-| **3.1 halo step** | Largest adjacent step on the MEAN profile beyond +2 px from the limb. | <= 16/255 | **7.94/255** | N3 (fixme) |
+| **3.1 rim peak** | Mean luma along 16 rays at offset 0 = the FITTED limb; the maximum of that mean profile. | <= 110/255 | **93.9** at +1 px | **N3 (passing)** |
+| **3.1 monotonic** | On every ray, luma must fall strictly outward from `max(peak, outermost opaque silhouette + 1 px)`. | rise <= 1/255 | **0.44/255** from +3 px | **N3 (passing)** |
+| **3.1 silhouette** | Difference between the mean profile at the shell silhouette and the far background. | <= 2/255 | **0.31/255** | **N3 (passing)** |
+| **3.1 halo step** | Largest adjacent step on the MEAN profile beyond +2 px from the limb. | <= 16/255 | **7.94/255** | **N3 (passing)** |
 | **3.1 limb->halo** | Peak minus the value 1 px inside the limb. | reported only | **35.2/255** | — |
 | **3.2 clipped** | Pixels inside the disc with min(R,G,B) >= 250. | == 0 | **0** at all 12 azimuths | **N2 (passing)** |
 | **3.2 blob** | Largest 8-connected blob of luma >= 250 inside the disc. | <= 12 px | **0** at all 12 azimuths | **N2 (passing)** |
-| **3.3 local peak** | W1 (0.91 R, 180 deg): sigma-3-blurred peak over the median of the 8..20 px annulus around it, excluding the measured specular mask. | ratio <= 1.15 | **0.982** (peak 6.03, med 6.14) | N4 (fixme) |
+| **3.3 local peak** | W1 (0.91 R, 180 deg): sigma-3-blurred peak over the median of the 8..20 px annulus around it, excluding the measured specular mask. | ratio <= 1.15 | **0.982** (peak 6.03, med 6.14) | **N4 (fixme — see D1-DIAGNOSIS)** |
 | **3.4 width** | 90%->10% of (day plateau - night plateau), median of 5 parallel lines, measured ONLY inside the terminator's own locally monotonic falloff. | >= 6% of R_fit | **31.0 px = 9.51%** | — |
 | **3.4 night fraction** | Share of disc pixels with luma < 25% of the day mean. | 10-30% | **15.40%** | — |
 | **3.4 night mean** | Mean luma of those night pixels. | >= 4/255 | **11.04** (all 12 az) | — |
 | **3.4 hard step** | Max adjacent 1 px luma step between the 90% and 10% crossings, all 12 azimuths. | <= 16/255 (fixed constant; equals `ceil(1.25 x 12.31)` from the pre-`terminatorFalloff` scan, i.e. `ceil(1.25 x 13.69)` would now be 18) | **13.69** (az 60) — headroom 1.169 | — |
-| **3.5 P1 visible** | Median luma of the valid core pixels (circle of radius `coreFrac 0.6` x the measured core radius). | >= 180 | **247.3 .. 249.8** | N7 (pending C2) |
-| **3.5 P2 no blowout** | Count of core pixels with `min(R,G,B) >= 250`. | == 0 | **0** on every valid pin | N7 (pending C2) |
-| **3.5 P3 still tinted** | Median saturation `(max-min)/max` of the core pixels. | >= 0.15 | **0.282 .. 0.420** | N8 (pending C2) |
-| **3.5 P4 amber ordering** | Median `R >= 240`, `G >= 200`, `B <= G`. | all three | **[255,255,149] / [255,255,179] / [255,255,183]** | N8 (pending C2) |
+| **3.5 P1 visible** | Median luma of the valid core pixels (circle of radius `coreFrac 0.6` x the measured core radius). | >= 180 | **247.3 .. 249.8** | **N8 (passing)** |
+| **3.5 P2 no blowout** | Count of core pixels with `min(R,G,B) >= 250`. | == 0 | **0** on every valid pin | **N7 (passing)** |
+| **3.5 P3 still tinted** | Median saturation `(max-min)/max` of the core pixels. | >= 0.15 | **0.282 .. 0.420** | **N7 (passing)** — a 4x emissive blow-out drives sat to 0.000 |
+| **3.5 P4 amber ordering** | Median `R >= 240`, `G >= 200`, `B <= G`. | all three | **[255,255,149] / [255,255,179] / [255,255,183]** | **none — measured to SURVIVE both defects** |
 | **3.5 validity** | A pin is gated only if `n·cam >= 0.1`, `r/R <= 0.97` and `n >= 5` samples; otherwise INVALID, listed, never counted. | 4 of 16 pin/az pairs valid | pacific@0 1.100 R, horn-africa@180 1.001 R, us-west@90 0.980 R fall out on r/R; the rest face away | — |
 | **3.5 day/night coverage** | The suite fails if no valid DAY pin (`n·sun > 0.2`) or no valid NIGHT pin (`n·sun < -0.1`) is found across az {0,90,180,270}. | >= 1 of each | **1 day (us-west@0), 2 night (se-asia@180, pacific@270)** | — |
-| **3.6 no cast light** | Mean luma of the r 30..60 px annulus, pins ON vs OFF. | abs(delta) <= max(3%, 1.5 x noise%) | us-west 2.849%, se-asia 0.018%, horn-africa 0.002% | N1 (fixme) |
+| **3.6 no cast light** | Mean luma of the r 30..60 px annulus, pins ON vs OFF. | abs(delta) <= max(3%, 1.5 x noise%) | us-west 2.849%, se-asia 0.018%, horn-africa 0.002% | **N1 (passing)** |
 | **3.7 console** | Warnings/errors and page errors from first navigation. | == 0 | **0** (3 driver notices filtered) | — |
 | **3.8 zoom** | The five globe.spec.ts zoom cases. | all pass | **5/5** | — |
 

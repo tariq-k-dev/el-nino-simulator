@@ -19,6 +19,7 @@ import type {
   TimelinePoint,
 } from '@/types/enso';
 import { computeMetrics } from '@/lib/model';
+import { maxOf } from '@/lib/look/helpers';
 import type { HistoricalRow } from '@/lib/data/parse';
 import {
   ANALOG_LIMIT,
@@ -66,7 +67,7 @@ export function createTsEngine({ rows }: TsEngineOptions): DataEngine {
     // round(avg(nino_34_anomaly), 3)
     meanAnomaly: r3(mean(anomalies)),
     // round(max(nino_34_anomaly), 3)
-    maxAnomaly: r3(anomalies.length > 0 ? Math.max(...anomalies) : 0),
+    maxAnomaly: r3(maxOf(anomalies)),
     // strftime(arg_max(date, nino_34_anomaly), '%Y-%m')
     maxAnomalyDate: monthKey(
       argMaxDate(ordered.map((row) => ({ date: row.date, value: row.nino_34_anomaly }))),
