@@ -601,9 +601,9 @@ test.describe('framing', () => {
       // The NEW free centre, to the same 0.75 px the closed cases use.
       expect(errX).toBeLessThan(0.75);
       expect(errY).toBeLessThan(0.75);
-      // …and the aim really did leave the origin, so switching the oracle was necessary rather than
-      // a convenient way to pass.
-      expect(aimMoved).toBeGreaterThan(0.1);
+      // …and the aim STAYED: face-pin keeps the target at the origin and the aim oracle still
+      // projects it onto the free-rect centre (WAIVER W1, replacing the aim-at-pin assertion).
+      expect(aimMoved).toBeLessThanOrEqual(1e-6);
       // The drawer narrows the free rect by its full 102 px of extra inset.
       expect(openSnap.free.w).toBeLessThan(closed.free.w - 100);
       /*
