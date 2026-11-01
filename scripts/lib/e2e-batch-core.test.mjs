@@ -218,9 +218,9 @@ describe('fileTimeoutMs', () => {
   const ADDED_AFTER_RUN3 = {
     // Step 3B2-FIX1 B: 11 cases, 2.2 min isolated. 4 min = 2x that, rounded up. Not from run3.
     'reset-ux.spec.ts': 240_000,
-    // Step 3B2-FIX1 D: measured 39.4 s (sweep) + 6.3 s (D2) for two of its four cases; 240 s is a
-    // backstop for the whole file, which also runs 80 spin-on clicks and 48 D4 clicks.
-    'pin-click.spec.ts': 240_000,
+    // Step 3B2-FIX2-CONT A5: 7 cases, measured 9.7 min isolated. 1_200_000 is 2x that. The previous
+    // 240 s budget killed the file at 3/7 in the first batched run after the case count grew.
+    'pin-click.spec.ts': 1_200_000,
   };
 
   it('covers exactly the files the measured run covers, plus the declared additions', () => {

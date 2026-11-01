@@ -173,9 +173,11 @@ export const FILE_TIMEOUTS_MS = {
   // Step 3B2-FIX1: no batched measurement yet (it is new in this step); 4 min is 2x the 2 min its
   // 11 cases take isolated, rounded up. A3's rule applies once a batched wall exists for it.
   'reset-ux.spec.ts': 240_000,
-  // pin-click.spec.ts: sweep 39.4 s + D2 6.3 s + spin-on (80 clicks) + D4 (48 clicks) measured at 6 min
-  // isolated on this machine; 240 s is a backstop for the suite as committed, not for one g case.
-  'pin-click.spec.ts': 240_000,
+  // pin-click.spec.ts: 3B2-FIX2-CONT took it from 4 cases to 7 and its measured isolated wall is 9.7 min
+  // (sweep 3.0 min, spin-on ~2.6 min, D2/D3 ~1 min, D4/D5/D6 ~3 min). It then TIMED OUT at 240 s in the
+  // 3B2-FIX2-CONT batch -- killed at 3/7 tests -- because the case count grew and this budget did not.
+  // 1_200_000 is 2x the measured wall, per this table's own rule.
+  'pin-click.spec.ts': 1_200_000,
   'negative.spec.ts': 388_000,
   'camera-golden.spec.ts': 296_000,
   'frame.spec.ts': 242_000,

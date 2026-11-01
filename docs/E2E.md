@@ -417,9 +417,13 @@ already **13.6-18.2 px stale at pointerdown**. The case now arms a native event 
 in between, and states its 100 % assertion on the **clean subset** (proxy hit at both ends) while reporting the
 dirty rows with their measured window. That is a harness limit, stated and measured, not a tolerance.
 
-**Counts:** `pin-click.spec.ts` **7** (was 4), so the full suite is **130** by the runner's own
-`expectedCounts()`. The prompt's arithmetic said 135 (127 + 8); the difference is this file's own growth
-(+3) against `switcher-ux.spec.ts` (8) already being inside the 127 — see the full-run table.
+**Counts:** `pin-click.spec.ts` **7** (was 4: D3, D5 and D6 are new, D4 was rewritten). The suite at the
+`783a605` baseline was **135** = 127 (through FIX1) + 8 (`switcher-ux.spec.ts`), so this step's expected total is
+**135 + 3 = 138**, and `expectedCounts()` now carries 7 for this file.
+
+The arithmetic, in full: boot 10, camera-golden 9, determinism 2, focus-ux 22, frame 20, frame-director 5,
+gate-clock 1, globe 5, harden 8, history-gate 1, limb 2, look 9, negative 14, **pin-click 7**, ref 2,
+reset-ux 11, scene-gate 2, switcher-ux 8 = **138**.
 
 **`reset-ux.spec.ts` compares against a pose sampled right after a FRESH LOAD of the same viewport**, not
 against a hardcoded vector — the load pose is the product's own definition of "the load state". Measured at
