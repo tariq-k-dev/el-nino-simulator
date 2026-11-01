@@ -12,6 +12,37 @@ Session log for the Step 3 framing work. One row per step; each prompt lives in 
 | 2B-STEP3-A-FIX3-V3 | **E1 + B2 done; B3 SKIPPED on D8 reading (3); C not started** | `24c76ab`, `a8f9ea2`, docs | 28/28, zero retries |
 | 2B-STEP3-A (close) | **CLOSED** — 784 unit tests, 56 e2e, one waivered failure | `5db822c` | the 3A waiver, documented in `docs/E2E.md` |
 | 2B-STEP3-A2 | **CLOSED** — framing behind a live/locked mode; zoom-out fit | `9f38053`…`this` | 819 unit tests; frame 20/20 in two isolated runs |
+| 2B-STEP3-B | **CLOSED** — CameraDirector the single camera writer | `4c7801d`…`f1d659c` | 848 unit tests / 38 files; 90 e2e expected |
+| 2B-STEP3-B2 | PARTIAL — audit found C1/C2; B (pure facing core) landed | `e1c97a1`, `0ffeddf`, `904b149`, `5e5c9ea`, `b53fded` | 880 unit tests / 39 files; stopped before C |
+| 2B-STEP3-B2-CONT | **STOPPED at C** — AM5's pre-edit grep found C3 | `541b58b`, `this` | AM1-AM5 recorded; `camera-golden.spec.ts` needs a second S2 exception |
+
+---
+
+## 2B-STEP3-B2-CONT — amendments recorded, stopped before step C on C3
+
+The continuation prompt's AM1-AM5 are recorded in `docs/STEP3B2-DESIGN.md` §8, with the AM1 distance
+table computed from `frame.ts` for all four viewports. AM1 and AM5 resolve C1 and (**only**) F8.
+
+**C3, found by the pre-edit grep AM5 mandates.** `tests/e2e/camera-golden.spec.ts` reads
+`controls.target` in live mode in two places, neither of them F8:
+
+| site | what it does | under face-pin |
+|---|---|---|
+| `:236-247` | `flyTo()`'s "the selection was received" poll: `|__globe.target()| > 0.02`, 15 s timeout, used by locked AND live cases | `|target|` is exactly 0 for the whole arc → the poll never turns true → the 4 live cases throw after 15 s |
+| `:347` | `expect(err.target).toBeLessThanOrEqual(1e-5)` against fixture targets of `|t|` 0.996-1.000 R | error 0.999 R, 1e5 x the tolerance |
+
+Because `flyTo()` is also what step C's `UPDATE_GOLDEN=1` regeneration runs, **the live golden entries
+cannot be regenerated at all** under the live policy — so S3's live half cannot be produced. Repairing
+it needs ~8-12 lines in a second existing spec file, i.e. a second S2 exception that AM5 does not
+grant (AM5 is "one existing-spec edit", `frame.spec.ts` F8, ≤ 6 lines).
+
+Triggered: **AM5** ("any conflict other than F8 means STOP") and **S2** (second exception).
+Not triggered: S1, S3-literal (locked half untouched), S4, S5, S6, S7, S9. No product code changed.
+
+**Resumption point:** choose one of the three options in `docs/STEP3B2-DESIGN.md` §9 ("The three ways
+forward"), amend AM5 into a W1 + W2 pair, then re-enter at step C. Everything before C is committed:
+`facing.ts`/`easing.ts` (32 tests, 880 total) are independent of both the director policy and this
+spec conflict, so none of that work is at risk.
 
 ---
 

@@ -200,7 +200,152 @@ Interpolation (a second pure export, `arcStep`):
 | U9 | drawer opened during the fly-to → final pin at the NEW free-rect centre ≤ 0.75 px |
 | U10 | the 15 rects of 3A step C unchanged; only the Reset control adds a rect |
 
-## 8. Contradiction check — TWO CONTRADICTIONS FOUND. STOPPED HERE.
+## 8. Amendments AM1–AM5 (GOVERNING — they win over items 5, 6, U2, U3 and over S2)
+
+Recorded here per step A2 of `docs/prompts/step3-b2-cont.md`. Where any amendment conflicts with a
+sentence above, the amendment wins.
+
+**AM1 — distance channel (resolves C1).** The fit channel is not scoped to `idle`/`returning`. While
+`userZoomed` is false it follows `d_fit` of the **current** free rect in EVERY state (`idle`,
+`focusing`, `focused`, `returning`) and in both directions, with floor `d0`, ceiling `dMax`, ease time
+constant 180 ms (`FRAME_TIME_CONSTANT_S`) and a snap on first application — i.e. exactly the channel
+3A2 shipped (`CameraDirector.tsx:393-414`). The live fly-to writes the **direction only**: never the
+distance, never `controls.target`. Selecting while the drawer opens therefore zooms OUT to
+`d_contain` of the open rect while the arc runs, and closing eases back. `userZoomed` stays
+user-only; while it is true the director never writes the distance and containment is **not** asserted.
+
+Computed from `frame.ts` with the measured insets (left 360.84375, top 118.25, bottom 0; right
+316 closed / 418 open), `re = 1.10242`, `fov 42°`, `d0 = 3.353357`, `dMax = 5`:
+
+| viewport | free, closed | `d_fit` closed | free, drawer open | `d_contain` open | `d_target` open (AM1) |
+|---|---|---|---|---|---:|
+| 1440x900 | 763.16 x 781.75 | 3.7786 | 661.16 x 781.75 | 4.3572 | **4.3572** |
+| 1280x720 | 603.16 x 601.75 | 3.8935 | 501.16 x 601.75 | 4.6943 | **4.6943** |
+| 1280x800 | 603.16 x 681.75 | 4.2828 | 501.16 x 681.75 | 5.1885 | **5.0000** (CLAMPED) |
+| 1024x768 | 347.16 x 649.75 | 5.0000 (CLAMPED from 7.4548) | 245.16 x 649.75 | 11.2414 | **5.0000** (CLAMPED) |
+
+**AM2 — S8 revised.** (a) Select from `idle` with `userZoomed` false: the distance trace is
+non-decreasing (tol 1e-6) from the start and ends at `d_fit` of the open rect within 0.001;
+(b) retarget with an unchanged free rect: distance constant within 1e-6 for the whole arc;
+(c) in any flight the distance never falls below `min(start, target) − 1e-6`.
+
+**AM3 — U2 revised.** The U2 reference is the padded circle of `frame.spec.ts` F3: silhouette radius
+`<= rMax + 1` px with `rMax = 0.5 * min(freeW, freeH) − 24`, silhouette centre within 0.75 px of the
+free-rect centre, drawer open, at 1440x900 and 1280x720; the margin to the free rect itself is printed
+too. At 1280x800 with the drawer open `d_contain = 5.1885 > dMax`, so the analytic clamped overflow is
+`f·re/sqrt(dMax²−re²) − rMax = 235.549 − 226.578 = **+8.97 px**` per side (measured 235.5 px disc
+against 226.6 px `rMax`); assert measured `<= analytic + 1` and label the case **CLAMPED**. 1024x768
+is centring only.
+
+**AM4 — U3 revised.** (a) Not zoomed: after settle the distance equals `d_fit` of the CURRENT free
+rect within 0.001 (not the pre-select distance), and the direction channel does not alter it;
+(b) zoomed: wheel first, then select — distance and `userZoomed` (true) unchanged within 0.001.
+
+**AM5 — WAIVER W1.** Exactly one existing-spec edit, in `tests/e2e/frame.spec.ts` F8: the
+`aimMoved` assertion at `:606` (`|controls.target| > 0.1`) and its adjacent comment are replaced by
+the face-pin guarantee (`|controls.target| <= 1e-6` in live mode). No other line of `frame.spec.ts`
+changes (`git diff --stat` at most 6 lines, test count stays 20). It is its own commit
+("WAIVER W1: frame.spec F8 aimMoved") once the live policy compiles, and it is recorded in
+`docs/STEP3B2-DESIGN.md` and `docs/E2E.md`. S2 otherwise intact: **exactly one** exception.
+
+Accepted alongside: Reset view lives in the header's right cluster (`Header.tsx:95-117`), S7 includes
+the header rect (any change there is a STOP), and no region is polar-clamped, so the clamped branches
+stay unit-tested only and every U1 expected offset is 0.
+
+## 9. Contradiction check, round 2 — C3 FOUND in the AM5 pre-edit grep. STOPPED HERE.
+
+AM5 requires, BEFORE any edit: "grep every existing spec for reads of `controls.target`, aim or
+`__globe.target()` in live mode and list the hits in the report; any conflict other than F8 means STOP
+and report." That grep returns **one conflict other than F8**, and it is fatal to step C's own
+procedure rather than to a single assertion.
+
+### The hits, in full
+
+`grep -rn "controls\.target\|__globe.*\.target()\|getTarget\|aimMoved\|\.aim\b" tests/ --include=*.ts`
+(every hit; only the assert-bearing ones matter):
+
+| file:line | what it reads | mode | verdict under face-pin |
+|---|---|---|---|
+| `frame.spec.ts:137` | `aim = project(__globe.target())` | live | **OK** — target is the origin, the origin projects onto the free centre, so `:643-644` still pass |
+| `frame.spec.ts:606` | `expect(aimMoved).toBeGreaterThan(0.1)` | live | **the one W1 names** — becomes `0`, hence W1's `<= 1e-6` replacement |
+| `frame-director.spec.ts:195` | `target: window.__globe!.target()` | live | **OK but weakened** — `:203` asserts `|target| < 0.05`, which `0` satisfies; the assertion becomes vacuous, no conflict |
+| `camera-golden.spec.ts:240` | `Math.hypot(...target()) > 0.02` inside a 15 s `expect.poll` | **live and locked** | **CONFLICT** |
+| `camera-golden.spec.ts:347` | `expect(err.target, …).toBeLessThanOrEqual(tol)`, `tol = 1e-5` | **live and locked** | **CONFLICT** |
+| `camera-golden.spec.ts:18,59,69,195,231-232`, `globals.d.ts:38` | doc comments / type-only | — | no assertion, no conflict |
+
+### C3 — `camera-golden.spec.ts` hard-codes `controls.target` as the fly-to's *start signal* and as an *asserted value*
+
+`flyTo()` (`camera-golden.spec.ts:179-250`) is the single helper every one of the nine cases goes
+through, and it decides "the selection was received" by waiting for the orbit target to leave the
+origin:
+
+```ts
+// camera-golden.spec.ts:236-247
+await expect
+  .poll(() => page.evaluate(() => {
+    const t = window.__globe!.target();
+    return Math.hypot(t[0], t[1], t[2]) > 0.02;
+  }), { timeout: 15_000, intervals: [100] })
+  .toBe(true);
+```
+
+Under the live face-pin policy `|controls.target|` is **exactly 0 for the whole arc**, so this poll can
+never become true: it fails after 15 s. `flyTo` is shared by locked and live cases (`:287-291` builds
+both), so the four **live** golden cases (`*@live-1440x900`) and the comparison test that replays them
+(`:333-336`) are hard red — 5 of the 9 tests in that file.
+
+The second site is independent and survives even if the poll were repaired: the fixture's live targets
+are non-zero (`|t|` = 0.996019, 0.999369, 0.999864, 0.999815 for `pacific`, `us-west`, `se-asia`,
+`horn-africa`), while the face-pin target is `(0,0,0)`. `:347` compares them at `tol = 1e-5` R, so the
+error is **0.999 R**, five orders of magnitude over tolerance.
+
+### Why this blocks step C rather than merely failing one test
+
+Step C's own brief says: "regenerate ONLY the live golden entries with `UPDATE_GOLDEN=1` (locked
+entries byte-identical); then the W1 commit". Regeneration runs the *same* `flyTo()` (`:336`), which
+throws at the poll — so **the live entries cannot be regenerated at all**, and the S3 proof cannot be
+produced for the live half. The fix needs at least two edits inside `camera-golden.spec.ts`: a
+mode-aware start signal (or a signal that does not read `controls.target`) and a per-mode target
+assertion. That is a **second S2 exception**, which AM5 does not grant — AM5 is explicitly "one
+existing-spec edit", and its diff budget (≤ 6 changed lines, count stays 20) describes `frame.spec.ts`
+F8 alone. `frame.spec.ts` itself is exactly as W1 describes it, so nothing in W1 is wrong; it is
+incomplete.
+
+### Stop conditions triggered
+
+- **AM5**: "any conflict other than F8 means STOP and report." (C3 = `camera-golden.spec.ts`, 2 sites.)
+- **S2**: an existing spec file other than `frame.spec.ts` must be edited; one exception is granted,
+  and this would be the second.
+
+Not violated: S3's literal statement (the **locked** half of the fixture is untouched by face-pin and
+would still agree within 1e-5), S1, S4, S5, S6, S7, S9 — none was exercised, no product code changed.
+
+### What was done before stopping (all committed, gate not yet run for A2)
+
+| step | commit | content |
+|---|---|---|
+| P0' | `541b58b` | this continuation prompt alone |
+| A2 | this commit | §8 the five amendments with the computed distance table, §9-§10 the contradiction record |
+
+`git log -1` was `b53fded` with a clean tree apart from the untracked prompt; `scripts/` holds no
+`tmp-*` file and the orphan sweep found only the prompt. Unit tests remain at **880 / 39 files**;
+`src/camera/facing.ts` (`facingPose`, `arcStep`, no `controls.target` anywhere) is unchanged and still
+the right core for the live policy. Nothing in steps C–G was attempted: no director change, no W1
+edit, no Reset button, no spec file touched.
+
+### The three ways forward (for the author to choose; not chosen here)
+
+1. **Extend W1 to a named W2** covering `camera-golden.spec.ts` only: a mode-aware start signal
+   (`__frame.focus === 'focusing'` in live, `|target| > 0.02` in locked) and a per-mode target
+   assertion (exact for locked, `|t| <= 1e-6` for live), with the live entries regenerated. ~8-12
+   changed lines in a file whose 5 live-touching tests are otherwise unchanged.
+2. **Drop `target` from the live comparison** (`compare()` ignores it when `mode === 'live'`, asserted
+   instead against the locked cases and U1's own `|target| <= 1e-6`). Small, but it deletes a
+   measurement rather than replacing it — the golden target error for live cases stops existing.
+3. **Keep live goldens aim-at-pin** and give the face-pin policy its own fixture file. Most work, but
+   it preserves both oracles and keeps `camera-golden.spec.ts` byte-identical.
+
+## 10. Contradiction check, round 1 (C1, C2) — both resolved by AM1 and AM5
 
 The polar limits are the OrbitControls defaults and therefore clamp nothing (§2) — that is a
 non-contradiction and every analytic expectation in step E would reduce to the unclamped case.
@@ -253,7 +398,7 @@ Resolution requires a decision the prompt does not supply: either F8's `aimMoved
 retired/relaxed under a named waiver (an edit to an existing spec, S2), or live mode keeps
 `controls.target` on the pin (which reinstates the +462 px overflow item 5 exists to remove).
 
-### What was done before stopping
+### What was done before the round-1 stop
 
 Committed and green: P0 (prompt + `scripts/tmp-contain.mjs` removal, 2 commits), A (this memo),
 B (`src/camera/facing.ts`, `src/camera/easing.ts`, 32 new unit tests, gate green at **880 unit tests /
