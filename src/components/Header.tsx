@@ -2,6 +2,7 @@ import { Download, Github, Globe2, Gauge } from 'lucide-react';
 import type { ScenarioMetrics, UnitSystem } from '@/types/enso';
 import { thermalColor } from '@/lib/model';
 import { EngineBadge } from '@/components/EngineBadge';
+import { ResetViewButton } from '@/components/ResetViewButton';
 
 interface HeaderProps {
   metrics: ScenarioMetrics;
@@ -112,6 +113,9 @@ export function Header({ metrics, units, onToggleUnits, onExport, exporting }: H
           {exporting ? <Gauge size={12} className="animate-pulse" /> : <Download size={12} />}
           <span className="hidden sm:inline">{exporting ? 'Rendering…' : 'Snapshot'}</span>
         </button>
+
+        {/* Reset view (step 3B2) — appended LAST in the right cluster, per the design memo §1. */}
+        <ResetViewButton />
       </div>
     </header>
   );
