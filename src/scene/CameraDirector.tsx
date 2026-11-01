@@ -51,6 +51,32 @@
  *
  * It gates the DISTANCE ONLY. The view offset is layout (`FrameRig.tsx:19-22`) and always follows the
  * insets — a wheel event must never un-centre the globe.
+ *
+ * ## Step 3B2 reverses that latch in LIVE mode (deviation 2 of 3B is reversed)
+ *
+ * The paragraph above describes step 3B, when the live fly-to damped the DISTANCE to the pin's own
+ * `zoom`. The live fly-to no longer writes the distance at all: it orbits the camera to face the pin
+ * and leaves the orbit radius alone. So nothing but the user can invalidate the fit in live mode, and
+ * `userZoomed` is set ONLY by OrbitControls input (`start`/`change`, a distance change > 0.002 outside
+ * this module's own writes). No `USER_ZOOM` is dispatched from `setPose` and none from the fly-to.
+ *
+ * The latch is KEPT, verbatim, inside the LOCKED branch below, because the legacy aim-at-pin fly-to
+ * still moves the distance and `globe.spec.ts`'s "zoom still works after a region fly-to" depends on
+ * the same `lastFit` behaviour. That is why the two policies are separate bodies rather than one body
+ * with a mode flag: the locked one has to keep arithmetic and side effects this step must not touch.
+ *
+ * ## The two policies
+ *
+ * | mode | fly-to writes | on arrival |
+ * |---|---|---|
+ * | `locked` (E2E build, no `framing=live`) | `controls.target` → the pin, distance → the pin's `zoom` | pose within 0.004 R in both |
+ * | `live` (production, and `?framing=live`) | the DIRECTION only: camera orbits to the pin's normal side, `controls.target` stays the origin, the radius is untouched | angular error < 0.004 rad, then the exact direction is written |
+ *
+ * The live arrival SNAPS the last 0.004 rad onto the target direction instead of leaving it there.
+ * Without the snap the machine would stop animating with the camera up to 0.229 deg (about 4.7 px at
+ * 1440x900) short of the pin, and the acceptance oracle — "the projected pin core is within 0.75 px of
+ * the free-rect centre" — would measure that residual as a defect. The snap is the same device the fit
+ * already uses for the distance (`|wanted - eased| < 1e-5` -> `wanted`).
  */
 import { useEffect, useRef, type MutableRefObject } from 'react';
 import { useFrame, useThree } from '@react-three/fiber';
@@ -58,6 +84,19 @@ import type { OrbitControls as OrbitControlsImpl } from 'three-stdlib';
 import * as THREE from 'three';
 import type { RegionId } from '@/types/enso';
 import { REGION_MAP, latLonToVector3 } from '@/lib/regions';
+import {
+  ARRIVE_EPSILON_R,
+  FLY_DISTANCE_EASE_BASE,
+  FLY_TARGET_EASE_BASE,
+  easeFactor,
+} from '@/camera/easing';
+import { arcStep, facingPose, isArrived, type Vec3 } from '@/camera/facing';
+import {
+  getResetRequest,
+  getViewState,
+  publishViewState,
+  subscribeResetRequest,
+} from '@/scene/viewStore';
 import type { SpinState } from '@/scene/EarthSystem';
 import {
   D0,
@@ -79,6 +118,7 @@ import {
   step as stepFocus,
   type FocusEvent,
   type FocusSnapshot,
+  type FocusState,
 } from '@/scene/focusMachine';
 import { registerCameraIntents, type CameraPose } from '@/scene/cameraIntents';
 
@@ -99,6 +139,196 @@ function regionDirection(id: RegionId, spinY: number): THREE.Vector3 {
  */
 function noteLocked(): void {
   (window as unknown as Record<string, unknown>).__frameLocked = LOCKED_BRANCH_MARKER;
+}
+
+/**
+ * The locked FLY-TO's own marker — a string that exists only in the aim-at-pin branch.
+ *
+ * Distinct from `LOCKED_BRANCH_MARKER` (`'frame-locked-branch-7f3a'`) because they certify different
+ * things: that one says the whole locked FRAMING survives, this one says the legacy aim-at-pin
+ * arithmetic does. Both are called from inside `if (IS_LOCKED)` blocks, which `import.meta.env` folds to
+ * `false` in production, so `scripts/check-assets.mjs` can prove from the bundle that neither ships.
+ *
+ * Placement note: this is called from the travelling half of the locked policy, so a locked page that
+ * never starts a fly-to does not set it at runtime. The proof is about EMITTED CODE (`grep` on
+ * `dist-e2e/assets/*.js`), which does not depend on it ever running.
+ */
+const FOCUS_POLICY_LOCKED_MARKER = 'focus-policy-locked-3b2-a41';
+
+function noteLockedPolicy(): void {
+  (window as unknown as Record<string, unknown>).__frameLockedPolicy = FOCUS_POLICY_LOCKED_MARKER;
+}
+
+/** The default camera DIRECTION (unit), derived from the shipped position rather than retyped. */
+const DEFAULT_DIRECTION: THREE.Vector3 = DEFAULT_POSITION.clone().normalize();
+
+/*
+ * Scratch vectors: `useFrame` runs 60 times a second and this module already allocates a `Vector3` per
+ * frame for the offset. The policy code below must not add another per frame, so it works in place.
+ */
+const SCRATCH_OFFSET = new THREE.Vector3();
+const SCRATCH_DIR = new THREE.Vector3();
+
+/** `viewIsDefault` tolerances: direction within 0.5 deg of the default, distance within 0.002. */
+const VIEW_DEFAULT_ANGLE_DEG = 0.5;
+const VIEW_DEFAULT_DISTANCE = 0.002;
+
+/** The refs and helpers either policy needs. Passed explicitly so both policies stay module-level. */
+interface PolicyContext {
+  camera: THREE.PerspectiveCamera;
+  controls: OrbitControlsImpl;
+  stepDt: number;
+  state: FocusState;
+  spin: MutableRefObject<SpinState>;
+  targetRegion: MutableRefObject<RegionId | null>;
+  desiredTarget: MutableRefObject<THREE.Vector3>;
+  desiredDistance: MutableRefObject<number>;
+  lastFit: MutableRefObject<number | null>;
+  withOwnWrite: (fn: () => void) => void;
+  dispatch: (event: FocusEvent) => void;
+}
+
+/**
+ * The LOCKED focus policy — the legacy aim-at-pin fly-to, moved here from the frame body.
+ *
+ * The arithmetic is unchanged: same two eases (now read from `camera/easing.ts`, same values), same
+ * `withOwnWrite` guard, same `lastFit` latch that dispatches `USER_ZOOM` when a non-fit writer moved the
+ * distance, same 0.004 convergence in target distance AND distance error. This is what makes S3 a real
+ * check rather than a restatement: the locked golden entries were captured against this code.
+ *
+ * Only reachable when `IS_LOCKED`, which folds to `false` in a production build, so the whole function
+ * — and `FOCUS_POLICY_LOCKED_MARKER` with it — is removed from the shipped bundle.
+ */
+function runLockedFlyTo(ctx: PolicyContext): void {
+  noteLockedPolicy();
+
+  const { camera, controls, stepDt, state, spin, targetRegion, withOwnWrite, dispatch } = ctx;
+
+  const region = targetRegion.current;
+  if (region) {
+    const want = REGION_MAP[region];
+    ctx.desiredTarget.current.copy(regionDirection(region, spin.current.y));
+    ctx.desiredDistance.current = want.zoom;
+  } else {
+    ctx.desiredTarget.current.copy(DEFAULT_TARGET);
+    ctx.desiredDistance.current = DEFAULT_POSITION.length();
+  }
+
+  const targetEase = easeFactor(FLY_TARGET_EASE_BASE, stepDt);
+  const distanceEase = easeFactor(FLY_DISTANCE_EASE_BASE, stepDt);
+  const wanted = ctx.desiredDistance.current;
+
+  withOwnWrite(() => {
+    /* Damp the orbit target. */
+    controls.target.lerp(ctx.desiredTarget.current, targetEase);
+
+    /*
+     * Ease distance-from-target while preserving the viewing direction, clamped into the controls' own
+     * limits so a fly-to can never park the camera outside the range the user may then zoom within.
+     */
+    const offset = camera.position.clone().sub(controls.target);
+    const currentDistance = offset.length();
+    if (currentDistance > 1e-6) {
+      const clamped = THREE.MathUtils.clamp(wanted, controls.minDistance, controls.maxDistance);
+      const nextDistance = THREE.MathUtils.lerp(currentDistance, clamped, distanceEase);
+      camera.position.copy(controls.target).add(offset.setLength(nextDistance));
+    }
+
+    /* update() derives the quaternion from target+offset and clamps the polar angle. */
+    controls.update();
+  });
+
+  /* A fly-to IS a distance writer that is not the fit — see the header. */
+  if (ctx.lastFit.current !== null) {
+    const d = camera.position.distanceTo(controls.target);
+    if (Math.abs(d - ctx.lastFit.current) > LAST_FIT_EPSILON) dispatch({ type: 'USER_ZOOM' });
+  }
+
+  const targetSettled = controls.target.distanceTo(ctx.desiredTarget.current) < ARRIVE_EPSILON_R;
+  const distanceSettled =
+    Math.abs(camera.position.distanceTo(controls.target) - wanted) < ARRIVE_EPSILON_R;
+  if (targetSettled && distanceSettled) {
+    dispatch(state === 'returning' ? { type: 'RETURNED' } : { type: 'ARRIVED' });
+  }
+}
+
+/** The camera's unit direction from the orbit target. Zero-safe: never returns a zero vector. */
+function orbitDirection(camera: THREE.PerspectiveCamera, controls: OrbitControlsImpl): Vec3 {
+  const v = SCRATCH_OFFSET.copy(camera.position).sub(controls.target);
+  if (v.lengthSq() < 1e-18) return [DEFAULT_DIRECTION.x, DEFAULT_DIRECTION.y, DEFAULT_DIRECTION.z];
+  v.normalize();
+  return [v.x, v.y, v.z];
+}
+
+/** The distance from the orbit target. */
+function orbitDistance(camera: THREE.PerspectiveCamera, controls: OrbitControlsImpl): number {
+  return camera.position.distanceTo(controls.target);
+}
+
+/**
+ * The LIVE focus policy — orbit the camera to FACE the pin, at a distance it does not touch.
+ *
+ * Three properties, all structural rather than asserted:
+ *
+ *   - `controls.target` is never written, so it stays at the origin and the globe stays centred on the
+ *     free rect (the whole point of replacing aim-at-pin, which overflowed it by up to +462 px).
+ *   - the radius is read once and re-applied, so the distance is constant through the arc and cannot
+ *     dip toward the globe (AM2/S8). Any change to it comes from the fit's own channel, not from here.
+ *   - the aim is a great-circle arc from the camera's CURRENT direction, so a retarget continues from
+ *     where the camera is instead of jumping back to the flight's start.
+ */
+function runLiveFlyTo(ctx: PolicyContext): void {
+  const { camera, controls, stepDt, state, spin, targetRegion, withOwnWrite, dispatch } = ctx;
+
+  /*
+   * Where the camera must point. `facingPose` owns the polar clamp, so the director never compares
+   * angles itself; the limits are read off the controls rather than restated (they are the OrbitControls
+   * defaults today, but a pin near a pole must not silently mis-frame if that ever changes).
+   */
+  let wanted: Vec3;
+  if (state === 'returning') {
+    wanted = [DEFAULT_DIRECTION.x, DEFAULT_DIRECTION.y, DEFAULT_DIRECTION.z];
+  } else {
+    const region = targetRegion.current;
+    if (region === null) {
+      /* `focusing` with no region is unreachable (the machine names one); fall back to the default. */
+      wanted = [DEFAULT_DIRECTION.x, DEFAULT_DIRECTION.y, DEFAULT_DIRECTION.z];
+    } else {
+      const pin = regionDirection(region, spin.current.y);
+      wanted = facingPose({
+        pinDir: [pin.x, pin.y, pin.z],
+        distance: orbitDistance(camera, controls),
+        polarMin: controls.minPolarAngle,
+        polarMax: controls.maxPolarAngle,
+      }).direction;
+    }
+  }
+
+  const from = orbitDirection(camera, controls);
+  const arrived = isArrived(from, wanted);
+  const next = arrived ? wanted : arcStep({ from, to: wanted, dtS: stepDt });
+
+  /*
+   * The RADIUS is captured before the write and re-applied after it. `controls.update()` is allowed to
+   * clamp the polar angle, which changes the direction but must not change the distance.
+   */
+  const radius = orbitDistance(camera, controls);
+
+  withOwnWrite(() => {
+    camera.position
+      .copy(controls.target)
+      .add(SCRATCH_DIR.set(next[0], next[1], next[2]).multiplyScalar(radius));
+    controls.update();
+  });
+
+  if (arrived) dispatch(state === 'returning' ? { type: 'RETURNED' } : { type: 'ARRIVED' });
+}
+
+/** Angular error between two directions, degrees — for `viewIsDefault`. */
+function angleDegBetween(a: Vec3, b: THREE.Vector3): number {
+  const d = a[0] * b.x + a[1] * b.y + a[2] * b.z;
+  const clamped = d > 1 ? 1 : d < -1 ? -1 : d;
+  return (Math.acos(clamped) * 180) / Math.PI;
 }
 
 /** `prefers-reduced-motion`, resolved once instead of once per frame. */
@@ -198,13 +428,14 @@ export function CameraDirector({
           controlsRef.current?.target ?? new THREE.Vector3(),
         );
         /*
-         * A pose set by the hook changes the distance without the user touching the wheel, and
-         * `lastFit` was invalidated by that too — see the header. Set the flag so the fit stays out
-         * of the way, exactly as it did before.
+         * NO `USER_ZOOM` HERE — step 3B2 reverses the 3B latch.
+         *
+         * In 3B a hook-driven pose had to invalidate `lastFit` because the LIVE fly-to wrote the
+         * distance and the fit would otherwise re-take it. The live fly-to writes no distance now, so
+         * `userZoomed` means exactly "the USER moved the distance" and nothing else. The LOCKED branch
+         * keeps its own latch internally (see `runLockedFlyTo`), which is where the behaviour
+         * `globe.spec.ts` depends on actually lives.
          */
-        if (lastFit.current !== null && Math.abs(ownDistance.current - lastFit.current) > LAST_FIT_EPSILON) {
-          dispatch({ type: 'USER_ZOOM' });
-        }
       },
     });
     return () => registerCameraIntents(null);
@@ -268,6 +499,27 @@ export function CameraDirector({
     travelling.current = true;
   }, [activeRegion, focusNonce, spin]);
 
+  /* --------------------------------------------------- the Reset View button's channel */
+
+  /**
+   * Subscribe to the RESET requests the header's button raises.
+   *
+   * A counter rather than an event bus: two clicks must be two events, and a subscriber that missed one
+   * while unmounted must not replay it. The dispatch is synchronous, so the machine has already moved to
+   * `returning` by the time the click handler returns.
+   */
+  useEffect(() => {
+    let seen = getResetRequest();
+    return subscribeResetRequest(() => {
+      const now = getResetRequest();
+      if (now === seen) return;
+      seen = now;
+      dispatch({ type: 'RESET' });
+      /* RESET is the "back to the default view" intent, which is a running-planet intent. */
+      spin.current.paused = false;
+    });
+  }, [spin]);
+
   /* ------------------------------------------------------------------------ the frame */
 
   useFrame((_, delta) => {
@@ -275,61 +527,34 @@ export function CameraDirector({
     if (!controls) return;
 
     const stepDt = Math.min(delta, 1 / 30);
-
-    /* ============================================================== 1. the fly-to ====
-     *
-     * Verbatim from `CameraRig.tsx:85-133`. The `travelling` flag is owned by the machine's states:
-     * `focusing` animates toward the selected region, `returning` toward the default pose, and
-     * `idle`/`focused` let OrbitControls own the camera entirely.
-     */
     const state = machine.current.state;
 
+    /* ============================================================ 1. the focus policy ====
+     *
+     * Two bodies, chosen by MODE — not by a flag inside one body. The locked one is the legacy
+     * aim-at-pin fly-to with its own `lastFit` latch; the live one orbits the camera and writes no
+     * distance. Keeping them apart is what lets the locked arithmetic stay byte-identical (S3) while
+     * the live policy reverses the 3B distance latch.
+     */
+    const ctx: PolicyContext = {
+      camera,
+      controls,
+      stepDt,
+      state,
+      spin,
+      targetRegion,
+      desiredTarget,
+      desiredDistance,
+      lastFit,
+      withOwnWrite,
+      dispatch,
+    };
+
     if (isTravelling(state)) {
-      const region = targetRegion.current;
-      if (region) {
-        const want = REGION_MAP[region];
-        desiredTarget.current.copy(regionDirection(region, spin.current.y));
-        desiredDistance.current = want.zoom;
+      if (IS_LOCKED) {
+        runLockedFlyTo(ctx);
       } else {
-        desiredTarget.current.copy(DEFAULT_TARGET);
-        desiredDistance.current = DEFAULT_POSITION.length();
-      }
-
-      const targetEase = 1 - Math.pow(0.0001, stepDt);
-      const distanceEase = 1 - Math.pow(0.0006, stepDt);
-      const wanted = desiredDistance.current;
-
-      withOwnWrite(() => {
-        /* Damp the orbit target. */
-        controls.target.lerp(desiredTarget.current, targetEase);
-
-        /*
-         * Ease distance-from-target while preserving the viewing direction, clamped into the
-         * controls' own limits so a fly-to can never park the camera outside the range the user may
-         * then zoom within.
-         */
-        const offset = camera.position.clone().sub(controls.target);
-        const currentDistance = offset.length();
-        if (currentDistance > 1e-6) {
-          const clamped = THREE.MathUtils.clamp(wanted, controls.minDistance, controls.maxDistance);
-          const nextDistance = THREE.MathUtils.lerp(currentDistance, clamped, distanceEase);
-          camera.position.copy(controls.target).add(offset.setLength(nextDistance));
-        }
-
-        /* update() derives the quaternion from target+offset and clamps the polar angle. */
-        controls.update();
-      });
-
-      /* A fly-to IS a distance writer that is not the fit — see the header. */
-      if (lastFit.current !== null) {
-        const d = camera.position.distanceTo(controls.target);
-        if (Math.abs(d - lastFit.current) > LAST_FIT_EPSILON) dispatch({ type: 'USER_ZOOM' });
-      }
-
-      const targetSettled = controls.target.distanceTo(desiredTarget.current) < 0.004;
-      const distanceSettled = Math.abs(camera.position.distanceTo(controls.target) - wanted) < 0.004;
-      if (targetSettled && distanceSettled) {
-        dispatch(state === 'returning' ? { type: 'RETURNED' } : { type: 'ARRIVED' });
+        runLiveFlyTo(ctx);
       }
     } else {
       /*
@@ -391,7 +616,18 @@ export function CameraDirector({
       }
 
       /* ---------------------------------------------------------------- distance */
-
+      /*
+       * THE FIT'S DISTANCE CHANNEL — AM1.
+       *
+       * It runs in EVERY state, not only `idle`/`returning`: while `userZoomed` is false it follows
+       * `d_fit` of the CURRENT free rect, in both directions, floor `d0` ceiling `dMax`, 180 ms ease,
+       * snap on first application. That is exactly what 3A2 shipped, and it is what lets the drawer
+       * opening mid-flight zoom the camera OUT to the new containment distance while the arc runs
+       * (1440x900: 3.7786 -> 4.3572). It cannot move the DIRECTION, so it cannot disturb the face-pin
+       * aim, and the live fly-to never writes the distance, so the two channels never fight.
+       *
+       * When `userZoomed` is true the fit writes nothing here and containment is not asserted.
+       */
       const offset = camera.position.clone().sub(controls.target);
       const currentDistance = offset.length();
 
@@ -411,6 +647,26 @@ export function CameraDirector({
         });
         lastFit.current = nextDistance;
         lastSeenDistance.current = nextDistance;
+      }
+
+      /* ----------------------------------------------------- viewIsDefault and spin */
+      /*
+       * Published OUTSIDE the probe gate, so a production build (which installs no probe) still drives
+       * the Reset button. Computed here rather than at the top of the frame because it needs the fit's
+       * `frame.dTarget`, which only the live half computes.
+       *
+       * A store rather than React state: this runs at 60 Hz and `publishViewState` drops a no-change
+       * write, so the header only re-renders when one of the two booleans actually moves.
+       */
+      {
+        const dir = orbitDirection(camera, controls);
+        const d = orbitDistance(camera, controls);
+        const viewIsDefault =
+          state === 'idle' &&
+          !userZoomed &&
+          angleDegBetween(dir, DEFAULT_DIRECTION) <= VIEW_DEFAULT_ANGLE_DEG &&
+          Math.abs(d - frame.dTarget) <= VIEW_DEFAULT_DISTANCE;
+        publishViewState({ viewIsDefault, spinning: !spin.current.paused });
       }
 
       /* ------------------------------------------------------------------- probe */
@@ -435,6 +691,7 @@ export function CameraDirector({
         const distanceQuiet = spread < 2e-4;
         const distanceArrived = Math.abs(frame.dTarget - camDistance) < 0.0005;
         const distanceSettled = rigOwnsDistance.current ? distanceArrived && distanceQuiet : distanceQuiet;
+
         probe.current = {
           state: {
             mode: 'live',
@@ -449,6 +706,10 @@ export function CameraDirector({
             focus: machine.current.state,
             userZoomed,
             regionId: machine.current.context.regionId,
+            /* Step 3B2 additions. */
+            viewIsDefault: getViewState().viewIsDefault,
+            spinning: getViewState().spinning,
+            focusPolicy: 'live',
           },
         };
       }

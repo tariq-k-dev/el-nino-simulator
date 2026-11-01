@@ -147,6 +147,19 @@ export interface FrameProbeState {
   userZoomed: boolean;
   /** Step 3B: the region being targeted, or null. */
   regionId: string | null;
+  /**
+   * Step 3B2: is the camera at the framed default pose with nothing selected and no user zoom?
+   *
+   * OPTIONAL on purpose. It is a new field of a total type that several existing fixtures build by
+   * hand (`frameProbe.test.ts`'s `liveState()`), and a required field there would force edits to tests
+   * that have nothing to do with this step. A reader that needs it supplies a default (see
+   * `frameProbe.ts`), and the director always publishes it.
+   */
+  viewIsDefault?: boolean;
+  /** Step 3B2: is the planet's spin running? Optional for the same reason. */
+  spinning?: boolean;
+  /** Step 3B2: which focus policy this build runs. Optional for the same reason. */
+  focusPolicy?: 'locked' | 'live';
 }
 
 /** The mutable slot `FrameRig` writes into, so `__frame` can read the last rendered frame. */

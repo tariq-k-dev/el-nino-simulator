@@ -19,6 +19,7 @@
  */
 import type * as THREE from 'three';
 import { D0, FRAMING_MODE, type FrameProbeState, type FramingMode } from '@/layout/framing';
+import { getViewState } from '@/scene/viewStore';
 
 export interface FrameProbeSnapshot {
   mode: FramingMode;
@@ -32,6 +33,12 @@ export interface FrameProbeSnapshot {
   focus: 'idle' | 'focusing' | 'focused' | 'returning';
   userZoomed: boolean;
   regionId: string | null;
+  /** Step 3B2: the camera is at the framed default pose (Reset is disabled when true). */
+  viewIsDefault: boolean;
+  /** Step 3B2: the planet's spin is running. */
+  spinning: boolean;
+  /** Step 3B2: which focus policy this build runs — `locked` keeps aim-at-pin, `live` faces the pin. */
+  focusPolicy: FramingMode;
 }
 
 export interface FrameProbe {
@@ -49,6 +56,12 @@ export interface FrameProbe {
   readonly userZoomed: boolean;
   /** Step 3B: the targeted region, or null. */
   readonly regionId: string | null;
+  /** Step 3B2: true when the camera is at the framed default pose. */
+  readonly viewIsDefault: boolean;
+  /** Step 3B2: true while the planet spins. */
+  readonly spinning: boolean;
+  /** Step 3B2: `locked` (aim-at-pin) or `live` (face-pin). */
+  readonly focusPolicy: FramingMode;
   /** One coherent read of every field, from the same frame. */
   snapshot(): FrameProbeSnapshot;
 }
@@ -84,6 +97,17 @@ function lockedState(camera: THREE.Camera): FrameProbeState {
     focus: 'idle',
     userZoomed: false,
     regionId: null,
+    /*
+     * Step 3B2 fields, locked truth. There is no live rig here, so the camera IS at the shipped pose
+     * and nothing has zoomed: `viewIsDefault` is true, and that is reported rather than defaulted by
+     * the reader. `spinning` is read from the store, because the spin is scene state that exists in
+     * locked mode too. `focusPolicy` is the RESOLVED mode: in a production/vitest build that is
+     * 'live', in an E2E build without `framing=live` it is 'locked' — so a spec can assert which
+     * policy it is measuring instead of assuming.
+     */
+    viewIsDefault: getViewState().viewIsDefault,
+    spinning: getViewState().spinning,
+    focusPolicy: FRAMING_MODE,
   };
 }
 
@@ -132,6 +156,18 @@ export function createFrameProbe(
     get regionId() {
       return state().regionId;
     },
+    get viewIsDefault() {
+      const s = state();
+      return s.viewIsDefault ?? true;
+    },
+    get spinning() {
+      const s = state();
+      return s.spinning ?? true;
+    },
+    get focusPolicy() {
+      const s = state();
+      return s.focusPolicy ?? s.mode;
+    },
     snapshot() {
       const s = state();
       return {
@@ -146,6 +182,9 @@ export function createFrameProbe(
         focus: s.focus,
         userZoomed: s.userZoomed,
         regionId: s.regionId,
+        viewIsDefault: s.viewIsDefault ?? true,
+        spinning: s.spinning ?? true,
+        focusPolicy: s.focusPolicy ?? s.mode,
       };
     },
   };
