@@ -67,6 +67,7 @@ export function EarthSystem({ sst, metrics, activeRegion, onSelect, spin }: Eart
           active={activeRegion === region.id}
           headline={regionHeadline(metrics, region.id)}
           onSelect={onSelect}
+          earthRef={groupRef}
         />
       ))}
     </group>

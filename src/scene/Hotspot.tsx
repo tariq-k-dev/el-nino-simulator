@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react';
+import { useEffect, useMemo, useRef, useState, useSyncExternalStore, type MutableRefObject } from 'react';
 import { useFrame } from '@react-three/fiber';
 import { Html } from '@react-three/drei';
 import * as THREE from 'three';
@@ -8,6 +8,13 @@ import { latLonToVector3 } from '@/lib/regions';
 import { hotspotFragment, hotspotVertex } from '@/scene/shaders';
 import { GLOBE_LOOK, getLookFlags, subscribeLookFlags } from '@/scene/globeLook';
 import { lookTime } from '@/scene/lookTime';
+import {
+  HIT_PX,
+  HIT_PX_COARSE,
+  PIN_HIT_CLAMP_R,
+  PIN_HIT_GATE,
+  pinFacesCamera,
+} from '@/scene/pinVisibilityBands';
 
 interface HotspotProps {
   region: RegionDefinition;
@@ -15,6 +22,39 @@ interface HotspotProps {
   active: boolean;
   headline: string;
   onSelect: (id: RegionDefinition['id']) => void;
+  /**
+   * The group that carries the planet's spin — i.e. the globe's WORLD centre holder.
+   *
+   * The hit proxy's gate is `dot(nWorld, normalize(cameraWorld - globeCenterWorld))`, and
+   * `globeCenterWorld` must be this group's world position rather than the world origin. In this scene
+   * the group sits at the origin so the two agree today, but writing the origin in would make the gate
+   * silently wrong the moment anything translates the earth, and the unit tests cover that case
+   * explicitly. `matrixWorld` is read at raycast time, so a spin (or a future offset) is honoured.
+   */
+  earthRef: MutableRefObject<THREE.Group | null>;
+}
+
+/*
+ * Scratch vectors for the raycast override.
+ *
+ * A pointer move raycasts every interaction object on every move event, so allocating two `Vector3`s per
+ * call would churn the heap for the whole life of the page. Hoisted to module scope: the override is
+ * synchronous and never re-entrant, so one pair is enough.
+ */
+const SCRATCH_NORMAL = new THREE.Vector3();
+const SCRATCH_CENTRE = new THREE.Vector3();
+const SCRATCH_PROXY = new THREE.Vector3();
+
+/**
+ * Does this browser report a coarse primary pointer (a thumb rather than a cursor tip)?
+ *
+ * Read once per component mount rather than per frame: the media query cannot change mid-session in a
+ * way this product supports, and a per-frame `matchMedia` call is a layout-dirty read in the middle of
+ * the render loop. `22 px` vs `14 px` is the whole difference.
+ */
+function coarsePointer(): boolean {
+  if (typeof window === 'undefined' || typeof window.matchMedia !== 'function') return false;
+  return window.matchMedia('(pointer: coarse)').matches;
 }
 
 /**
@@ -22,17 +62,26 @@ interface HotspotProps {
  * a clickable label. Colour is driven by the global SST anomaly so the whole
  * constellation shifts from cyan to red as the slider moves.
  */
-export function Hotspot({ region, sst, active, headline, onSelect }: HotspotProps) {
+export function Hotspot({ region, sst, active, headline, onSelect, earthRef }: HotspotProps) {
   const [hovered, setHovered] = useState(false);
   const ringRef = useRef<THREE.Mesh>(null);
   const pinRef = useRef<THREE.Group>(null);
+  const proxyRef = useRef<THREE.Mesh>(null);
   const labelWrapRef = useRef<HTMLDivElement>(null);
   const facingRef = useRef(1);
+  /* Read once per mount: see `coarsePointer`. */
+  const hitPx = useMemo(() => (coarsePointer() ? HIT_PX_COARSE : HIT_PX), []);
 
   const position = useMemo(
     () => latLonToVector3(region.lat, region.lon, GLOBE_LOOK.pins.anchorRadius),
     [region],
   );
+  /*
+   * The gate reads the pin's BASE normal: the core is offset along the same radial, so the direction is
+   * identical and `position` (the anchor at `anchorRadius`) is the cheap source for it. Un-normalised —
+   * the pure function normalises.
+   */
+  const baseNormal = useMemo(() => new THREE.Vector3(...position), [position]);
   const quaternion = useMemo(() => {
     // Orient the ring's +Z along the surface normal at this lat/lon.
     const normal = new THREE.Vector3(...position).normalize();
@@ -76,6 +125,30 @@ export function Hotspot({ region, sst, active, headline, onSelect }: HotspotProp
       const lift =
         active || hovered ? GLOBE_LOOK.pins.activeLift : GLOBE_LOOK.pins.idleLift;
       pinRef.current.position.set(position[0] * lift, position[1] * lift, position[2] * lift);
+    }
+
+    /*
+     * Keep the hit proxy's PROJECTED radius at `hitPx`, whatever the camera distance is.
+     *
+     * A sphere of world radius `r` at distance `d` from the camera subtends `r * focalPx / d` CSS px, so
+     * `r = hitPx * d / focalPx` is the world radius that measures exactly `hitPx` on screen. Recomputed
+     * every frame (never React state): a wheel zoom changes `d` continuously and a radius kept in state
+     * would lag the camera by a render.
+     *
+     * The proxy's POSITION is deliberately static — it sits on the idle head, the point `__globe.pins()`
+     * reports and the specs project. If it followed the hover/active lift, hovering would move the proxy
+     * out from under the cursor and the pointer-out it caused would move it back: a feedback loop that
+     * flickers the cursor. The active lift is 0.025 R (7.6 px at d_fit), well inside the 14 px radius, so
+     * a click aimed at the projected head still lands after a selection.
+     */
+    const proxy = proxyRef.current;
+    if (proxy) {
+      const cam = state.camera as THREE.PerspectiveCamera;
+      proxy.getWorldPosition(SCRATCH_PROXY);
+      const focalPx = state.size.height / 2 / Math.tan(((cam.fov ?? 42) * Math.PI) / 360);
+      const dist = cam.position.distanceTo(SCRATCH_PROXY);
+      const worldR = focalPx > 0 ? (hitPx * dist) / focalPx : PIN_HIT_CLAMP_R;
+      proxy.scale.setScalar(Math.min(worldR, PIN_HIT_CLAMP_R));
     }
 
     // Fade labels that face away from the camera.
@@ -154,17 +227,98 @@ export function Hotspot({ region, sst, active, headline, onSelect }: HotspotProp
   }, [sst]);
   const glowCss = thermalColor(sst, active ? 0.95 : 0.75);
 
+  const headPosition = useMemo<[number, number, number]>(() => {
+    /* The same point `__globe.pins()` reports and the specs project: anchor x idleLift + coreOffset. */
+    const r =
+      GLOBE_LOOK.pins.anchorRadius * GLOBE_LOOK.pins.idleLift + GLOBE_LOOK.pins.coreOffset;
+    return latLonToVector3(region.lat, region.lon, r);
+  }, [region]);
+
+  /**
+   * The proxy's raycast: the facing gate, then the ordinary sphere test.
+   *
+   * Why an override rather than a filter after the fact: A3 requires a back pin to produce NO hit, so
+   * the intersection list has to be empty before R3F decides hover, cursor and click. A veto applied in
+   * `onClick` would still hover, still set the pointer cursor over a pin the user cannot see, and would
+   * still count as a hit for `onPointerMissed`'s bookkeeping.
+   *
+   * `nWorld` is recomputed here, at raycast time, from the pin's base direction through the earth
+   * group's current world matrix — that is what keeps the answer right while the planet spins. The
+   * camera side is `raycaster.ray.origin` (the ray's own origin, not `camera.position`, which differ by
+   * the near plane) and the globe centre is the earth group's world position.
+   */
+  const proxyRaycast = useMemo(
+    () => (raycaster: THREE.Raycaster, intersects: THREE.Intersection[]) => {
+      const proxy = proxyRef.current;
+      if (!proxy) return;
+      const earth = earthRef.current;
+      /* Fresh world matrices: a raycast can land between two renders, after the spin moved the group. */
+      if (earth) earth.updateWorldMatrix(true, false);
+
+      SCRATCH_NORMAL.copy(baseNormal);
+      const carrier = earth ?? proxy.parent;
+      if (carrier) SCRATCH_NORMAL.transformDirection(carrier.matrixWorld);
+      else SCRATCH_NORMAL.normalize();
+
+      if (earth) earth.getWorldPosition(SCRATCH_CENTRE);
+      else proxy.getWorldPosition(SCRATCH_CENTRE);
+
+      if (!pinFacesCamera(SCRATCH_NORMAL, raycaster.ray.origin, SCRATCH_CENTRE, PIN_HIT_GATE)) return;
+      THREE.Mesh.prototype.raycast.call(proxy, raycaster, intersects);
+    },
+    [baseNormal, earthRef],
+  );
+
   return (
     <group>
-      {/* Pulsing ring anchored to the surface. Also the click target — an
-          additive quad 0.22 world units across, so it is a far bigger tap area
-          than the 0.011-radius core (MOBILE_AUDIT #2 measured the core at 6-12
-          CSS px). */}
+      {/* Pulsing ring anchored to the surface. It is NOT the click target any more (step 3B2-FIX2):
+          its 0.22-unit quad is tangent to the sphere, so it turns edge-on and its screen footprint
+          collapses exactly where the limb is — which is why clicking a pin was hit-or-miss. The ring is
+          drawn only; the hit proxy below is the target. */}
       {look.hotspotRings && (
       <mesh
         ref={ringRef}
         position={position}
         quaternion={quaternion}
+      >
+        <planeGeometry args={[0.22, 0.22]} />
+        <shaderMaterial
+          vertexShader={hotspotVertex}
+          fragmentShader={hotspotFragment}
+          uniforms={uniforms}
+          transparent
+          depthWrite={false}
+          side={THREE.DoubleSide}
+          blending={THREE.AdditiveBlending}
+        />
+      </mesh>
+      )}
+
+      {/*
+        The HIT PROXY — the only click/hover/cursor target for this pin.
+
+        A non-rendering sphere centred on the pin HEAD and scaled every frame so its projected radius is
+        `HIT_PX` (14 px, 22 px on a coarse pointer): a sphere's silhouette is a circle from every
+        direction, so a constant screen footprint costs one scalar and no billboarding, and it never
+        collapses edge-on the way the tangent ring does.
+
+        `visible={false}` is the non-drawing route, and it is safe here because three's raycaster never
+        reads `visible`: `Raycaster.intersect()` tests `layers` and calls `object.raycast()`
+        unconditionally (three.module.js:52030-52050), and R3F reaches it through
+        `state.raycaster.intersectObject(obj, true)` (events-*.esm.js:919). R3F also only pushes an object
+        onto the interaction list when it has BOTH `raycast` and handlers (events-*.esm.js:308-311), which
+        this one does.
+
+        No `stopPropagation` on the globe: a pointer-miss still has to close the drawer, so nothing here
+        may swallow the "clicked empty globe" case. A back-facing pin returns no intersection at all and
+        therefore already IS the empty-globe case.
+      */}
+      <mesh
+        ref={proxyRef}
+        name={`pin-hit-${region.id}`}
+        position={headPosition}
+        raycast={proxyRaycast}
+        visible={false}
         onClick={(e) => {
           e.stopPropagation();
           onSelect(region.id);
@@ -179,18 +333,9 @@ export function Hotspot({ region, sst, active, headline, onSelect }: HotspotProp
           document.body.style.cursor = 'auto';
         }}
       >
-        <planeGeometry args={[0.22, 0.22]} />
-        <shaderMaterial
-          vertexShader={hotspotVertex}
-          fragmentShader={hotspotFragment}
-          uniforms={uniforms}
-          transparent
-          depthWrite={false}
-          side={THREE.DoubleSide}
-          blending={THREE.AdditiveBlending}
-        />
+        <sphereGeometry args={[1, 12, 8]} />
+        <meshBasicMaterial />
       </mesh>
-      )}
 
       {/* Pin stem + head.
           There is deliberately NO light in here. The old <pointLight>
