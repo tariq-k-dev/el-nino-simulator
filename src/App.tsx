@@ -1,5 +1,7 @@
-import { useCallback, useState } from 'react';
+import { useCallback, useState, useSyncExternalStore } from 'react';
 import { GlobeScene } from '@/scene/GlobeScene';
+import { MobileShell } from '@/mobile/MobileShell';
+import { getLayoutMode, subscribeLayoutMode } from '@/scene/viewStore';
 import { Header } from '@/components/Header';
 import { ControlDeck } from '@/components/ControlDeck';
 import { RegionDrawer } from '@/components/RegionDrawer';
@@ -21,6 +23,17 @@ export default function App() {
     units,
     toggleUnits,
   } = useScenario();
+
+  /**
+   * Which layout to render.
+   *
+   * `useSyncExternalStore` on the same module-scope lane `CameraDirector` reads non-reactively inside its frame
+   * loop. One listener (started by the director), one value, two readers: the camera and the DOM shell can
+   * therefore never disagree about which layout is mounted, which is the property the M1 case checks at 767,
+   * 768 and 1024.
+   */
+  const layoutMode = useSyncExternalStore(subscribeLayoutMode, getLayoutMode, getLayoutMode);
+  const isMobile = layoutMode === 'mobile';
 
   const [activeRegion, setActiveRegion] = useState<RegionId | null>(null);
   const [focusNonce, setFocusNonce] = useState(0);
@@ -131,14 +144,21 @@ export default function App() {
         </div>
       </div>
 
-      <Header
-        metrics={analytics.metrics}
-        units={units}
-        onToggleUnits={toggleUnits}
-        onExport={handleExport}
-        exporting={exporting}
-        onClearSelection={clearSelection}
-      />
+      {/*
+        The desktop header renders only in desktop mode (step 3-MOBILE1 D). On a phone the island carries the live
+        ENSO state and the scrubber, and the `MobileShell` renders an `sr-only` h1 in its place — so the document
+        has exactly one level-one heading either way and never two.
+      */}
+      {!isMobile ? (
+        <Header
+          metrics={analytics.metrics}
+          units={units}
+          onToggleUnits={toggleUnits}
+          onExport={handleExport}
+          exporting={exporting}
+          onClearSelection={clearSelection}
+        />
+      ) : null}
 
       {/*
         Left column: control deck.
@@ -149,7 +169,11 @@ export default function App() {
       */}
       <div
         data-occluder="left-panel"
-        className="pointer-events-none absolute bottom-0 left-0 z-20 flex w-full flex-col gap-3 p-4 sm:p-6 lg:w-auto"
+        className={[
+          'pointer-events-none absolute bottom-0 left-0 z-20 flex w-full flex-col gap-3 p-4 sm:p-6 lg:w-auto',
+          /* Desktop only: on a phone the sheet's half and full tiers carry these controls. */
+          isMobile ? 'hidden' : '',
+        ].join(' ')}
       >
         <div className="pointer-events-auto flex flex-col gap-2">
           <div className="hidden items-center gap-2 pl-1 lg:flex">
@@ -171,13 +195,28 @@ export default function App() {
       </div>
 
       {/* Right column: region cards (desktop only) — marked for the insets registry, see above. */}
-      <div
-        data-occluder="right-panel"
-        className="pointer-events-none absolute right-0 top-1/2 z-20 hidden -translate-y-1/2 p-4 lg:flex lg:p-6"
-      >
-        <RegionCards metrics={analytics.metrics} activeRegion={activeRegion} onSelect={selectRegion} />
-      </div>
+      {/*
+        Impact Zones cards — DESKTOP ONLY, and by CONDITIONAL RENDER rather than a CSS class. The prompt asks that
+        the desktop cards be absent on mobile, and `hidden` would leave them in the DOM for a screen reader and for
+        the insets registry, which reads `[data-occluder]` rects: a `display:none` panel reports a zero-area rect
+        and is ignored (`layout/insets.ts:117-123`), so it would be harmless — but "absent" is a stronger and
+        simpler claim than "harmless", and it is the one the spec checks.
+      */}
+      {!isMobile ? (
+        <div
+          data-occluder="right-panel"
+          className="pointer-events-none absolute right-0 top-1/2 z-20 hidden -translate-y-1/2 p-4 lg:flex lg:p-6"
+        >
+          <RegionCards metrics={analytics.metrics} activeRegion={activeRegion} onSelect={selectRegion} />
+        </div>
+      ) : null}
 
+      {/*
+        The drawer is DESKTOP ONLY. Its `data-occluder="right-drawer"` marker feeds the insets registry, and that
+        measurement is what sets the desktop right inset — so on a phone it must not be mounted at all, or the
+        registry would report an inset from a panel the mobile framing ignores.
+      */}
+      {!isMobile ? (
       <RegionDrawer
         region={activeRegion ? REGION_MAP[activeRegion] : null}
         metrics={analytics.metrics}
@@ -192,8 +231,29 @@ export default function App() {
          */
         onSelect={selectRegion}
       />
+      ) : null}
 
-      {/* Bottom-centre hint */}
+      {/*
+        THE MOBILE SHELL. A sibling of `#globe-canvas`, never a descendant: R3F connects its DOM listeners to the
+        Canvas WRAPPER div and fires `onPointerMissed` on any click that hits nothing in the scene, so a sheet
+        inside that wrapper would clear the selection on every tap. See `MOBILE-AUDIT.md` section 5.
+      */}
+      {isMobile ? (
+        <MobileShell
+          scenario={scenario}
+          metrics={analytics.metrics}
+          analytics={analytics}
+          region={activeRegion ? REGION_MAP[activeRegion] : null}
+          activeRegion={activeRegion}
+          units={units}
+          onSelect={selectRegion}
+          onClearSelection={clearSelection}
+          onScenarioChange={setScenario}
+          onResetScenario={reset}
+        />
+      ) : null}
+
+      {/* Bottom-centre hint (desktop only — it names a mouse). */}
       <div className="pointer-events-none absolute bottom-3 left-1/2 z-20 hidden -translate-x-1/2 lg:block">
         <div className="flex items-center gap-3 rounded-full border border-white/[0.06] bg-black/30 px-3 py-1 backdrop-blur-sm">
           {[
