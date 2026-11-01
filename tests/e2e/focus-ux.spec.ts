@@ -967,7 +967,14 @@ test.describe('focus ux — live face-pin', () => {
         await settleStable(page);
       }
 
-      /* Start the per-frame sampler BEFORE the retarget, so there is a frame on each side of the click. */
+      /*
+       * Start the per-frame sampler BEFORE the retarget, so there is a frame on each side of the click.
+       *
+       * The stop condition is keyed on the TARGET region, not on `focus === 'focused'`: in the
+       * `when-focused` leg the machine is already `focused` when sampling begins, and a
+       * `focus === 'focused'` test stopped the sampler after ONE frame (measured: `trace 1`). The trace must
+       * end when the retarget has arrived, i.e. `regionId === 'se-asia'` AND `focus === 'focused'`.
+       */
       await page.evaluate(() => {
         const store = window as unknown as Record<string, unknown>;
         store.__u7 = [] as Array<{ d: number[]; t: number[]; region: string | null; focus: string }>;
@@ -985,7 +992,18 @@ test.describe('focus ux — live face-pin', () => {
               focus: frame.focus,
             });
           }
-          if ((store.__u7 as unknown[]).length < 900) requestAnimationFrame(tick);
+          /*
+           * Keep sampling until the flight is OVER, not for a fixed frame count.
+           *
+           * A 900-frame cap looks generous and is not: this leg starts sampling while the camera is at
+           * rest (`focused`), and if the click's arc lands quickly the trace ends before the machine has
+           * finished — measured in the full batched run: `trace 13 frames`, and the final read was taken
+           * 38.97 deg short of the target while the STATE was correctly `focused`. The `after` read then
+           * describes a frame the sampler never saw. Stopping on `focus === 'focused'` makes the trace and
+           * the final pose describe the same moment, with a frame cap as a runaway backstop.
+           */
+          const done = frame !== undefined && frame.regionId === 'se-asia' && frame.focus === 'focused';
+          if (!done && (store.__u7 as unknown[]).length < 900) requestAnimationFrame(tick);
         };
         requestAnimationFrame(tick);
       });
@@ -996,6 +1014,8 @@ test.describe('focus ux — live face-pin', () => {
         .poll(() => page.evaluate(() => window.__frame!.focus), { timeout: 25_000, intervals: [150] })
         .toBe('focused');
       await settleStable(page);
+      /* `focused` fires at angular < 0.004 rad; wait for the pose to stop before reading the final one. */
+      await settlePose(page);
 
       const after = await readAll(page);
       const anchor = await page.evaluate(
