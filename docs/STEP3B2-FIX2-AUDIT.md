@@ -182,3 +182,71 @@ Until one is chosen, the pin proxy is not written.
 - `tests/e2e/pin-click.spec.ts` unedited, so D4 remains red exactly as it was at the baseline: it asserts
   post-fix behaviour and no fix exists. That is the commit's starting condition, not a regression.
 - S1 (`ref.spec`) unaffected by construction — no rendering path was touched, so no pixel can move.
+
+---
+
+# RESOLUTION (step 3B2-FIX2-CONT) — the gate is keyed on the band, not on the geometry
+
+Prompt `docs/prompts/step3-b2-fix2-cont.md`, sentinel `END OF PROMPT 2B-STEP3-B2-FIX2-CONT`. The gate this
+memo refuted is replaced; everything else in step A stands as written.
+
+## The algebra, restated, because it decided the replacement
+
+With the camera at distance `D` along the unit vector `u` from the globe centre and the pin base at radius
+`rb` along the unit normal `n`:
+
+```
+n · (rayOrigin − pinBaseWorld) = D (n·u) − rb      so the old rule was     n·u > rb / D
+```
+
+`rb = 1.012 × 1.035 = 1.04742 R` for the pin group origin. That threshold is a function of the CAMERA
+DISTANCE while the acceptance bands are constants on `n·u`, so the two can only agree by coincidence:
+
+| quantity | value |
+|---|---:|
+| `rb` (pin group origin, `anchorRadius × idleLift`) | 1.04742 R |
+| distance at which `rb / D = FRONT_EDGE 0.15` | `1.04742 / 0.15` = **6.98 R** |
+| `OrbitControls.maxDistance` (`GlobeScene.tsx:727`) | **5 R** |
+| old gate at `d_fit` 3.77857 | 0.27720 |
+| old gate at `dMax` 5 | 0.20948 |
+
+So no legal camera pose could admit the spec's whole front band: the required `6.98 R` is 1.4× the product's
+own zoom ceiling.
+
+## Why true occlusion was rejected as the alternative
+
+The exact test — is the camera-to-head segment blocked by the unit sphere — admits everything genuinely
+visible, and that is the problem: a pin head floats at 1.10242 R, i.e. 0.1 R above the surface, so it stays
+visible well past the sphere's own horizon. Bisecting that horizon (`probe-gate.mjs`) gives **n·u ≈ −0.171**
+at `d_fit`. Any gate at or below that value admits sweep rows the spec bands as **BACK** and requires to
+select 0 % of the time — 3 of the 24 back rows. The two requirements are unsatisfiable together by any
+geometric test; only a gate keyed on the asserted band satisfies both.
+
+## The chosen gate
+
+```
+FRONT_EDGE  = 0.15      (a pin at or above this must select, at every angle)
+BACK_EDGE   = 0         (below this a pin must never select)
+PIN_HIT_GATE = (FRONT_EDGE + BACK_EDGE) / 2 = 0.075
+```
+
+`symmetry of the bands does not hold here` — front is 0.15, back is 0 — so the midpoint is **0.075, not 0**.
+The prompt anticipated 0 for symmetric bands; the constant is the formula either way, and a unit test asserts
+`FRONT_EDGE > PIN_HIT_GATE > BACK_EDGE` strictly so the margin cannot be eroded silently.
+
+**All three live in one module, `src/scene/pinVisibilityBands.ts`,** imported by the product
+(`Hotspot.tsx`) and by `tests/e2e/pin-click.spec.ts`. That is the structural fix for the class of bug this
+step was: the band edge and the gate were two literals in two files, and the drift between them cost 8.7 % of
+the front band.
+
+## The accepted limb side effect
+
+A pin between `0.075` and the limb edge selects even where the planet's silhouette is in front of the head,
+because nothing depth-tests the proxy against the globe. On the shipped sweep that is exactly one row: az 120
+`us-west`, `f = 0.2064`. Accepted, and now **asserted** rather than tolerated — `pin-click.spec.ts` D6 clicks
+that row and requires it to select, so the trade is executed by the suite instead of documented and forgotten.
+
+The other consequence is stated for completeness: a pin at `0.075 ≤ f < 0.15` — the spec's grazing band, which
+it reports and never asserts — becomes clickable. On the sweep that is az 240 `se-asia` at `f = 0.1126`, and it
+does select.
+

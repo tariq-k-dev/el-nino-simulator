@@ -916,3 +916,145 @@ is the one reported):
 3. `negative.spec.ts`'s N10 remains red in full runs and green in isolation. That divergence is the
    pre-existing behaviour documented in step 3B, not a regression from this step, and the rule in
    `docs/prompts/step3-b2.md` is what classifies it.
+
+## 2B-STEP3B2-FIX2 (this session)
+
+Prompt `docs/prompts/step3-b2-fix2.md`, sentinel `END OF PROMPT 2B-STEP3-B2-FIX2`. Baseline HEAD `54a93f2`,
+clean tree. Full audit: **`docs/STEP3B2-FIX2-AUDIT.md`**.
+
+| commit | what |
+|---|---|
+| `7a143bc` | P0: the prompt, committed alone |
+| `9e291a9` | A: the audit memo — **step A STOPPED, no product code** |
+| `783a605` | B: the in-drawer region switcher |
+
+### Step A — STOPPED at A1. The prompt's visibility gate contradicts the spec it is meant to satisfy
+
+A3 specifies the proxy raycast to decline when `n · (rayOrigin − pinBaseWorld) <= 0`. With the camera at
+distance `D` along `u` and the pin base at radius `rb` along `n`, that expression is `D(n·u) − rb`, so the
+rule is **not** a hemisphere test — it is a hard threshold at `n·u > rb/D` on the exact quantity A4 bands
+front/grazing/back with.
+
+| quantity | value | angle from camera axis |
+|---|---:|---:|
+| A4's FRONT band edge | 0.15000 | 81.37° |
+| A3's gate at `d_fit` 3.77857, `rb` = 1.04742 | 0.27720 | 73.91° |
+| A3's gate at `dMax` = 5 | 0.20948 | 77.91° |
+
+`rb/D <= 0.15` needs `D >= 6.98 R` and `maxDistance` is 5, so **no camera pose in the product** satisfies
+both. On the committed 48-pose sweep the gate admits **20 of 23** front rows (87.0 % against the required
+100 %) and refuses az 120/300 `us-west` and az 150 `horn-africa`. The physically exact alternative — a true
+occlusion test — overshoots the other way and admits **3 rows the spec bands as back**.
+
+The prompt's own A1 rule (`binding unless your measurements refute it; if they do, STOP`) is what was
+followed. Two resolutions are recorded in the audit for the author to choose between; neither was
+implemented. **Nothing is half-fixed: no product file, spec, threshold or runner table was touched by step A.**
+
+The parts of A3 that DO measure clean are in the audit and stand for the next session: the 14/22 px radius
+design is sound (nearest pin pair 0.89532 R, so the neighbour cap is 0.44766 R and a 14 px proxy at `d_fit` is
+0.04513 R — 9.9× under it), and `visible = false` objects DO receive pointer events in this repo's
+R3F 8.18.0 / three 0.169.0 (`three.module.js:52030-52050` never reads `visible`).
+
+### Step B — the in-drawer region switcher (`783a605`)
+
+B1 was measured before any edit, at both spec viewports: **no spec captures drawer pixels** (`ref.spec.ts`
+crops the disc + 40 px from `discRadiusPx()`; the look suite never opens a region) and **every card centre
+resolves to a node inside the drawer** (`topInDrawer: true, isCard: false` on all four, both viewports). No
+conflicting spec, so no STOP.
+
+The row is a `shrink-0` sibling of the scrolling body, so the extra height is absorbed by the body scroll that
+already existed (783 px of content in 613 px at 1440x900, 433 px at 1280x720) and no rect moves:
+
+| proof | 1440x900 | 1280x720 |
+|---|---|---|
+| drawer wrapper | 418 x 900 at x 1022 (unchanged) | 418 x 720 at x 862 (unchanged) |
+| drawer panel | 386 x 808 at (1038, 76) | 386 x 628 at (878, 76) |
+| `insets.right` | 418 | 418 |
+| body scroll | 784 in 577 | 784 in 397 |
+| switcher row | scrollWidth 384 <= clientWidth 384 (wraps, no h-scroll) | same |
+
+`switcher-ux.spec.ts`, **8/8** (4.0 min): S1 retarget at both viewports (real `page.mouse` clicks guarded by
+`elementFromPoint`; face-pin error **0.0000 deg**, `d` = `d_fit` exactly, `|target|` 0.0e+0, drawer stays
+`aria-hidden="false"`, panel and wrapper rects identical across the retarget, focus stays on the clicked chip),
+S2 no-op at both viewports **with a positive control** (the same sampler first SEES a 131.944 deg retarget,
+then measures 0.0000 deg and 0.00e+0 for the active chip over 32 and 44 samples), S3 keyboard (Tab from the
+close button lands on the first chip; Enter and Space both retarget), S4 all four close paths,
+S5 the rects above.
+
+`RegionDrawer.test.tsx` adds **8 unit tests**. Gate: **908 unit tests / 41 files** (900 + 8), `tsc -b`, `lint`,
+`build` all green. S1: `ref.spec.ts` residual `maxAbs=0 differing=0`, sha `934ecd13…d29a44` **unchanged, in two
+separate processes**. Locked/legacy 23/23 (globe 5, limb 2, scene-gate 2, frame-director 5, camera-golden 9),
+0 failures.
+
+### Deviations, stated plainly
+
+1. **Step A implemented nothing**, and that is the prompt's own STOP rule rather than a budget statement.
+   `pin-click.spec.ts` was therefore NOT rewritten under waiver W5, so D4 remains red exactly as at the
+   baseline. No threshold, window or test body was touched to make it say otherwise.
+2. **S4's tab-order assertion is scoped to the chips, not the whole drawer.** Measured: the closed drawer
+   still contains ONE live tab stop — the pre-existing close button — which predates this step and which the
+   prompt places out of scope ("the drawer X ... untouched"). The chips themselves are `tabIndex -1` and take
+   zero of 28 Tab landings. The wider assertion would have made this step's spec the first place that
+   pre-existing debt is reported, as a failure of a switcher that did not cause it.
+3. **The switcher's no-op is enforced in the component, not in `App.selectRegion`.** `selectRegion` re-centres
+   on a repeat click by design (`App.tsx:31-36` bumps `focusNonce`), which is right for the cards and pins and
+   wrong for this row.
+
+## 2B-STEP3B2-FIX2-CONT (this session)
+
+Prompt `docs/prompts/step3-b2-fix2-cont.md`, sentinel `END OF PROMPT 2B-STEP3-B2-FIX2-CONT`. Baseline HEAD
+`783a605`, tree clean except this file's own pending append. Full audit + resolution:
+**`docs/STEP3B2-FIX2-AUDIT.md`**.
+
+| commit | what |
+|---|---|
+| `282528b` | P0: the prompt, alone |
+| `1a3b44f` | A: the pin hit proxy + `pinVisibilityBands.ts` + 28 unit tests |
+| `7bde152` | WAIVER W5: `pin-click.spec.ts` rewritten (4 -> 7 cases), runner count raised |
+
+### Step A — the gate, corrected to a constant on the band
+
+`FRONT_EDGE 0.15`, `BACK_EDGE 0`, `PIN_HIT_GATE 0.075`. The bands are ASYMMETRIC, so the midpoint is 0.075
+rather than the 0 the prompt anticipated for symmetric ones; a unit test pins
+`FRONT_EDGE > PIN_HIT_GATE > BACK_EDGE` strictly. All three live in one module imported by the product and the
+spec, which is the structural fix for the two-literal drift that cost 8.7 % of the front band.
+
+| measurement | before | after |
+|---|---:|---:|
+| sweep front (`>= 0.15`) | 9/23 = 39.1 % | **23/23 = 100 %** |
+| sweep back (`< 0`) | 13/24 = 54.2 % | **0/24 = 0 %** |
+| sweep grazing | 0/1 | 1/1 (reported, not asserted) |
+| spin-on, clean presses | — | front **22/22 = 100 %**, back 0 |
+
+**A7 was checked and not triggered:** front is 100 % and back is 0 % on the committed 48-pose sweep, so the
+narrowed STOP condition does not fire. The first run of D1 read 82.6 % and looked like a hit; it was the
+measurement (clicks fired mid-flight after a reset), not the gate — see `docs/E2E.md`.
+
+D4/D5/D6 pass: drawer-open pin click retargets at 0.0000 deg with `d` = `d_fit` and the drawer open;
+pointer-miss still closes from empty globe AND through a back pin; the limb-band row (az 120 `us-west`,
+f 0.2064) selects, asserted as the accepted side effect. `visible=false` proxies receive pointer events, proven
+on the running page (D3: top raycast hit, cursor `pointer`).
+
+### Proofs
+
+- S1: `ref.spec` residual `maxAbs=0 differing=0`, sha `934ecd13…d29a44` unchanged, **two separate processes**.
+- Locked/legacy **23/23** (globe 5, limb 2, scene-gate 2, frame-director 5, camera-golden 9).
+- Switcher **8/8**; `git diff --stat 783a605` shows no switcher file touched.
+- Unit **936 tests / 42 files** (900 + 28 new + 8 switcher).
+- Gate: `tsc -b`, `lint`, `test`, `build` all green.
+
+### Deviations, stated plainly
+
+1. **The prompt's expected count of 135 does not match the runner's 130.** Its arithmetic was `127 + 8` where the
+   8 is `switcher-ux.spec.ts`, but those 8 were ALREADY inside the 127 (added in `783a605`). This step's real
+   delta is `pin-click.spec.ts` 4 -> 7, so 127 + 3 = **130**, and `expectedCounts()` now says 7 for that file.
+   The full-run report below prints what the runner measured, not the prompt's target.
+2. **D1b states its 100 % on CLEAN presses**, not on all 74 attempts. Measured: the hold is 50 ms but the CDP
+   `pointerdown -> pointerup` window is **315-400 ms**, and R3F requires the object to be hit at both ends, so a
+   pin at 12-38 px/s leaves a 14 px radius inside its own press. 22 of 74 attempts qualified and **all 22**
+   front ones selected. The dirty rows are printed with their window. This is the harness's latency, measured
+   rather than assumed — and three earlier versions of the case failed on a correct gate for exactly this
+   reason.
+3. **`getLookFlags`' `hotspotRings` flag still gates the ring's DRAW.** The proxy is deliberately outside that
+   flag: a flag that hides the visual ring must not silently disable the click target, or the ablation seam
+   would also change behaviour.

@@ -539,3 +539,96 @@ machine still `focusing` and ends in the same state. R4's post-Reset `activeElem
 
 **S1 unchanged:** `ref.spec.ts` residual `maxAbs=0 differing=0`, sha `934ecd13…d29a44`; `camera-golden` 9/9 at
 8.88e-16. The Reset work touches no render path.
+
+## 13. As built — 3B2-FIX2-CONT: the pin hit proxy and the visibility gate
+
+Prompt `docs/prompts/step3-b2-fix2-cont.md`, sentinel `END OF PROMPT 2B-STEP3-B2-FIX2-CONT`. Full audit and
+resolution: `docs/STEP3B2-FIX2-AUDIT.md`.
+
+### The gate, and why it is not a geometry test
+
+The original A3 rule — `n · (rayOrigin − pinBaseWorld) > 0` — reduces, with the camera at distance `D` along
+`u` and the pin base at radius `rb` along `n`, to `n·u > rb / D`. That is a threshold that MOVES with the camera
+while the acceptance bands are constants, and `rb / D <= 0.15` needs `D >= 6.98 R` against a
+`maxDistance` of 5. No legal pose could satisfy both, which is the STOP the audit recorded.
+
+The replacement is a constant in the quantity the spec bands:
+
+```
+FRONT_EDGE = 0.15    BACK_EDGE = 0    PIN_HIT_GATE = (0.15 + 0) / 2 = 0.075
+```
+
+Note the bands are **asymmetric** (0.15 front, 0 back), so the midpoint is 0.075, not the 0 the prompt
+anticipated for symmetric bands. All three live in `src/scene/pinVisibilityBands.ts`, imported by the product
+AND by `tests/e2e/pin-click.spec.ts` — the structural fix for the drift that cost 8.7 % of the front band.
+
+`pinFacesCamera(nWorld, cameraWorld, globeCenterWorld, gate)` is pure, reads no `rb`/`D`/height/`maxDistance`,
+normalises inside, and returns false for a degenerate camera at the globe centre. It has **28 unit tests**
+(the A4 table, D-independence at 1.5/3.77857/5/50, globe centre off-origin, a spun group, and the degenerate
+cases), so the unit count went **900 + 28 = 928** before the switcher's 8, i.e. **936 / 42 files** in total.
+
+### The proxy
+
+One `SphereGeometry(1, 12, 8)` mesh per pin, `visible={false}`, centred on the pin HEAD
+(`anchorRadius × idleLift + coreOffset = 1.10242 R` — the same point `__globe.pins()` reports), scaled every
+frame in the `useFrame` body to `hitPx · d / focalPx` and clamped to half the nearest pin pair
+(`PIN_HIT_CLAMP_R` = 0.44766 R). It carries `onClick`, `onPointerOver`, `onPointerOut` and the cursor writes; the
+ring keeps only its shader.
+
+**Its position is static, not lifted with the hover/active state.** If it followed the lift, hovering would move
+the proxy out from under the cursor, the pointer-out that caused would move it back, and the cursor would
+flicker. The active lift is 0.025 R (7.6 px at `d_fit`) — inside the 14 px radius — so a click aimed at the
+projected head still lands after a selection.
+
+**The gate is applied in the raycast override, not in `onClick`.** A veto after the hit would still hover, still
+set the cursor over an invisible pin, and still count as a hit for `onPointerMissed`'s bookkeeping. Returning no
+intersection makes a back pin literally the empty-globe case, which is what keeps the drawer's close-on-miss
+working — and D5 proves it, with the click delivered THROUGH a back pin.
+
+### `visible=false` receives pointer events, proven twice
+
+From source: three's `intersect()` tests `layers` and calls `object.raycast()` without reading `visible`
+(`three.module.js:52030-52050`), R3F reaches it via `state.raycaster.intersectObject(obj, true)`
+(`events-776716bd.esm.js:919`), and R3F only registers an object for interaction when it has BOTH `raycast` and
+handlers (`:308-311`). On the running page: D3 asserts the top raycast hit at a front pin's head IS
+`pin-hit-<region>` with `visible: false`, and that hovering it sets `document.body.style.cursor = 'pointer'` —
+which only an R3F intersection can do.
+
+### Numbers
+
+| claim | measured |
+|---|---|
+| sweep, front | **23/23 = 100 %** (was 9/23 = 39.1 %) |
+| sweep, back | **0/24 = 0 %** (was 13/24 = 54.2 %) |
+| sweep, grazing | 1 row (`se-asia@240`, f 0.1126), selects — the accepted side effect |
+| spin-on, clean presses | front **22/22 = 100 %**, back 0 |
+| drawer-open pin click (D4 i) | face-pin **0.0000 deg**, `d` 4.3572 = `d_fit`, `\|target\|` 0.0e+0, drawer stays open |
+| pointer-miss still closes (D5 ii) | empty globe AND through a back pin; `insets.right` 418 -> 316 |
+| limband pin (D6 iii) | az 120 `us-west` f 0.2064 selects |
+| S1 | `ref.spec` residual `maxAbs=0 differing=0`, sha `934ecd13…d29a44` unchanged **in two separate processes** |
+| locked/legacy | **23/23** (globe 5, limb 2, scene-gate 2, frame-director 5, camera-golden 9) |
+| switcher | **8/8**, and no switcher file changed since `783a605` |
+| unit | **936 tests / 42 files** |
+| rendered pixels | **no change** — S1 residual 0 and the sha unchanged; the proxy is `visible={false}` |
+
+### The harness lesson, recorded because it cost four runs
+
+`pin-click.spec.ts` D1b is a moving-target case, and three of its first four versions failed on a correct gate.
+Measured causes, in the order they were found:
+
+1. **Clicking a stale projection.** `clearSelection` slept 250 ms; the camera was still flying back from an open
+   drawer's `d_fit` (4.357) to 3.778, so four front rows were clicked at where the pin had been. Fixed by
+   waiting on `focus === 'idle'` AND a two-sample camera-still check. 19/23 -> **23/23**.
+2. **A guard that cost more than the radius.** A per-attempt `elementFromPoint` round trip added 100-200 ms
+   between projection and press; at 12-38 px/s that is 1-8 px of drift. The drawer guard moved INTO the same
+   evaluate that produces the projection.
+3. **A velocity sampler that measured zero.** The first version re-projected a CACHED world array, so both
+   samples were identical and every velocity was exactly `0.0 px/s`; the extrapolation silently did nothing.
+4. **A press window no harness can shorten.** The hold is 50 ms but the measured `pointerdown -> pointerup`
+   window is **315-400 ms**, and R3F requires the object to be hit at both ends. So the case now records the
+   window per attempt and asserts 100 % on the **clean** subset, reporting the dirty rows with their measured
+   window. That is stated as a harness limit, not smoothed into a tolerance.
+
+**The general rule this leaves:** when a spec clicks a MOVING target, the projection and the press must be one
+round trip apart, and the assertion must be stated on presses the harness could actually deliver — otherwise the
+spec measures CDP latency and reports it as a product defect.

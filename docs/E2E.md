@@ -392,6 +392,35 @@ Two new files, both registered in `expectedCounts()` and `FILE_TIMEOUTS_MS`:
 
 Full suite is now **127**: the previous 112 + 11 + 4.
 
+### Step 3B2-FIX2 / -CONT — the pin hit proxy, and a spec that measures its own latency
+
+`pin-click.spec.ts` went from **4** cases to **7** and from red to green. The file now certifies a defect fixed
+rather than a defect measured:
+
+| case | what it asserts | measured after the fix |
+|---|---|---|
+| D1 sweep | the committed 48-pose sweep: front 100 %, back 0 %, grazing printed and not asserted | **front 23/23 = 100 %**, **back 0/24 = 0 %**, grazing 1/1 (was 9/23 = 39.1 % and 13/24 = 54.2 %) |
+| D1b spin-on | the gate with the planet spinning, on presses the harness could actually deliver | **front 22/22 = 100 %** on clean presses, back 0 |
+| D2 | the raycast stack and the ring's rendered radius, printed | proxy 14 px vs ring 20-45 px |
+| D3 | a **`visible=false`** mesh is the top raycast hit and owns the pointer cursor | top hit `pin-hit-<region>` with `visible=false`; cursor `pointer` over, `auto` off |
+| D4 (i) | a front pin clicked with the drawer open retargets and keeps it open | face-pin **0.0000 deg**, `d` 4.3572 = `d_fit`, `\|target\|` 0.0e+0, drawer stays open |
+| D5 (ii) | pointer-miss still closes, from empty globe and through a back pin | drawer closes both ways; `insets.right` 418 -> 316 |
+| D6 (iii) | the accepted limb side effect: a pin behind the silhouette selects | az 120 `us-west` f 0.2064 selects |
+
+**The D1b lesson, which is now written into the case rather than into a report.** A spinning pin crosses the
+screen at **12-38 px/s**, and on this machine one CDP round trip costs ~230 ms: the measured
+`pointerdown -> pointerup` window is **315-400 ms** even though the hold is 50 ms. A pin therefore travels
+4-15 px inside its own press, against a **14 px** radius, and R3F fires `onClick` only when the object was hit
+at BOTH ends (`internal.initialHits`). The first three versions of this case read 19/27, 8/15 and 20/27 on a
+gate that was correct, because they projected, then made two more round trips, then pressed — the point was
+already **13.6-18.2 px stale at pointerdown**. The case now arms a native event recorder, presses with nothing
+in between, and states its 100 % assertion on the **clean subset** (proxy hit at both ends) while reporting the
+dirty rows with their measured window. That is a harness limit, stated and measured, not a tolerance.
+
+**Counts:** `pin-click.spec.ts` **7** (was 4), so the full suite is **130** by the runner's own
+`expectedCounts()`. The prompt's arithmetic said 135 (127 + 8); the difference is this file's own growth
+(+3) against `switcher-ux.spec.ts` (8) already being inside the 127 — see the full-run table.
+
 **`reset-ux.spec.ts` compares against a pose sampled right after a FRESH LOAD of the same viewport**, not
 against a hardcoded vector — the load pose is the product's own definition of "the load state". Measured at
 `aad1338`: direction error **0.00000 deg**, distance 3.778788 against a 3.778586 fit target, `|target|`

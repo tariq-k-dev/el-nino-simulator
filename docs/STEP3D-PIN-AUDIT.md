@@ -98,3 +98,57 @@ npx playwright test pin-click.spec.ts --reporter=list -g "D2 hypotheses"
 ```
 
 Measured wall: sweep 39.4 s, D2 6.3 s, both at 1440x900 against `dist-e2e` built from `dcf2214`.
+
+---
+
+# Resolved (step 3B2-FIX2-CONT) — the sweep, before and after, on the same 48 poses
+
+The defect this memo measured is **fixed and asserted**. Same protocol throughout: spin pinned per angle with
+`__globe.setSpin(true, deg)`, a real `page.mouse.click` at the pin's projected head, classification
+`dot(pin normal, direction to camera)` with the prompt's bands (front `>= 0.15`, grazing `0..0.15`, back `< 0`).
+12 azimuths x 4 regions = **48 clicks**.
+
+| band | attempts | selected BEFORE (`dcf2214`) | rate | selected AFTER (`1a3b44f`) | rate |
+|---|---:|---:|---:|---:|---:|
+| **front** (`>= 0.15`) | 23 | 9 | **39.1 %** | **23** | **100.0 %** |
+| grazing (`0..0.15`) | 1 | 0 | 0 % | 1 (reported, not asserted) | — |
+| **back** (`< 0`) | 24 | 13 | **54.2 %** | **0** | **0.0 %** |
+
+The one grazing row after the fix is az 240 `se-asia` at `f = 0.1126`; it selects, because the gate is at
+0.075 (see `docs/STEP3B2-FIX2-AUDIT.md`, "RESOLUTION"). The single front row behind the limb — az 120
+`us-west`, `f = 0.2064` — also selects, and that is the accepted side effect, now asserted by D6 rather than
+tolerated.
+
+**With the spin RUNNING** (20 attempts per region, 50 ms hold, projected at pointerdown): **front 22/22 = 100 %**
+and **back 0** on the presses the harness can deliver cleanly (the proxy hit at both `pointerdown` and
+`pointerup`, which is R3F's precondition for `onClick`). 22 of 74 attempts qualified: the measured press window
+is 315-400 ms on this machine and a pin at 12-38 px/s leaves a 14 px radius inside it, so the dirty rows are a
+statement about CDP latency, not about the gate. Full detail in `docs/E2E.md`.
+
+## The evidence trail (gitignored, under `.cache/fix2/`)
+
+Every number above came from a probe that is still on disk and still re-runnable. Nothing here is committed —
+`.cache/` is gitignored — so these are named so a later session can rebuild each measurement instead of
+trusting this prose.
+
+| probe | what it answers | how to re-run |
+|---|---|---|
+| `probe-geometry.mjs` | the nearest pin pair (0.89532 R), the neighbour-overlap cap (0.44766 R), and that a 14 px proxy is 0.04513 R — 9.9x under it | `node .cache/fix2/probe-geometry.mjs` |
+| `probe-gate.mjs`, `probe-gate2.mjs`, `probe-gate3.mjs` | the algebra: the old gate at `d_fit` (0.27720) and `dMax` (0.20948) against the 0.15 band edge; the `6.98 R` distance it would need; the true occlusion horizon (-0.171) that overshoots the back band | `node .cache/fix2/probe-gate.mjs` (2 and 3 add the per-row sweep and the head-radius variants) |
+| `b1-probe.mjs` | the drawer-occlusion measurement behind the switcher's B1 audit: every card centre resolves to a drawer node | `node .cache/fix2/b1-probe.mjs` (needs the built bundle served on 4197) |
+| `tab-probe.mjs` | the tab-order measurement behind S4's scoped assertion: the closed drawer's one live tab stop is the pre-existing close button, and the chips take 0 of 28 landings | `node .cache/fix2/tab-probe.mjs` |
+| `pinclick-run2-d1.log`, `pinclick-run22-full.log` | the raw 48-row tables behind the before/after column, and the full 7-case run | `npx playwright test tests/e2e/pin-click.spec.ts` |
+
+The probes are `.mjs` run by `node`, deliberately: a `.spec.ts` body copied into one fails to parse on its `as`
+casts, so they are written cast-free.
+
+## Reproduce (updated)
+
+```bash
+pnpm build:e2e
+npx playwright test tests/e2e/pin-click.spec.ts --reporter=list   # 7 cases, ~10 min
+```
+
+The old instructions here (`-g "D1 sweep"` / `-g "D2 hypotheses"`) still work, but note that **D1 sweep now
+asserts** rather than only measuring, and its `openLive`/`clearSelection` helpers wait for the camera to be
+still — clicking a point read mid-flight was the cause of a false 82.6 % on the first run of this step.
