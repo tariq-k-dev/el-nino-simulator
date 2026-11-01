@@ -687,8 +687,9 @@ function expectedCounts() {
     'focus-ux.spec.ts': 22,
     // Step 3B2-FIX1 B: R1 x8 (four regions x two viewports) + R2 + R3 + R4.
     'reset-ux.spec.ts': 11,
-    // Step 3B2-FIX1 D: the sweep, the spin-on rate, the hypothesis stacks and the D4 assertions.
-    'pin-click.spec.ts': 4,
+    // Step 3B2-FIX2-CONT A5: the sweep (front/back asserted), the spin-on acceptance, the raycast stack
+    // print, the visible=false proof, and the three drawer-open cases (D4/D5/D6).
+    'pin-click.spec.ts': 7,
     // Step 3B2-FIX2 B: S1 x2 viewports, S2 x2 viewports, S3, S4, S5 x2 viewports.
     'switcher-ux.spec.ts': 8,
     'negative.spec.ts': 14,
