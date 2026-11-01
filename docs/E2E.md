@@ -319,6 +319,7 @@ fetch genuinely pending and no progress events arrive — which is exactly what
 | boot.spec.ts | 403-406 s | 10 min |
 | camera-golden.spec.ts | 125.3-129.0 s | 6 min |
 | frame-director.spec.ts | 41.8 s | 6 min |
+| focus-ux.spec.ts | 5.9-6.3 min (22 cases) | 13 min |
 | harden.spec.ts | 110 s | 4 min |
 | globe.spec.ts | 54-61 s | 3 min |
 | gate-clock.spec.ts | 52 s | 2 min |
@@ -327,15 +328,76 @@ fetch genuinely pending and no progress events arrive — which is exactly what
 ### Expected counts
 
 `look.spec.ts` **9**, `negative.spec.ts` **14**, `globe.spec.ts` **5** = **28** for `e2e:look`.
-Full suite: boot 10, **camera-golden 9**, determinism 2, **frame 20**, **frame-director 5**, gate-clock 1,
-globe 5, harden 8, history-gate 1, limb 2, look 9, negative 14, **ref 2**, scene-gate 2 = **90**
+Full suite: boot 10, **camera-golden 9**, determinism 2, **focus-ux 22**, **frame 20**,
+**frame-director 5**, gate-clock 1, globe 5, harden 8, history-gate 1, limb 2, look 9, negative 14,
+**ref 2**, scene-gate 2 = **112**
 (was 76 at the close of Step 3A2; Step 3B added `camera-golden.spec.ts` **9** and
-`frame-director.spec.ts` **5**). The 74 recorded in an earlier revision omitted `ref.spec.ts`'s two
+`frame-director.spec.ts` **5** = 90; Step 3B2 added `focus-ux.spec.ts` **22** = 112). The 74 recorded in an earlier revision omitted `ref.spec.ts`'s two
 tests from the sum while the runner itself reported 76, which is how the arithmetic drifted from the
 table it was describing.
 The runner's `expectedCounts()` holds these and the summary fails on any mismatch, so a file that
 exits 0 having run fewer tests still fails the run. `frame.spec.ts` also carries a 5 min per-file
 backstop (2x its measured 125 s, rounded up).
+
+### Step 3B2: the live focus policy, the two waivers, and what they cost
+
+**What changed in the product.** In LIVE mode, selecting a region no longer aims the camera at the pin.
+It ORBITS the camera to the pin's own normal, at a distance it does not touch: `controls.target` stays at
+the origin, so the globe stays centred on the free rect and the pin lands on the free-rect centre by
+construction. LOCKED mode keeps the legacy aim-at-pin fly-to, moved verbatim into `runLockedFlyTo`.
+
+**What changed in the specs: exactly two files, under two named waivers.**
+
+| waiver | file | what changed | diff |
+|---|---|---|---|
+| **W1** | `tests/e2e/frame.spec.ts` F8 | `expect(aimMoved).toBeGreaterThan(0.1)` + its comment -> `expect(aimMoved).toBeLessThanOrEqual(1e-6)` | **3 added, 3 removed** |
+| **W2** | `tests/e2e/camera-golden.spec.ts` | `flyTo()`'s start signal and the target assertion made mode-aware | 69 added, 18 removed |
+
+Neither waiver touches a threshold, a window, a timeout or a test count: `frame.spec.ts` is still 20 and
+`camera-golden.spec.ts` still 9.
+
+**Why W1 was necessary.** F8's `aimMoved` certified the behaviour this step removes. Under face-pin
+`|controls.target|` is exactly `0.000` R, so the assertion was a hard red. It is replaced by the
+guarantee that replaces it — face-pin keeps the target at the origin — and the same case's two `aim`
+oracle assertions (`:643-644`, the projection of the target onto the free centre) still pass unchanged,
+which is why the oracle itself did not have to move.
+
+**Why W2 was necessary, and why it was not in the first waiver.** `camera-golden.spec.ts` used
+`|__globe.target()| > 0.02` as its "the selection was received" signal in `flyTo()`, the helper behind all
+nine cases, and asserted the fixture's target at `1e-5` R. Under face-pin the target is `(0,0,0)` for the
+whole arc, so the poll could never become true (15 s timeout) and the target error would have been
+`0.999` R. Because `flyTo()` is also what `UPDATE_GOLDEN=1` runs, the live golden entries could not be
+regenerated at all — the failure was in the procedure, not just in an assertion. Hence the second waiver:
+
+- **start signal**, live: `__frame.focus !== 'idle'` (the machine's own "a flight was accepted");
+  locked: the original `|target| > 0.02`, verbatim;
+- **target assertion**, live: `|controls.target| <= 1e-6` and the fixture's `target` excluded from the
+  comparison; locked: the original `<= 1e-5` comparison, verbatim.
+
+The live golden entries were then regenerated with `UPDATE_GOLDEN=1`. The **locked** entries are
+byte-identical in every asserted field (position, target, quaternion, distance); only `flyMs`, which is
+recorded and never asserted, differs between captures.
+
+**What the live golden entries now say** (1440x900, after the fly-to settles): `target = (0,0,0)` and
+`distance = 4.35719` for all four regions, i.e. `d_fit` of the OPEN rect — the fit's distance channel, not
+the pin's legacy `zoom` of 2.6-2.9.
+
+**`focus-ux.spec.ts` is 22 cases** (U1 x4 viewports, U2 x3 + the 1024x768 centring-only branch, U3 x2,
+U4, S8(a), S8(b), U5 x3 close paths, U6, U7 x2 timings, U8, U9, U10). Expected total is now **112**.
+
+Two measurement facts worth carrying forward, both of which cost a failed run to learn:
+
+1. **The Impact Zones cards are occluded once the drawer is open.** The drawer is a 418 px `z-30` panel
+   over a `z-20` card list, so a real mouse click at a card's own centre lands on the drawer — measured:
+   `document.elementFromPoint` at the card centre returns a `DIV` inside the drawer, and the state stayed
+   on the previous region. A retarget therefore has to be driven by the keyboard (focus + Enter on the
+   same `<button>`) or by clicking a PIN, which is what `selectRegion()` and U9 do.
+2. **A `page.evaluate` round trip is 100-300 ms, not a frame.** Measuring "the first pose after the click"
+   from Playwright put it 44 deg away — 38 % of a 116 deg arc, i.e. ~18 frames. Any per-frame claim
+   (U4, S8(a), S8(b), U7) has to be sampled in-page at rAF resolution; the specs stamp `regionId` and
+   `focus` into the trace so the moment of the click can be located in it. With that, U7's first frame
+   measures exactly **26.4 %** of the remaining arc in both runs — the theoretical cap
+   `1 - 0.0001^(1/30)` — and S8(b)'s span is **0.0e+0**.
 
 ### The launch and poll method that works on this machine
 

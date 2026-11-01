@@ -14,7 +14,53 @@ Session log for the Step 3 framing work. One row per step; each prompt lives in 
 | 2B-STEP3-A2 | **CLOSED** — framing behind a live/locked mode; zoom-out fit | `9f38053`…`this` | 819 unit tests; frame 20/20 in two isolated runs |
 | 2B-STEP3-B | **CLOSED** — CameraDirector the single camera writer | `4c7801d`…`f1d659c` | 848 unit tests / 38 files; 90 e2e expected |
 | 2B-STEP3-B2 | PARTIAL — audit found C1/C2; B (pure facing core) landed | `e1c97a1`, `0ffeddf`, `904b149`, `5e5c9ea`, `b53fded` | 880 unit tests / 39 files; stopped before C |
-| 2B-STEP3-B2-CONT | **STOPPED at C** — AM5's pre-edit grep found C3 | `541b58b`, `this` | AM1-AM5 recorded; `camera-golden.spec.ts` needs a second S2 exception |
+| 2B-STEP3-B2-CONT | **STOPPED at C** — AM5's pre-edit grep found C3 | `541b58b`, `4787efb` | AM1-AM5 recorded; C3 quantified |
+| 2B-STEP3-B2-CONT2 | **CLOSED** — live face-pin shipped, W1 + W2, Reset control, 22 focus-ux cases | `7cd793b`…`this` | 885 unit tests / 40 files; e2e expected 112 |
+
+---
+
+## 2B-STEP3-B2-CONT2 — live face-pin policy closed
+
+Head before the step: `4787efb`. The author accepted WAIVER W2 (option 3 from the C3 stop: a second
+named waiver rather than dropping the golden target oracle), so the step ran C through G to completion.
+
+### What shipped
+
+| step | commit | content |
+|---|---|---|
+| P0'' | `7cd793b` | the cont2 prompt alone |
+| C — W1 | `a694a38` | `frame.spec.ts` F8: `aimMoved > 0.1` -> `|target| <= 1e-6`, **3 added / 3 removed** |
+| C — W2 | `1d95d22` | `camera-golden.spec.ts`: mode-aware start signal + mode-aware target oracle |
+| C — policy | `46870bc` | `runLockedFlyTo` (legacy, verbatim) + `runLiveFlyTo` (face-pin), `viewStore`, probe fields, live goldens regenerated |
+| D | `bf25afd` | `ResetViewButton` in the header right cluster, `aria-disabled` per `viewIsDefault`, +5 unit tests |
+| E | `170e6a3` | `focus-ux.spec.ts` U1-U10, 22 cases, registered in the batched runner (13 min backstop) |
+| F | this commit | `docs/E2E.md`, this file, `docs/STEP3B2-DESIGN.md` §11 as-built |
+
+### The numbers
+
+- **LIVE goldens, after regeneration:** `target = (0,0,0)` and `distance = 4.35719` for all four regions at
+  1440x900 — `d_fit` of the OPEN rect, not the pin's legacy `zoom`. LOCKED entries byte-identical in every
+  asserted field; only `flyMs` (unasserted) moved.
+- **U1:** every region at every viewport has angle error `0.0000` deg and pin px error `<= 0.055`. Worst
+  across both final runs: 0.055 px.
+- **U2:** 1440x900 disc 276.432 vs analytic 276.432, envelope 306.58 vs `rMax` 306.578, margins to the free
+  rect 54.15 / 114.44 px; 1280x800 CLAMPED, analytic envelope overflow **+8.971 px** vs measured 235.556
+  (**+0.007 px** agreement); 1024x768 centring only, centre error 0.027 px.
+- **S8(a):** start 3.77857, minimum 3.77859, end 4.35711 (`d_fit` 4.35719), **0 decreasing steps**, worst
+  step 4.44e-16. **S8(b):** span **0.00e+0** in both runs.
+- **U4:** 180.00 deg pair (pacific -> horn-africa), dip below start **-1.1e-4** (i.e. it ROSE).
+- **U5** all three close paths, **U6**, **U7** (first frame exactly 26.4 % of the remaining arc, pivot
+  moved 0.0e+0 R), **U8** (drift 8e-6 deg over 500 ms), **U9** (0.000 px), **U10** (header 118.25 px).
+- **S1** residual 0 and sha unchanged in two processes; **S3** worst 1.78e-15 R; **S4** 5/5.
+- **Gate:** 885 unit tests / 40 files, lint clean, build clean.
+
+### Deviations (full reasons in `docs/STEP3B2-DESIGN.md` §11)
+
+`viewIsDefault` kept at the prompt's 0.002 and made to work by polling the fit to rest in the spec; U2's
+containment oracle is the PIN ENVELOPE rather than the planet (they are different circles); S8(b) carries a
+1e-5 backstop for the fit's tail while the direction channel measures exactly 0; U7 samples per rAF because
+a CDP round trip is 18 frames; and the drawer occludes the cards, so retargets are driven by keyboard or by
+a pin click.
 
 ---
 
