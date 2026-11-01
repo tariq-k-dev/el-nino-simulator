@@ -170,6 +170,9 @@ export const FILE_TIMEOUTS_MS = {
   'boot.spec.ts': 900_000,
   'look.spec.ts': 636_000,
   'focus-ux.spec.ts': 634_000,
+  // Step 3B2-FIX1: no batched measurement yet (it is new in this step); 4 min is 2x the 2 min its
+  // 11 cases take isolated, rounded up. A3's rule applies once a batched wall exists for it.
+  'reset-ux.spec.ts': 240_000,
   'negative.spec.ts': 388_000,
   'camera-golden.spec.ts': 296_000,
   'frame.spec.ts': 242_000,

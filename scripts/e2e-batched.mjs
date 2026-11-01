@@ -685,6 +685,8 @@ function expectedCounts() {
     // centring-only branch, U5 over three close paths and U7 over two timings. Counted from
     // `playwright --list`, not by hand: 22.
     'focus-ux.spec.ts': 22,
+    // Step 3B2-FIX1 B: R1 x8 (four regions x two viewports) + R2 + R3 + R4.
+    'reset-ux.spec.ts': 11,
     'negative.spec.ts': 14,
     'ref.spec.ts': 2,
     'scene-gate.spec.ts': 2,

@@ -10,9 +10,11 @@ interface HeaderProps {
   onToggleUnits: () => void;
   onExport: () => void;
   exporting: boolean;
+  /** Clear the region selection — the drawer X / Escape path, driven by the Reset control. */
+  onClearSelection: () => void;
 }
 
-export function Header({ metrics, units, onToggleUnits, onExport, exporting }: HeaderProps) {
+export function Header({ metrics, units, onToggleUnits, onExport, exporting, onClearSelection }: HeaderProps) {
   const alertColor = thermalColor(metrics.sst, 0.95);
   const isAlert = metrics.sst >= 1.5;
 
@@ -114,8 +116,10 @@ export function Header({ metrics, units, onToggleUnits, onExport, exporting }: H
           <span className="hidden sm:inline">{exporting ? 'Rendering…' : 'Snapshot'}</span>
         </button>
 
-        {/* Reset view (step 3B2) — appended LAST in the right cluster, per the design memo §1. */}
-        <ResetViewButton />
+        {/* Reset view (step 3B2) — appended LAST in the right cluster, per the design memo §1.
+            Step 3B2-FIX1 B: it now drives the whole rule (camera RESET + selection clear), so it needs
+            the app's selection clearer. */}
+        <ResetViewButton onClearSelection={onClearSelection} />
       </div>
     </header>
   );

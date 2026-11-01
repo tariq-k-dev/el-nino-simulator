@@ -119,6 +119,7 @@ export interface FrameProbeHandle {
   readonly regionId: string | null;
   /** Step 3B2: true when the camera is at the framed default pose. */
   readonly viewIsDefault: boolean;
+  readonly hasRegion: boolean;
   /** Step 3B2: true while the planet spins. */
   readonly spinning: boolean;
   /** Step 3B2: `locked` (aim-at-pin) or `live` (face-pin). */
@@ -136,6 +137,7 @@ export interface FrameProbeHandle {
     userZoomed: boolean;
     regionId: string | null;
     viewIsDefault: boolean;
+    hasRegion: boolean;
     spinning: boolean;
     focusPolicy: 'live' | 'locked';
   };

@@ -25,9 +25,18 @@ export interface ViewState {
   viewIsDefault: boolean;
   /** Is the planet's spin running? */
   spinning: boolean;
+  /**
+   * Is a region card / drawer open? Published by `GlobeScene` from the `activeRegion` prop.
+   *
+   * Step 3B2-FIX1 B: `viewIsDefault` is a question about the POSE, and an open region is a reason to be
+   * able to Reset even when the pose happens to be the default — so the Reset control is disabled only
+   * when BOTH are false. Kept in this store rather than threaded through the header as a prop because the
+   * store is already the one thing React reads from the scene each frame.
+   */
+  hasRegion: boolean;
 }
 
-const INITIAL: ViewState = { viewIsDefault: true, spinning: true };
+const INITIAL: ViewState = { viewIsDefault: true, spinning: true, hasRegion: false };
 
 let current: ViewState = INITIAL;
 const listeners = new Set<() => void>();
@@ -49,9 +58,26 @@ export function subscribeViewState(listener: () => void): () => void {
  * keeps a 60 Hz caller from producing 60 Hz renders.
  */
 export function publishViewState(next: ViewState): void {
-  if (next.viewIsDefault === current.viewIsDefault && next.spinning === current.spinning) return;
-  current = { viewIsDefault: next.viewIsDefault, spinning: next.spinning };
+  if (
+    next.viewIsDefault === current.viewIsDefault &&
+    next.spinning === current.spinning &&
+    next.hasRegion === current.hasRegion
+  ) {
+    return;
+  }
+  current = { viewIsDefault: next.viewIsDefault, spinning: next.spinning, hasRegion: next.hasRegion };
   for (const listener of listeners) listener();
+}
+
+/**
+ * Publish just the selection flag.
+ *
+ * Called from two places that already know the answer without a frame: `GlobeScene`'s selection effect
+ * (React's `activeRegion` prop) and `ResetViewButton` right after it clears the selection. The director's
+ * per-frame publish carries the same value from the machine, and `publishViewState` drops the duplicate.
+ */
+export function publishHasRegion(hasRegion: boolean): void {
+  publishViewState({ ...current, hasRegion });
 }
 
 /* ------------------------------------------------------------------ the RESET channel */
@@ -71,7 +97,13 @@ export function subscribeResetRequest(listener: () => void): () => void {
   };
 }
 
-/** Ask the director to run the RESET rule (back to the framed default pose, `userZoomed` cleared). */
+/**
+ * Ask the director to run the RESET rule (back to the framed default pose, `userZoomed` cleared).
+ *
+ * Step 3B2-FIX1 B: this is ONE of the two channels `scene/resetView.ts` drives. It is exported for the
+ * unit tests and for `ResetViewButton`'s caller; nothing should call it directly from a component —
+ * `resetView()` is the rule, and calling half of it is what left the drawer open.
+ */
 export function requestReset(): void {
   resetCount += 1;
   for (const listener of resetListeners) listener();

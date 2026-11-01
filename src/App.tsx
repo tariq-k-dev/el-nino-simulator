@@ -35,6 +35,16 @@ export default function App() {
     });
   }, []);
 
+  /**
+   * The selection clearer on its own, for Reset (step 3B2-FIX1 B).
+   *
+   * Deliberately the SAME `selectRegion(null)` the drawer's X and the Escape key call — the prompt's
+   * requirement is that Reset take the existing close path rather than a parallel one, so there is one
+   * piece of code that knows how the app deselects. Its signature takes no arguments, so a caller cannot
+   * accidentally select a region through it.
+   */
+  const clearSelection = useCallback(() => selectRegion(null), [selectRegion]);
+
   const handleExport = useCallback(async () => {
     setExporting(true);
     try {
@@ -127,6 +137,7 @@ export default function App() {
         onToggleUnits={toggleUnits}
         onExport={handleExport}
         exporting={exporting}
+        onClearSelection={clearSelection}
       />
 
       {/*

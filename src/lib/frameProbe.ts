@@ -37,6 +37,8 @@ export interface FrameProbeSnapshot {
   viewIsDefault: boolean;
   /** Step 3B2: the planet's spin is running. */
   spinning: boolean;
+  /** Step 3B2-FIX1: a region is open, so Reset has work to do even at the default pose. */
+  hasRegion: boolean;
   /** Step 3B2: which focus policy this build runs — `locked` keeps aim-at-pin, `live` faces the pin. */
   focusPolicy: FramingMode;
 }
@@ -60,6 +62,8 @@ export interface FrameProbe {
   readonly viewIsDefault: boolean;
   /** Step 3B2: true while the planet spins. */
   readonly spinning: boolean;
+  /** Step 3B2-FIX1: true while a region is open. */
+  readonly hasRegion: boolean;
   /** Step 3B2: `locked` (aim-at-pin) or `live` (face-pin). */
   readonly focusPolicy: FramingMode;
   /** One coherent read of every field, from the same frame. */
@@ -107,6 +111,7 @@ function lockedState(camera: THREE.Camera): FrameProbeState {
      */
     viewIsDefault: getViewState().viewIsDefault,
     spinning: getViewState().spinning,
+    hasRegion: getViewState().hasRegion,
     focusPolicy: FRAMING_MODE,
   };
 }
@@ -164,6 +169,10 @@ export function createFrameProbe(
       const s = state();
       return s.spinning ?? true;
     },
+    get hasRegion() {
+      const s = state();
+      return s.hasRegion ?? getViewState().hasRegion;
+    },
     get focusPolicy() {
       const s = state();
       return s.focusPolicy ?? s.mode;
@@ -184,6 +193,7 @@ export function createFrameProbe(
         regionId: s.regionId,
         viewIsDefault: s.viewIsDefault ?? true,
         spinning: s.spinning ?? true,
+        hasRegion: s.hasRegion ?? getViewState().hasRegion,
         focusPolicy: s.focusPolicy ?? s.mode,
       };
     },

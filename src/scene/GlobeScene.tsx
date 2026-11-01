@@ -31,6 +31,7 @@ import { REGIONS, latLonToVector3 } from '@/lib/regions';
 import { regionHeadline } from '@/lib/model';
 import { registerRenderer } from '@/lib/canvasCapture';
 import { createGlobeProbe } from '@/lib/globeProbe';
+import { publishHasRegion } from '@/scene/viewStore';
 import { getInsets } from '@/lib/viewport/insets';
 import { markSceneFailed, signalSceneCondition } from '@/lib/engine/sceneGate';
 import {
@@ -205,6 +206,18 @@ export function GlobeScene({
    * re-renders exactly the layers that read it.
    */
   const look = useSyncExternalStore(subscribeLookFlags, getLookFlags, getLookFlags);
+
+  /**
+   * Publish the selection flag the Reset control's enable test reads (step 3B2-FIX1 B).
+   *
+   * `GlobeScene` is where the `activeRegion` PROP enters the app, so this is the one place that knows a
+   * region is open without asking the camera or waiting for a frame. The director publishes the same fact
+   * from the machine on every frame; `publishViewState` drops the duplicate, so this costs one no-op
+   * notification per selection instead of a render.
+   */
+  useEffect(() => {
+    publishHasRegion(activeRegion !== null);
+  }, [activeRegion]);
 
   // WebGL can be absent entirely (headless, blocklisted GPU, disabled by policy).
   // Mark the gate failed so the engine boots without waiting for a canvas.

@@ -210,8 +210,26 @@ describe('fileTimeoutMs', () => {
     'scene-gate.spec.ts': 11.407,
   };
 
-  it('covers exactly the files the measured run covers', () => {
-    expect(Object.keys(FILE_TIMEOUTS_MS).sort()).toEqual(Object.keys(MEASURED_WALL_S).sort());
+  /*
+   * Files added AFTER the measured run, with the budget they were given and why. Kept as a second list
+   * rather than folded into `MEASURED_WALL_S` because they have no batched wall yet, and pretending they
+   * do would let a guess pass as a measurement.
+   */
+  const ADDED_AFTER_RUN3 = {
+    // Step 3B2-FIX1 B: 11 cases, 2.2 min isolated. 4 min = 2x that, rounded up. Not from run3.
+    'reset-ux.spec.ts': 240_000,
+  };
+
+  it('covers exactly the files the measured run covers, plus the declared additions', () => {
+    expect(Object.keys(FILE_TIMEOUTS_MS).sort()).toEqual(
+      [...Object.keys(MEASURED_WALL_S), ...Object.keys(ADDED_AFTER_RUN3)].sort(),
+    );
+  });
+
+  it('gives every addition after run3 its declared budget', () => {
+    for (const [file, budget] of Object.entries(ADDED_AFTER_RUN3)) {
+      expect(FILE_TIMEOUTS_MS[file], `${file} budget`).toBe(budget);
+    }
   });
 
   it('is 2x the measured batched wall, with a 120 s floor', () => {

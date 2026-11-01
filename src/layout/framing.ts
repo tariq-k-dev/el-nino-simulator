@@ -158,6 +158,14 @@ export interface FrameProbeState {
   viewIsDefault?: boolean;
   /** Step 3B2: is the planet's spin running? Optional for the same reason. */
   spinning?: boolean;
+  /**
+   * Step 3B2-FIX1: is a region open (card / drawer)?
+   *
+   * Optional for the same reason as the two above: `frameProbe.test.ts` builds this type by hand. The
+   * director publishes it from the machine and `GlobeScene` publishes it from the `activeRegion` prop, so
+   * the Reset control's enable test never has to infer it from the pose.
+   */
+  hasRegion?: boolean;
   /** Step 3B2: which focus policy this build runs. Optional for the same reason. */
   focusPolicy?: 'locked' | 'live';
 }

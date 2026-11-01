@@ -666,7 +666,17 @@ export function CameraDirector({
           !userZoomed &&
           angleDegBetween(dir, DEFAULT_DIRECTION) <= VIEW_DEFAULT_ANGLE_DEG &&
           Math.abs(d - frame.dTarget) <= VIEW_DEFAULT_DISTANCE;
-        publishViewState({ viewIsDefault, spinning: !spin.current.paused });
+        /*
+         * `hasRegion` is carried from the machine so this frame's publish cannot CLEAR a selection flag
+         * that `GlobeScene` set a moment earlier (step 3B2-FIX1 B). It reads the SAME fact the app's
+         * `activeRegion` prop expresses — the machine's `regionId` — so the two writers cannot disagree
+         * for longer than the frame in which a selection is being handed over.
+         */
+        publishViewState({
+          viewIsDefault,
+          spinning: !spin.current.paused,
+          hasRegion: machine.current.context.regionId !== null,
+        });
       }
 
       /* ------------------------------------------------------------------- probe */
@@ -709,6 +719,7 @@ export function CameraDirector({
             /* Step 3B2 additions. */
             viewIsDefault: getViewState().viewIsDefault,
             spinning: getViewState().spinning,
+            hasRegion: getViewState().hasRegion,
             focusPolicy: 'live',
           },
         };
