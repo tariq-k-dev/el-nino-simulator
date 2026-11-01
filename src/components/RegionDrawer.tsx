@@ -4,7 +4,7 @@ import type { AnalyticsPayload, RegionDefinition, RegionId, ScenarioMetrics } fr
 import { Stat } from '@/components/ui/Stat';
 import { MetricBar } from '@/components/ui/MetricBar';
 import { Sparkline } from '@/components/ui/Sparkline';
-import { deltaDisplay, formatDelta } from '@/lib/regions';
+import { REGIONS, deltaDisplay, formatDelta } from '@/lib/regions';
 import { thermalColor } from '@/lib/model';
 import { fixed } from '@/lib/format';
 
@@ -14,6 +14,14 @@ interface RegionDrawerProps {
   analytics: AnalyticsPayload;
   units: 'metric' | 'imperial';
   onClose: () => void;
+  /**
+   * Retarget the selection — the SAME `selectRegion` the Impact Zones cards and the pins call.
+   *
+   * Not a close, not a new selection path: the switcher exists so a reader who is already in the drawer
+   * can move to another region without leaving it, and routing it through `selectRegion` is what keeps
+   * the camera, the machine and the cards agreeing about which region is active.
+   */
+  onSelect: (id: RegionId) => void;
 }
 
 interface RegionHud {
@@ -122,7 +130,14 @@ function buildHud(id: RegionId, m: ScenarioMetrics, units: 'metric' | 'imperial'
   }
 }
 
-export function RegionDrawer({ region, metrics, analytics, units, onClose }: RegionDrawerProps) {
+export function RegionDrawer({
+  region,
+  metrics,
+  analytics,
+  units,
+  onClose,
+  onSelect,
+}: RegionDrawerProps) {
   const panelRef = useRef<HTMLElement>(null);
   const open = region !== null;
   const hud = useMemo(
@@ -235,6 +250,71 @@ export function RegionDrawer({ region, metrics, analytics, units, onClose }: Reg
               </div>
             </div>
           ) : null}
+        </div>
+
+        {/* ------------------------------------------------------------------ switcher */}
+        {/*
+          Region switcher — a compact row of one native button per region, so a reader inside the drawer can
+          move to another region without closing it, dragging the globe, or hunting for the Impact Zones
+          cards behind the panel.
+
+          DESIGN CONSTRAINTS, each of which is the reason a class here looks the way it does:
+
+          - **After the close button in DOM order, before the body.** It is a `shrink-0` sibling of the
+            scrolling body rather than its first child, so the extra height is absorbed by the body
+            (`flex-1 overflow-y-auto`) and the PANEL's own box is untouched. Measured before writing it:
+            the body already scrolls at both spec viewports (783 px of content in 613 px at 1440x900 and in
+            433 px at 1280x720), so adding a row cannot introduce a scrollbar that was not there and cannot
+            change the wrapper rect, the panel rect or the 418 px right inset.
+          - **`flex-wrap`, never `nowrap`.** Four chips at ~90 px plus gaps exceed the 384 px content width
+            at the narrowest panel, so the row wraps to a second line instead of overflowing horizontally.
+            `overflow-x: hidden` is not used: wrapping is what makes horizontal scroll impossible, and a
+            hidden overflow would clip a long label silently.
+          - **The active chip is `aria-current` and visually distinct**, and clicking it does NOTHING. The
+            no-op is enforced here rather than in `App.selectRegion`, because `selectRegion` deliberately
+            re-centres on a repeat click (`App.tsx:31-36` bumps `focusNonce`) — that is the right behaviour
+            for the cards and the pins, and the wrong one for a row whose only job is to move to a
+            different region.
+          - **`tabIndex={-1}` when the drawer is closed.** The drawer is never unmounted; closed, it sits
+            off-canvas at `translate-x-[110%]` with `aria-hidden`. The close button is already such a node
+            (pre-existing), but a new control must not add four more tab stops in an off-canvas panel.
+        */}
+        <div
+          className="shrink-0 border-b border-white/[0.08] px-4 pb-2.5 pt-0.5"
+          data-testid="drawer-switcher"
+          role="group"
+          aria-label="Switch impact region"
+        >
+          <div className="flex flex-wrap gap-1.5">
+            {REGIONS.map((r) => {
+              const isActive = region?.id === r.id;
+              return (
+                <button
+                  key={r.id}
+                  type="button"
+                  // The ids and labels come from the same `REGIONS` source the cards map over, so the two
+                  // lists cannot drift apart.
+                  data-region-id={r.id}
+                  aria-current={isActive ? 'true' : undefined}
+                  tabIndex={open ? 0 : -1}
+                  onClick={() => {
+                    if (isActive) return;
+                    onSelect(r.id);
+                  }}
+                  className={[
+                    'rounded-full border px-2 py-1 font-mono text-[8.5px] uppercase tracking-[0.12em] transition-colors duration-200',
+                    'focus:outline-none focus-visible:ring-1 focus-visible:ring-white/50',
+                    isActive
+                      ? 'border-white/35 bg-white/12 text-white'
+                      : 'border-white/[0.1] bg-black/25 text-slate-400 hover:border-white/25 hover:text-slate-100',
+                  ].join(' ')}
+                  style={isActive ? { boxShadow: `0 0 12px -4px ${r.accent}` } : undefined}
+                >
+                  {r.shortName}
+                </button>
+              );
+            })}
+          </div>
         </div>
 
         {/* Scrollable body */}
