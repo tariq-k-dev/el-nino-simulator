@@ -1156,3 +1156,44 @@ and the walk lands only on the island, the three header buttons, the reset contr
 
 **Counts.** Unit gate **1020 passed / 47 files** at HEAD. The e2e suite is **154 expected** across 19 files
 (the 139 before this step, plus `mobile-sheet.spec.ts` 15); the batched run's own table is the arithmetic.
+
+### The full batched run, and what its six reds are
+
+`19 files, 153/153 tests accounted for, 13 files passed, 6 files with 1-2 failing cases each, 0 retries,
+47.0 min`. Summary archived as `.cache/e2e-archive/2026-11-01T19-22-31-249Z-batched-summary.json`.
+The new file is **15/15 green**.
+
+Every one of the six red files has **zero diff against `5e7c826`** (`git diff 5e7c826 --numstat` = 0 lines in
+each), so none of them was edited by this step. Rerun as a batch of exactly those six
+(`.cache/mob/rerun-reds.log`):
+
+| file | batched | isolated rerun | verdict |
+|---|---|---|---|
+| `boot.spec.ts` | 9/10 (case b) | **10/10** | load, not the product: case b is a 4x-CPU-throttled boot under the same process as case a's 3.7 min, i.e. the documented load-sensitive class |
+| `frame-director.spec.ts` | 3/5 | **5/5** | load: both reds compared `frame.settled` in a JSON key, and settled is a per-frame value — the poll saw `false` for 20 s on a starved browser |
+| `pin-click.spec.ts` | 6/7 | **7/7** | load: the red was `focus` stuck at `focusing` for its 20 s budget |
+| `switcher-ux.spec.ts` | 7/8 | 7/8 | the KNOWN sampler race already recorded for this file (S2's positive control saw 0 samples instead of 131.944 deg). Pre-existing, documented, file unedited |
+| `negative.spec.ts` | 13/14 | 13/14 | **N10**, the documented known-red (`differing = 211` against `<= 50`, every pixel on the disc band, nearest pin 33.7-221.8 px away). Unchanged signature |
+| `globe.spec.ts` | 3/5 | **3/5 — pinch, then 4/5 on a second run** | see below: one REAL consequence of this step, one load flake |
+
+**The one real regression, and it is a consequence of this step working as specified.**
+`globe.spec.ts:175` "pinch at 375x667 changes the distance" now fails **deterministically**, twice in
+isolation. Cause, measured (`.cache/mob/probe-pinch2/3.spec.ts`): the case picks its pinch origin by scanning
+for the topmost open canvas row, which at 375x667 is `y = 10` at `x = 10..30`. Before this step, 375 px wide
+was still the desktop layout and that whole top band was open canvas. Now 375 is MOBILE, and the HUD island
+occupies `x 63.2-311.8 / y 15-51`, so the surviving open sliver is a 20 px strip beside the capsule. A pinch
+dispatched there reaches no OrbitControls surface. Pinching at `(187, 300)` — open canvas below the island,
+above the sheet at 546.9 — **works**: `3.3534 -> 2.7035`. So the gesture path is intact and the spec's
+coordinate heuristic is what broke.
+
+This is a STOP-class finding under Step 3A2's standing rule ("ANY failure of globe.spec.ts 'zoom still works
+after a region fly-to' is a real regression, STOP and report"), except in the other direction: the failing
+case is the PINCH one, not the fly-to one, and the fly-to case passes 4/5 runs and 5/5 in a later run. It is
+reported rather than fixed, because fixing it means editing a locked spec (`docs/prompts/step3-a2.md` forbids
+changing any look/negative/limb/globe threshold or window), and the honest fix is a one-line change of origin
+to a point chosen for the mobile layout — a decision for the prompt's author, not for this step.
+
+The `zoom still works after a region fly-to` case: failed once in the full batch (`3.3668 -> 3.3665`, the
+wheel ignored), then PASSED in the isolated rerun, PASSED in a second isolated run, and a direct probe of that
+exact sequence (`.cache/mob/probe-flywheel.spec.ts`) measured `3.3708 -> 4.1637`, i.e. the wheel worked. So it
+is the load flake the file has always had and not a regression.

@@ -690,6 +690,15 @@ comment at the assertion:
 | M5 render counter | `during.renders === before.renders`, `before` read at `open()` | counter 12 at t=268 ms, 13 at t=885 ms, 13 for the next 18 s | baseline taken at REST via `settledRenders()`; the drag itself still must not move it, and exactly one render follows release |
 | M3 tappable set | tap every pin the probe lists | PACIFIC projects to x = −9 at 390x844 (the fit clamps at dMax, the disc is 497 px wide) | only pins inside the viewport and above the sheet; excluded ids are printed, not dropped |
 
+**One pre-existing spec is now affected, and it is reported rather than fixed.** `globe.spec.ts` "pinch at
+375x667 changes the distance" fails deterministically (twice in isolation). It picks its pinch origin by
+scanning for the topmost open canvas row, which at 375x667 is a 20 px sliver at `y = 10, x = 10..30` beside
+the HUD island (`x 63.2-311.8 / y 15-51`); before this step that band was open canvas because 375 px was
+still the desktop layout. A pinch at `(187, 300)` works (`3.3534 -> 2.7035`), so the gesture path is intact
+and the spec's coordinate heuristic is what broke. Editing it means changing a locked spec's window, which
+`docs/prompts/step3-a2.md` forbids, so the fix is left to the prompt's author. Full attribution of all six
+batched reds is in `docs/STEP3-STATUS.md`.
+
 M3 also clears the selection with a canvas tap rather than `Escape`: the drawer owns the Escape handler
 and is desktop-only, so on a phone Escape left `pacific` selected for the whole 20 s poll. That gap is a
 known limit in `docs/MOBILE.md`.
