@@ -408,6 +408,20 @@ then poll in cells of **under 300 s**. Anything longer kills the kernel and take
 which reads as a product failure. Do **not** use a shell `>` redirect inside a tracked background wrapper:
 it produces a 19-byte `stdin is not a tty` log and the command never runs.
 
+**Archive the summary to a directory that is not `.cache/e2e-results/`.** The batch writes
+`.cache/e2e-results/batched-summary.json`, and any later isolated `playwright test` run using the same
+`outputDir` clears that directory on start — measured: a copy placed alongside the original survived one
+isolation run and was gone after the next. `.cache/full3b2/` (or any sibling of e2e-results) is safe, and
+copying there **immediately** on seeing `===== batched e2e summary` in the log is what makes the numbers
+in a report reproducible later.
+
+**A per-file timeout kill can poison the files after it.** Measured in this step: `boot.spec.ts` hit its
+600 s backstop, its tree was killed, and every live-mode file that ran afterwards (`frame`, `frame-director`,
+`globe`, `focus-ux`) came back `net::ERR_CONNECTION_REFUSED` on its own port — 38 tests red in total, all
+of which passed when each file was rerun in isolation. So a batch that shows ERR_CONNECTION_REFUSED in
+several consecutive files is reporting the runner's infrastructure, not the product: rerun the red files
+isolated before writing any of it down as a regression.
+
 ### Known cost of the 12-az 3.4 test
 
 `3.4 terminator: every evaluated azimuth` takes **3.3 min** inside the file (6.4 min when the whole file

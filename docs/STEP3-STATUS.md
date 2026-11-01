@@ -777,3 +777,70 @@ flattened AFTER a reload"). That failure did not reproduce, and nothing was chan
 unchanged in two processes, S3 at 5.55e-17 R against a 1e-5 tolerance, `frame.spec.ts` 20/20 unedited,
 globe/scene-gate/limb green, production bundle free of the locked marker, and one red test that the
 baseline gate already owned before this session started.
+
+### The full batched run (step G)
+
+One run of `node scripts/e2e-batched.mjs`, 15 files, one Playwright process each, no retries. Summary
+copied to `.cache/full3b2/batched-summary-run3.json` the moment it appeared.
+
+| file | status | passed | failed | skipped | expected | wall | retries |
+|---|---|---:|---:|---:|---:|---:|---:|
+| `boot.spec.ts` | passed | 10 | 0 | None | 10 | 402.5 s | 0 |
+| `camera-golden.spec.ts` | passed | 9 | 0 | None | 9 | 147.9 s | 0 |
+| `determinism.spec.ts` | passed | 2 | 0 | None | 2 | 16.0 s | 0 |
+| `focus-ux.spec.ts` | passed | 22 | 0 | None | 22 | 317.0 s | 0 |
+| `frame-director.spec.ts` | passed | 5 | 0 | None | 5 | 39.3 s | 0 |
+| `frame.spec.ts` | passed | 20 | 0 | None | 20 | 120.7 s | 0 |
+| `gate-clock.spec.ts` | passed | 1 | 0 | None | 1 | 51.2 s | 0 |
+| `globe.spec.ts` | passed | 5 | 0 | None | 5 | 53.4 s | 0 |
+| `harden.spec.ts` | passed | 8 | 0 | None | 8 | 109.5 s | 0 |
+| `history-gate.spec.ts` | passed | 1 | 0 | None | 1 | 16.1 s | 0 |
+| `limb.spec.ts` | passed | 2 | 0 | None | 2 | 15.5 s | 0 |
+| `look.spec.ts` | passed | 9 | 0 | None | 9 | 317.7 s | 0 |
+| `negative.spec.ts` | **failed** | 13 | 1 | None | 14 | 193.8 s | 0 |
+| `ref.spec.ts` | passed | 2 | 0 | None | 2 | 13.1 s | 0 |
+| `scene-gate.spec.ts` | passed | 2 | 0 | None | 2 | 11.4 s | 0 |
+
+**Total: 111 passed, 1 failed, 0 skipped, 112 expected — 111 + 1 + 0 = 112.** 14/15 files passed, 0
+retries, 30.4 min. Every file's `testsSkipped` came back `null` (the runner only writes a skipped count
+when Playwright prints one, and this suite has none); the 0 above is that null read as zero.
+
+**The one red test: N10** (`negative.spec.ts:579`), and it is the KNOWN-RED one, classified by the N10
+rule rather than by convenience:
+
+| run | assertion | in-page `maxAbs` | differing px | verdict |
+|---|---|---:|---:|---|
+| full batch | `expect(cc.differing).toBeLessThanOrEqual(50)` | **0.7874 luma** | 528 | KNOWN-RED |
+| isolated rerun | same | 0.7152 luma | 24 | **passes** |
+
+`maxAbs = 0.7874 <= 1.0` and ONLY the differing-pixel assertion failed (the defect-vs-control bound
+reported `maxAbs=249.90` against a `> 8` floor and 11 904 px against a `>= 100` floor, i.e. that half is
+healthy), which is exactly the signature the rule covers. N10's baseline status is unchanged from step
+3B: this check is red at some full-run timings and green at others, because the in-page control pair is
+`maxAbs`-identical but 24-528 px apart depending on when the second acquisition lands. It is pre-existing
+and no threshold, window or timeout was touched to make it say otherwise.
+
+**Two earlier attempts and what they taught** (both recorded because they are the reason the run above
+is the one reported):
+
+- **Run 1** (31.9 min): `boot.spec.ts` hit its 600 s backstop and was killed; every live-mode file after
+  it came back `ERR_CONNECTION_REFUSED` on its own port, because the killed tree left the shared server
+  in a bad state. 110/112 ran, 5 files red. All 38 red tests — including all 22 of `focus-ux.spec.ts` —
+  **passed in isolation**, which is what proved the batch was measuring infrastructure. Its summary file
+  was then consumed by the isolation runs' `outputDir` cleanup before it could be archived; the per-file
+  table was recovered from the runner's own log instead, and the lesson is in `docs/E2E.md`.
+- **Run 2** (30.4 min): `boot.spec.ts` 10/10 in 402.7 s, and 112/112 tests ran. Two reds: `negative`
+  N10 (known-red, above) and `focus-ux` U7 `when-focused`, which was `trace 1 frame` — a bug in the new
+  spec's sampler, not in the product: it stopped on `focus === 'focused'`, which is already true in that
+  leg. Fixed by keying the stop condition on `regionId === 'se-asia' && focus === 'focused'` (commit
+  `0bdd19a`), verified 6/6 over `--repeat-each=3`, then 36/36 with `negative.spec.ts` in isolation.
+
+### Deviations of the full run, stated plainly
+
+1. `boot.spec.ts` needed 402-403 s of a 600 s budget and its case `d` (400 kbps) is the bulk of it. It
+   passed twice at that cost; it timed out once, in run 1, immediately after a previous file's teardown.
+2. `focus-ux.spec.ts` takes 317 s of its 780 s backstop in the batch and ~314-360 s isolated, so the 13
+   min budget is 2x its measured isolated time as the prompt requires.
+3. `negative.spec.ts`'s N10 remains red in full runs and green in isolation. That divergence is the
+   pre-existing behaviour documented in step 3B, not a regression from this step, and the rule in
+   `docs/prompts/step3-b2.md` is what classifies it.
