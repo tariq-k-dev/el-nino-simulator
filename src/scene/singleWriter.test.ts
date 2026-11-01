@@ -167,6 +167,58 @@ describe('single camera writer', () => {
     expect(hits).toContain('setViewOffset');
   });
 
+  /**
+   * THE NEGATIVE FIXTURE for the two bounds patterns.
+   *
+   * `controls.maxDistance =` and `controls.minDistance =` are on the write list, and a pattern that matches
+   * nothing passes vacuously — so the guard is proven in BOTH directions here: a synthetic source that assigns
+   * each bound must be flagged, and the real `CameraDirector` must be the only file that does. Step MOBILE2 added
+   * a runtime writer of `maxDistance` (the mode's ceiling), which is exactly the change that makes this assertion
+   * worth having: the write moved from a JSX prop to imperative code and the guard still catches a second one.
+   */
+  it('detects a maxDistance / minDistance write, so the rule is not vacuous', () => {
+    const BOUND_PATTERNS = WRITE_PATTERNS.filter(
+      (p) => p.name === 'controls.maxDistance' || p.name === 'controls.minDistance',
+    );
+    expect(BOUND_PATTERNS).toHaveLength(2);
+
+    const fixtures: Array<{ name: string; code: string }> = [
+      { name: 'controls.maxDistance', code: 'controls.maxDistance = 12;' },
+      { name: 'controls.minDistance', code: '  this.controls.minDistance = 0.5;' },
+      /* A COMPARISON is not a write, and must not be flagged: `!==` is how the director avoids redundant writes. */
+      { name: 'controls.maxDistance', code: 'if (controls.maxDistance !== wanted) { /* ... */ }' },
+    ];
+
+    for (const fixture of fixtures) {
+      const pattern = BOUND_PATTERNS.find((p) => p.name === fixture.name)!;
+      const shouldMatch = fixture.code.includes(' = ') && !fixture.code.includes('!==');
+      expect(pattern.re.test(fixture.code), `${fixture.name} on \`${fixture.code}\``).toBe(shouldMatch);
+    }
+  });
+
+  it('the director is the only file that writes either zoom bound', async () => {
+    const bounds = new Set(['controls.maxDistance', 'controls.minDistance']);
+    const hits: Array<{ rel: string; line: number; name: string }> = [];
+    for (const { abs, rel } of await sources()) {
+      if (/\.test\.(ts|tsx)$/.test(rel)) continue;
+      const code = stripComments(await readFile(abs, 'utf8'));
+      code.split(/\r?\n/).forEach((line, i) => {
+        for (const { name, re } of WRITE_PATTERNS) {
+          if (bounds.has(name) && re.test(line)) hits.push({ rel, line: i + 1, name });
+        }
+      });
+    }
+    /*
+     * ONE write, in the director, and it is `maxDistance` — the mode's ceiling (`applyMaxDistance`). There is no
+     * `minDistance` write at all: the lower bound stays the JSX prop's `EARTH_RADIUS * 1.25`, because nothing in
+     * this step needs to move the near clamp and a second runtime writer would be a second thing to reason about.
+     */
+    const outside = hits.filter((h) => h.rel !== 'src/scene/CameraDirector.tsx');
+    expect(outside.map((h) => `${h.rel}:${h.line} — ${h.name}`), 'zoom bounds must only be written by the director').toEqual([]);
+    expect(hits.length, 'the director must write the ceiling it is the allowlist for').toBeGreaterThan(0);
+    expect(hits.every((h) => h.name === 'controls.maxDistance')).toBe(true);
+  });
+
   it('the two old writer components are gone', async () => {
     /*
      * `CameraRig.tsx` and `FrameRig.tsx` were the two components whose bodies now live inside the

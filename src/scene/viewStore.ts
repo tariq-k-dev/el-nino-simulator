@@ -19,6 +19,14 @@
  * replaced only when a field differs — the same contract `scene/globeLook.ts` documents.
  */
 
+import {
+  computeFreeRect,
+  isMobileMode,
+  resolveLayoutMode,
+  type LayoutMode2,
+  type MobileFreeRect,
+} from '@/mobile/layoutMath';
+
 /** What the director publishes about the view. */
 export interface ViewState {
   /** Nothing selected, no user zoom, direction within 0.5 deg of the default, distance at d_fit. */
@@ -115,110 +123,269 @@ export function __resetViewStore(): void {
   resetCount = 0;
 }
 
-/* ------------------------------------------------------------------ the LAYOUT MODE lane */
+/* ------------------------------------------------------------------ the LAYOUT lane */
 
 /**
- * Which layout the page is running: the desktop overlays or the mobile sheet and HUD.
+ * Which layout the page is running, and the two numbers the free rectangle needs besides it.
  *
- * ## Why this lives here rather than in a React context or a `useMediaQuery`
+ * ## Why the mode lives in a store and not in a React context or a `useMediaQuery`
  *
  * `CameraDirector` needs it INSIDE `useFrame`, and a frame callback cannot call a hook: a `useState`
- * subscription would re-render the whole scene subtree on an orientation change (fine, once) but would also
- * mean the director's frame closure held a STALE value between the change and the re-render — one frame of
- * the desktop frustum on a phone, which is a visibly wrong picture rather than a no-op. Reading a
- * module-scope value non-reactively inside the loop has neither problem, and it is the same pattern this
- * file already uses for the RESET channel.
+ * subscription would re-render the whole scene subtree on an orientation change (fine, once) but would also mean
+ * the director's frame closure held a STALE value between the change and the re-render — one frame of the desktop
+ * frustum on a phone, which is a visibly wrong picture rather than a no-op. Reading a module-scope value
+ * non-reactively inside the loop has neither problem, and it is the same pattern this file already uses for the
+ * RESET channel.
  *
- * ## Why one listener, and why it is started by the caller
+ * ## Why a resize listener and not a media query (this replaces MOBILE1's `matchMedia`)
  *
- * `matchMedia('(max-width: 767.98px)')` rather than a `resize` handler comparing `innerWidth`: a resize
- * listener fires for every pixel of a window drag, and it also fires when only the HEIGHT changed, which
- * cannot cross a width breakpoint. The media query fires exactly at the crossing. Starting it from a
- * component (`useLayoutModeObserver`) keeps module import side-effect free, which is what lets the unit
- * tests import this file without a DOM.
+ * MOBILE1's mode was `matchMedia('(max-width: 767.98px)')`: one boolean, evaluated by the engine at exactly the
+ * crossing. That was the right instrument for a width-only question and it is the wrong one now, because the mode
+ * is a function of BOTH dimensions (`mobile/layoutMath.ts`). A media query per branch would be three queries whose
+ * mutual exclusion is an argument in a comment; a resize listener over `innerWidth`/`innerHeight` is one call to
+ * one total function, and the DOM, the shell and the frame loop all read its result.
  *
- * The default is `desktop` — deliberately, so a document with no `matchMedia` (jsdom, SSR, a test) behaves
- * exactly as it did before this step. Failing to `mobile` would put a sheet over every screenshot in the
- * existing suite.
+ * The cost of that choice is coalescing, which is why every source goes through one `requestAnimationFrame`: a
+ * window drag fires `resize` per pixel, and `orientationchange` fires BEFORE the new metrics are settled, so the
+ * measurement has to happen on the frame after.
+ *
+ * ## Why the initial read is synchronous
+ *
+ * `startLayoutObserver` computes the mode from `innerWidth`/`innerHeight` in its own body, not on the first rAF.
+ * A page that loaded at 390x844 would otherwise paint one frame of the desktop overlays over a phone viewport,
+ * which is the flash this exists to prevent — and the M1 case would see `data-layout-mode="desktop"` on its
+ * first read.
+ *
+ * ## The default with no window (jsdom, SSR, a unit test)
+ *
+ * `desktop`, deliberately: a document with no `innerWidth` must behave exactly as it did before this step.
+ * Failing to a mobile mode would put a sheet over every screenshot in the existing suite.
  */
-export type LayoutMode = 'mobile' | 'desktop';
 
-let layoutMode: LayoutMode = 'desktop';
-let layoutModeQuery: MediaQueryList | null = null;
-let layoutModeHandler: ((event: MediaQueryListEvent) => void) | null = null;
-const layoutModeListeners = new Set<() => void>();
-
-/** The mode as of right now. Read non-reactively by the frame loop. */
-export function getLayoutMode(): LayoutMode {
-  return layoutMode;
+export interface LayoutSignal {
+  /** The three-way mode. `portrait` and `phoneLandscape` are both mobile layouts. */
+  mode: LayoutMode2;
+  /** Layout-viewport width, CSS px. */
+  width: number;
+  /** Layout-viewport height, CSS px. */
+  height: number;
+  /**
+   * The compact header's measured bottom edge, CSS px. `0` until the header publishes one (and on desktop, where
+   * no compact header is mounted and the insets registry measures the desktop one instead).
+   */
+  headerBottom: number;
 }
 
-export function subscribeLayoutMode(listener: () => void): () => void {
-  layoutModeListeners.add(listener);
-  return () => {
-    layoutModeListeners.delete(listener);
-  };
+const INITIAL_LAYOUT: LayoutSignal = { mode: 'desktop', width: 0, height: 0, headerBottom: 0 };
+
+let layout: LayoutSignal = INITIAL_LAYOUT;
+
+/** The React side: one listener set, notified only when a field actually changed. */
+const layoutListeners = new Set<() => void>();
+
+/**
+ * The frame-loop side: keys a consumer can subscribe to individually.
+ *
+ * A second set rather than reusing `layoutListeners` because the two subscribers want different things: React
+ * re-renders on any change, while the director only has to re-fit when the RECT moves. Kept as one map of key →
+ * listeners so a future third consumer costs one entry rather than one more module.
+ */
+type LayoutKey = 'mode' | 'size' | 'headerBottom' | 'all';
+const layoutKeyListeners = new Map<LayoutKey, Set<() => void>>();
+
+/** The current signal. Stable reference until something changes. */
+export function getLayoutSignal(): LayoutSignal {
+  return layout;
 }
 
-/** Set the mode and notify, but only on an actual change — the caller may be a media query firing twice. */
-function setLayoutMode(next: LayoutMode): void {
-  if (next === layoutMode) return;
-  layoutMode = next;
-  for (const listener of layoutModeListeners) listener();
+/** The three-way mode as of right now. Read non-reactively by the frame loop. */
+export function getLayoutMode2(): LayoutMode2 {
+  return layout.mode;
 }
 
 /**
- * Start the ONE media-query listener. Idempotent, and returns a cleanup.
+ * The MOBILE1-shaped read: `'mobile'` for both mobile modes.
  *
- * `addEventListener('change')` is used with an `addListener` fallback rather than the reverse: the legacy
- * `addListener` is deprecated and absent on some engines, while `addEventListener` on a `MediaQueryList` is
- * present in every browser this app supports. The fallback exists only so an old Safari does not silently
- * lose the change event, which would leave the page in whichever layout it loaded with.
+ * Kept because the acceptance suite, `__frame.layoutMode` and `GlobeScene`'s branches all ask the two-way
+ * question ("is this a phone layout or the desktop overlays?"), and answering it from the three-way field is one
+ * comparison. Nothing new should use it — `getLayoutMode2` is the honest value.
  */
-export function startLayoutModeObserver(query: string, win: Window | undefined = typeof window === 'undefined' ? undefined : window): () => void {
-  if (!win || typeof win.matchMedia !== 'function') return () => undefined;
-  if (layoutModeQuery && layoutModeHandler) {
-    /* Already running: re-read once so a caller after a resize does not see a stale value. */
-    setLayoutMode(layoutModeQuery.matches ? 'mobile' : 'desktop');
-    return () => undefined;
-  }
-  const mql = win.matchMedia(query);
-  const handler = (event: MediaQueryListEvent): void => {
-    setLayoutMode(event.matches ? 'mobile' : 'desktop');
+export function getLayoutMode(): 'mobile' | 'desktop' {
+  return isMobileMode(layout.mode) ? 'mobile' : 'desktop';
+}
+
+export function subscribeLayout(listener: () => void): () => void {
+  layoutListeners.add(listener);
+  return () => {
+    layoutListeners.delete(listener);
   };
-  layoutModeQuery = mql;
-  layoutModeHandler = handler;
-  if (typeof mql.addEventListener === 'function') mql.addEventListener('change', handler);
-  else if (typeof mql.addListener === 'function') mql.addListener(handler);
-  setLayoutMode(mql.matches ? 'mobile' : 'desktop');
+}
+
+export function subscribeLayoutKey(key: LayoutKey, listener: () => void): () => void {
+  let set = layoutKeyListeners.get(key);
+  if (!set) {
+    set = new Set();
+    layoutKeyListeners.set(key, set);
+  }
+  set.add(listener);
+  return () => {
+    set?.delete(listener);
+  };
+}
+
+/** Apply a patch, notify only the listeners whose field moved, and keep the snapshot reference stable. */
+function applyLayout(patch: Partial<LayoutSignal>): void {
+  const next: LayoutSignal = { ...layout, ...patch };
+  if (
+    next.mode === layout.mode &&
+    next.width === layout.width &&
+    next.height === layout.height &&
+    next.headerBottom === layout.headerBottom
+  ) {
+    return;
+  }
+  const modeChanged = next.mode !== layout.mode;
+  const sizeChanged = next.width !== layout.width || next.height !== layout.height;
+  const headerChanged = next.headerBottom !== layout.headerBottom;
+  layout = next;
+
+  for (const listener of layoutListeners) listener();
+  const notify = (key: LayoutKey): void => {
+    for (const listener of layoutKeyListeners.get(key) ?? []) listener();
+  };
+  if (modeChanged) notify('mode');
+  if (sizeChanged) notify('size');
+  if (headerChanged) notify('headerBottom');
+  notify('all');
+}
+
+/**
+ * The free rectangle for the current signal, as the director consumes it.
+ *
+ * Recomputed on every read rather than cached: it is four comparisons and a `Math.min`, and a cache is one more
+ * thing that can be stale by exactly the frame that matters.
+ */
+export function getFreeRect(): MobileFreeRect {
+  return computeFreeRect(layout.mode, layout.width, layout.height, layout.headerBottom);
+}
+
+/** The smallest change in the header's bottom edge worth a publish, CSS px. */
+export const HEADER_BOTTOM_EPSILON_PX = 0.5;
+
+/**
+ * Publish the compact header's measured bottom edge.
+ *
+ * Dropped below `HEADER_BOTTOM_EPSILON_PX` because the source is a `ResizeObserver`, which reports fractional
+ * heights: a font settling or a scrollbar appearing moves it by 0.02 px, and every one of those would re-fit the
+ * globe. `0.5` is the threshold the step names, and it is comfortably below one CSS pixel — the smallest change
+ * the acceptance case's 1 px comparison could ever see.
+ *
+ * `null` publishes 0, which is what an UNMOUNTED header reports: leaving a phone's 104 px behind after a resize
+ * to desktop would push the desktop free rect down by a header that is not on screen.
+ */
+export function publishHeaderBottom(px: number | null): void {
+  const wanted = px === null || !Number.isFinite(px) || px <= 0 ? 0 : px;
+  if (Math.abs(wanted - layout.headerBottom) < HEADER_BOTTOM_EPSILON_PX) return;
+  applyLayout({ headerBottom: wanted });
+}
+
+/** Read the layout viewport. `innerWidth`/`innerHeight`, NOT `visualViewport` — see `layoutMath`. */
+function readViewport(win: Window): { width: number; height: number } {
+  const w = Number.isFinite(win.innerWidth) ? win.innerWidth : 0;
+  const h = Number.isFinite(win.innerHeight) ? win.innerHeight : 0;
+  return { width: w, height: h };
+}
+
+let layoutWindow: Window | null = null;
+let layoutRefs = 0;
+let layoutFrame: number | null = null;
+let layoutCleanup: (() => void) | null = null;
+
+/**
+ * Start the ONE resize/orientation observer. Idempotent (ref-counted), and reads synchronously on the first call.
+ *
+ * Ref-counted rather than "started by the director only" because two components legitimately need it: the shell
+ * (so `data-layout-mode` is right on the first paint) and the director (so its frame loop has a value). Whichever
+ * mounts first starts it, and the last unmount stops it.
+ */
+export function startLayoutObserver(
+  win: Window | undefined = typeof window === 'undefined' ? undefined : window,
+): () => void {
+  if (!win) return () => undefined;
+
+  /* The synchronous first read: no first-paint flash, and a spec's first read is already correct. */
+  const initial = readViewport(win);
+  applyLayout({ ...initial, mode: resolveLayoutMode(initial.width, initial.height) });
+
+  if (layoutWindow === win) {
+    layoutRefs += 1;
+    return () => {
+      layoutRefs -= 1;
+      if (layoutRefs <= 0) stopLayoutObserver();
+    };
+  }
+  if (layoutWindow !== null) stopLayoutObserver();
+
+  layoutWindow = win;
+  layoutRefs = 1;
+
+  const measure = (): void => {
+    if (layoutFrame !== null) return;
+    layoutFrame = win.requestAnimationFrame(() => {
+      layoutFrame = null;
+      const next = readViewport(win);
+      applyLayout({ ...next, mode: resolveLayoutMode(next.width, next.height) });
+    });
+  };
+
+  win.addEventListener('resize', measure);
+  win.addEventListener('orientationchange', measure);
+
+  layoutCleanup = () => {
+    if (layoutFrame !== null) {
+      win.cancelAnimationFrame(layoutFrame);
+      layoutFrame = null;
+    }
+    win.removeEventListener('resize', measure);
+    win.removeEventListener('orientationchange', measure);
+  };
 
   return () => {
-    if (typeof mql.removeEventListener === 'function') mql.removeEventListener('change', handler);
-    else if (typeof mql.removeListener === 'function') mql.removeListener(handler);
-    layoutModeQuery = null;
-    layoutModeHandler = null;
-    /*
-     * Back to the default with the observer gone, not left at whatever it last read.
-     *
-     * The invariant is "no observer means desktop": that is what a document with no `matchMedia` gets, and
-     * leaving the last value behind would make the mode depend on WHEN the unmount happened — a page torn down
-     * on a phone would keep reporting `mobile` to anything that reads the store afterwards, including a later
-     * `CameraDirector` that has not started its observer yet. The desktop branch clears the view offset on its
-     * next frame, so this cannot leave a stale frustum behind either.
-     */
-    setLayoutMode('desktop');
+    layoutRefs -= 1;
+    if (layoutRefs <= 0) stopLayoutObserver();
   };
 }
 
-/** Test-only: force the mode, so a unit test can exercise both branches without a browser. */
-export function __setLayoutModeForTest(next: LayoutMode): void {
-  setLayoutMode(next);
+/**
+ * Tear the observer down and return to the desktop default.
+ *
+ * Back to the default with the observer gone, not left at whatever it last read. The invariant is "no observer
+ * means desktop": that is what a document with no `window` gets, and leaving the last value behind would make the
+ * mode depend on WHEN the unmount happened — a page torn down on a phone would keep reporting a mobile mode to
+ * anything that reads the store afterwards.
+ */
+function stopLayoutObserver(): void {
+  layoutCleanup?.();
+  layoutCleanup = null;
+  layoutWindow = null;
+  layoutRefs = 0;
+  layoutFrame = null;
+  applyLayout({ ...INITIAL_LAYOUT });
 }
 
-/** Test-only: drop the listener and go back to the desktop default. */
-export function __resetLayoutMode(): void {
-  layoutMode = 'desktop';
-  layoutModeQuery = null;
-  layoutModeHandler = null;
-  layoutModeListeners.clear();
+/** Test-only: force the whole signal, so a unit test can exercise every mode without a browser. */
+export function __setLayoutForTest(next: Partial<LayoutSignal>): void {
+  applyLayout(next);
+}
+
+/** Test-only: drop every listener and go back to the desktop default. */
+export function __resetLayoutStore(): void {
+  layoutCleanup?.();
+  layoutCleanup = null;
+  layoutWindow = null;
+  layoutRefs = 0;
+  layoutFrame = null;
+  layout = INITIAL_LAYOUT;
+  layoutListeners.clear();
+  layoutKeyListeners.clear();
 }

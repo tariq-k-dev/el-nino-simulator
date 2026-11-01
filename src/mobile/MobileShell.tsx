@@ -1,5 +1,5 @@
 /**
- * The mobile shell: the sheet, the island, and the two controls that survive the header collapse.
+ * The mobile shell: the compact header, and then either the portrait sheet or the landscape dock.
  *
  * ## Why this is a separate component rather than a branch inside `App`
  *
@@ -8,101 +8,129 @@
  * mutually exclusive trees, and keeping the mobile one in its own file means `git blame` on `App.tsx` for the
  * desktop layout stays readable, and means the whole mobile surface is one directory.
  *
- * ## The header collapse
+ * ## What MOBILE2 changed here
  *
- * On a phone the desktop header's identity row, alert badge and four buttons would cover the top of the globe,
- * which is the part the sheet does NOT hide. So the header is replaced by:
+ *   - MOBILE1's `sr-only` h1, floating island and separate Reset cluster are GONE. `HeaderCompact` owns the
+ *     heading, the ENSO chip and every control, so there is exactly one Reset View, one unit toggle and one
+ *     Snapshot in the DOM per mode, and the two rotate-ccw icons in the top right (one resetting the scenario,
+ *     one the view) are one control.
+ *   - The shell now DISPATCHES on the mode: `portrait` gets `SnapSheet`, `phoneLandscape` gets `LandscapeDock`.
+ *     Both read the same `SheetBody`, so the region switcher is one path.
+ *   - Entering portrait RESETS the sheet to peek. The prompt's rule is "the sheet tier resets to peek on every
+ *     portrait entry", and portrait is reachable from landscape by rotation, so the trigger is a transition in
+ *     the mode rather than a mount: a component that unmounts already lands at peek, but a rotation that keeps
+ *     the shell mounted would otherwise carry the old tier across.
  *
- *   - an `sr-only` `h1`, because the document still needs exactly one top-level heading and a screen reader
- *     should still announce what the page is;
- *   - the `ResetViewButton`, unchanged and beside the island, because it is the one control whose absence would
- *     be a functional loss (a reader who zooms cannot otherwise get back);
- *   - the island, which carries the live ENSO state and the scrubber.
- *
- * The Snapshot/download and unit-toggle buttons are dropped rather than shrunk: the download path writes a
- * desktop-shaped PNG report and the unit toggle changes labels inside the sheet, which now reads them from the
- * same `units` state, so neither is *unavailable* — they are simply not in the top bar. This is a deliberate
- * scope decision recorded in `docs/MOBILE.md`.
+ * The drawer, the cards and the control deck stay desktop-only; that gate is in `App.tsx` and is not this file's
+ * business.
  */
 
-import { RotateCcw } from 'lucide-react';
+import { useEffect, useRef } from 'react';
 import type { AnalyticsPayload, RegionDefinition, RegionId, ScenarioMetrics, ScenarioState, UnitSystem } from '@/types/enso';
-import { ResetViewButton } from '@/components/ResetViewButton';
-import { SnapSheet } from '@/mobile/SnapSheet';
-import { TopIsland } from '@/mobile/TopIsland';
+import { HeaderCompact } from '@/mobile/HeaderCompact';
+import { LandscapeDock } from '@/mobile/LandscapeDock';
+import { SnapSheet, type SnapSheetHandle } from '@/mobile/SnapSheet';
+import type { LayoutMode2 } from '@/mobile/layoutMath';
 
 interface MobileShellProps {
+  /** The three-way mode, from the store. `desktop` is never passed: `App` does not mount this shell there. */
+  mode: LayoutMode2;
+  /** Layout viewport, so the dock can be exactly `dockWidth(w)` wide. */
+  viewportW: number;
+  /** The compact header's published bottom edge. */
+  headerBottom: number;
   scenario: ScenarioState;
   metrics: ScenarioMetrics;
   analytics: AnalyticsPayload;
   region: RegionDefinition | null;
   activeRegion: RegionId | null;
   units: UnitSystem;
+  exporting: boolean;
+  onToggleUnits: () => void;
+  onExport: () => void;
   onSelect: (id: RegionId | null) => void;
   onClearSelection: () => void;
   onScenarioChange: (patch: Partial<ScenarioState>) => void;
-  onResetScenario: () => void;
 }
 
 export function MobileShell({
+  mode,
+  viewportW,
+  headerBottom,
   scenario,
   metrics,
   analytics,
   region,
   activeRegion,
   units,
+  exporting,
+  onToggleUnits,
+  onExport,
   onSelect,
   onClearSelection,
   onScenarioChange,
-  onResetScenario,
 }: MobileShellProps) {
+  const sheetRef = useRef<SnapSheetHandle>(null);
+
+  /*
+   * The tier reset on portrait entry.
+   *
+   * `wasPortrait` starts false, so the FIRST entry (which is the mount on a phone held upright) resets too — the
+   * sheet mounts at peek anyway, so that costs nothing and keeps the rule unconditional. A rotation out and back
+   * resets again, which is the case the prompt names.
+   */
+  const wasPortrait = useRef(false);
+  useEffect(() => {
+    const isPortrait = mode === 'portrait';
+    if (isPortrait && !wasPortrait.current) sheetRef.current?.resetTier();
+    wasPortrait.current = isPortrait;
+  }, [mode]);
+
   return (
     <>
-      {/*
-        The heading the collapsed header still owes the document. `sr-only` rather than `hidden`: a display:none
-        h1 is not in the accessibility tree at all, so the page would have NO level-one heading on a phone.
-      */}
-      <h1 className="sr-only">Super El Niño Global Impact Simulator</h1>
-
-      <TopIsland
+      <HeaderCompact
+        mode={mode}
         anomalyC={scenario.sstAnomaly}
-        onSstChange={(value) => onScenarioChange({ sstAnomaly: value })}
-      />
-
-      {/*
-        Reset beside the island, with the same aria and the same behaviour as the desktop instance: this is the
-        same COMPONENT, so the two cannot drift. `top-3` clears the island's own row (44 px capsule plus the safe
-        area inset), and the 44 px box is what the prompt's touch minimum asks for.
-      */}
-      <div
-        className="pointer-events-none fixed right-3 z-40"
-        style={{ top: 'calc(env(safe-area-inset-top) + 8px)' }}
-      >
-        <div className="pointer-events-auto flex items-center gap-2">
-          <button
-            type="button"
-            onClick={onResetScenario}
-            aria-label="Reset the scenario levers to the Super El Niño baseline"
-            className="flex h-11 w-11 items-center justify-center rounded-full border border-white/12 bg-slate-950/80 text-slate-300 backdrop-blur-md focus:outline-none focus-visible:ring-1 focus-visible:ring-white/50"
-          >
-            <RotateCcw size={14} />
-          </button>
-          <ResetViewButton onClearSelection={onClearSelection} />
-        </div>
-      </div>
-
-      <SnapSheet
-        metrics={metrics}
-        analytics={analytics}
-        scenarioSst={scenario.sstAnomaly}
-        region={region}
         units={units}
-        activeRegion={activeRegion}
-        onSelect={(id) => onSelect(id)}
+        onToggleUnits={onToggleUnits}
+        onExport={onExport}
+        exporting={exporting}
         onClearSelection={onClearSelection}
         onSstChange={(value) => onScenarioChange({ sstAnomaly: value })}
-        onChangeScenario={(patch) => onScenarioChange(patch)}
       />
+
+      {mode === 'portrait' ? (
+        <SnapSheet
+          ref={sheetRef}
+          metrics={metrics}
+          analytics={analytics}
+          scenarioSst={scenario.sstAnomaly}
+          region={region}
+          units={units}
+          activeRegion={activeRegion}
+          onSelect={(id) => onSelect(id)}
+          onClearSelection={onClearSelection}
+          onSstChange={(value) => onScenarioChange({ sstAnomaly: value })}
+          onChangeScenario={(patch) => onScenarioChange(patch)}
+        />
+      ) : null}
+
+      {mode === 'phoneLandscape' ? (
+        <LandscapeDock
+          viewportW={viewportW}
+          headerBottom={headerBottom}
+          metrics={metrics}
+          analytics={analytics}
+          scenarioSst={scenario.sstAnomaly}
+          region={region}
+          units={units}
+          activeRegion={activeRegion}
+          onSelect={(id) => onSelect(id)}
+          onClearSelection={onClearSelection}
+          onSstChange={(value) => onScenarioChange({ sstAnomaly: value })}
+          onChangeScenario={(patch) => onScenarioChange(patch)}
+        />
+      ) : null}
     </>
   );
 }

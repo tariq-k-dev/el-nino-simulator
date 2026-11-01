@@ -138,11 +138,21 @@ export interface FrameProbeHandle {
   /** Step 3B2: `locked` (aim-at-pin) or `live` (face-pin). */
   readonly focusPolicy: 'live' | 'locked';
   /** Step 3-MOBILE1: which layout the page is running. */
-  readonly layoutMode: 'desktop' | 'mobile';
+  readonly layoutMode: 'desktop' | 'mobile' | 'portrait' | 'phoneLandscape';
   /** Step 3-MOBILE1: the window offset in px, positive-down. 0 on desktop. */
   readonly viewOffsetY: number;
   /** Step 3-MOBILE1: true when `dMax` bound the mobile fit. */
   readonly clampedByMax: boolean;
+  /** Step MOBILE2: the horizontal lens shift, positive-right. 0 on desktop. */
+  readonly viewOffsetX: number;
+  /** Step MOBILE2: `controls.maxDistance` as the director last wrote it. 5 on desktop. */
+  readonly dMax: number;
+  /** Step MOBILE2: the fit distance. */
+  readonly dFit: number;
+  /** Step MOBILE2: the radius budget the fit used. 0 on desktop. */
+  readonly radiusBudget: number;
+  /** Step MOBILE2: the published compact-header bottom. 0 on desktop. */
+  readonly headerBottom: number;
   snapshot(): {
     mode: 'live' | 'locked';
     insets: { top: number; right: number; bottom: number; left: number };
@@ -159,9 +169,14 @@ export interface FrameProbeHandle {
     hasRegion: boolean;
     spinning: boolean;
     focusPolicy: 'live' | 'locked';
-    layoutMode: 'desktop' | 'mobile';
+    layoutMode: 'desktop' | 'mobile' | 'portrait' | 'phoneLandscape';
     viewOffsetY: number;
     clampedByMax: boolean;
+    viewOffsetX: number;
+    dMax: number;
+    dFit: number;
+    radiusBudget: number;
+    headerBottom: number;
   };
 }
 

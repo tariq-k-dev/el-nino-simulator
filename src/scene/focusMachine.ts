@@ -60,6 +60,14 @@ export type FocusEvent =
   | { type: 'CLOSE' }
   | { type: 'RETURNED' }
   | { type: 'USER_ZOOM' }
+  /**
+   * Step MOBILE2: the fit has taken the distance back because the LAYOUT changed.
+   *
+   * Needed because a mode change intentionally overrides `userZoomed` — a distance chosen for a portrait band is
+   * meaningless in landscape — and without clearing the flag the very next frame would hand the distance straight
+   * back to the user's (now stale) zoom.
+   */
+  | { type: 'USER_ZOOM_RESET' }
   | { type: 'USER_ORBIT_START' }
   | { type: 'RESET' }
   | { type: 'FRAME_CHANGED' };
@@ -71,6 +79,7 @@ export const FOCUS_EVENTS: readonly FocusEvent['type'][] = [
   'CLOSE',
   'RETURNED',
   'USER_ZOOM',
+  'USER_ZOOM_RESET',
   'USER_ORBIT_START',
   'RESET',
   'FRAME_CHANGED',
@@ -142,6 +151,11 @@ export function step(snapshot: FocusSnapshot, event: FocusEvent): FocusSnapshot 
   if (event.type === 'USER_ZOOM') {
     if (context.userZoomed) return snapshot;
     return { state, context: { ...context, userZoomed: true } };
+  }
+
+  if (event.type === 'USER_ZOOM_RESET') {
+    if (!context.userZoomed) return snapshot;
+    return { state, context: { ...context, userZoomed: false } };
   }
   if (event.type === 'FRAME_CHANGED') return snapshot;
 

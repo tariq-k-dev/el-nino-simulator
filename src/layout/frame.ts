@@ -69,6 +69,38 @@ export interface FrameInput {
   paddingPx?: number;
 }
 
+/**
+ * Focal length in pixels, from the VERTICAL fov and the FULL viewport height.
+ *
+ * Extracted so the mobile free-rect fit (`mobile/mobileFrame.ts`) computes `d_contain` from the SAME expression
+ * rather than from a second copy of it. The two callers differ in which radius and which rectangle they feed it,
+ * not in the law — and a law written twice is a law that drifts.
+ *
+ * Full height, not a free height: `setViewOffset` shifts the frustum without rescaling it, so the projection
+ * keeps the fov/CSS-px relationship of the whole canvas.
+ */
+export function focalPxFor(viewportH: number, fovDeg: number): number {
+  return viewportH / 2 / Math.tan((fovDeg * Math.PI) / 180 / 2);
+}
+
+/**
+ * `d_contain` — the distance at which a sphere of radius `re` has a silhouette radius of exactly `radiusPx`.
+ *
+ * The silhouette radius of a sphere at distance `d` is `f·re / sqrt(d² − re²)`; solving `r = radiusPx` gives
+ *
+ *     d² = re² + (f·re / radiusPx)²
+ *
+ * Written in this direction (rather than as `re / sin(atan(radiusPx / f))`) so the `re²` term that dominates at
+ * small radii stays visible; the two forms agree to ~1e-15 here but only this one stays well-conditioned as
+ * `radiusPx -> 0`.
+ *
+ * THE law of this repo: `computeFrame` calls it with the free rectangle's `rMax`, and
+ * `computeMobileFit` calls it with the radius budget `Rb`. Neither re-derives it.
+ */
+export function dContainFor(radiusPx: number, focalPx: number, re: number): number {
+  return Math.sqrt(re * re + ((focalPx * re) / radiusPx) ** 2);
+}
+
 /** The free rectangle, in CSS pixels from the viewport's top-left. */
 export interface FrameRect {
   x: number;
@@ -168,24 +200,13 @@ export function computeFrame(input: FrameInput): Frame {
    * projection keeps the fov/CSS-px relationship of the whole canvas. Using the free height here
    * would make the offset change the apparent scale, which is exactly what it must not do.
    */
-  const focalPx = H / 2 / Math.tan((fovDeg * Math.PI) / 180 / 2);
+  const focalPx = focalPxFor(H, fovDeg);
 
   /*
-   * d_contain from the tangent-length form.
-   *
-   * The silhouette radius of a sphere of radius `re` at distance `d` is
-   *
-   *     r = f * re / sqrt(d^2 - re^2)
-   *
-   * Solving `r = rMax`:
-   *
-   *     d^2 = re^2 + (f * re / rMax)^2
-   *
-   * Written in this direction (rather than as `re / sin(atan(rMax / f))`) so the `re^2` term that
-   * dominates at small `rMax` stays visible; the two forms agree to ~1e-15 here but only this one
-   * stays well-conditioned as `rMax -> 0`.
+   * d_contain from the tangent-length form. The law itself now lives in `dContainFor` above, because the mobile
+   * free-rect fit needs the same law with a different radius; this call site supplies the free rectangle's `rMax`.
    */
-  const dContain = degenerate ? d0 : Math.sqrt(re * re + ((focalPx * re) / rMax) ** 2);
+  const dContain = degenerate ? d0 : dContainFor(rMax, focalPx, re);
 
   /*
    * Zoom-out only, inside the control bound.

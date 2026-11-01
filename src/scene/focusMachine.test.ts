@@ -42,6 +42,7 @@ function eventOf(type: FocusEvent['type']): FocusEvent {
     case 'CLOSE':
     case 'RETURNED':
     case 'USER_ZOOM':
+    case 'USER_ZOOM_RESET':
     case 'USER_ORBIT_START':
     case 'RESET':
     case 'FRAME_CHANGED':
@@ -55,7 +56,7 @@ function eventOf(type: FocusEvent['type']): FocusEvent {
 }
 
 describe('focus machine — totality', () => {
-  it('every state x every event returns a defined snapshot (4 x 8)', () => {
+  it('every state x every event returns a defined snapshot (4 x 9)', () => {
     let pairs = 0;
     for (const state of FOCUS_STATES) {
       for (const type of FOCUS_EVENTS) {
@@ -67,7 +68,11 @@ describe('focus machine — totality', () => {
         pairs += 1;
       }
     }
-    expect(pairs).toBe(32);
+    /*
+     * 4 states x 9 events. The count is asserted rather than derived so that ADDING an event without adding it to
+     * this file's switch is a visible edit here too — step MOBILE2 added `USER_ZOOM_RESET`, which took it from 32.
+     */
+    expect(pairs).toBe(36);
   });
 
   it('never throws on any pair', () => {

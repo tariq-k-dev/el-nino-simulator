@@ -92,11 +92,11 @@ import {
 } from '@/camera/easing';
 import { arcStep, facingPose, isArrived, type Vec3 } from '@/camera/facing';
 import {
-  getLayoutMode,
+  getLayoutSignal,
   getResetRequest,
   getViewState,
   publishViewState,
-  startLayoutModeObserver,
+  startLayoutObserver,
   subscribeResetRequest,
 } from '@/scene/viewStore';
 import type { SpinState } from '@/scene/EarthSystem';
@@ -123,8 +123,8 @@ import {
   type FocusState,
 } from '@/scene/focusMachine';
 import { registerCameraIntents, type CameraPose } from '@/scene/cameraIntents';
-import { computeMobileFrame, type MobileFrame } from '@/mobile/mobileFrame';
-import { MOBILE_FREE_TOP_FRACTION, MOBILE_QUERY } from '@/mobile/snapMath';
+import { asMobileFrame, computeMobileFit, type MobileFrame } from '@/mobile/mobileFrame';
+import type { LayoutMode2 } from '@/mobile/layoutMath';
 
 /** The shipped start position; the same constants the `<Canvas camera>` prop uses. */
 const DEFAULT_POSITION = new THREE.Vector3(0, 1.15, 3.15);
@@ -373,22 +373,54 @@ function angleDegBetween(a: Vec3, b: THREE.Vector3): number {
  * direction returns the camera to a state the 3A/3B proofs describe.
  */
 interface MobileOffsetState {
-  mode: 'mobile' | 'desktop' | null;
+  /** The mode and size the offset was last applied for, and the rect size it was fitted to. */
+  mode: LayoutMode2 | null;
   w: number;
   h: number;
+  /** The header bottom and the dock width the fit was computed from, so a re-fit happens when either moves. */
+  headerBottom: number;
+}
+
+/**
+ * Publish the mode's ceiling to `controls.maxDistance`, once per change.
+ *
+ * ## Why the director is the one writer
+ *
+ * `singleWriter.test.ts` bans `.maxDistance =` outside this file, and `GlobeScene.tsx`'s JSX prop sets the initial
+ * value at mount. This function is the runtime half of that rule: it is called from the frame, compares against
+ * what it last wrote, and writes only on a change — so an ordinary desktop frame is one float comparison and
+ * nothing else, which is what keeps the desktop proofs untouched.
+ *
+ * ## Desktop writes 5, always
+ *
+ * Not "writes nothing": a page that was a phone and is now a desktop must have its ceiling RESTORED, or the user
+ * could zoom out to a mobile `dMax` on a desktop viewport. Writing the same constant the JSX prop already holds is
+ * a no-op in effect and is the state the desktop specs describe.
+ */
+function applyMaxDistance(
+  controls: OrbitControlsImpl,
+  written: { current: number | null },
+  wanted: number,
+): void {
+  if (written.current !== null && Math.abs(written.current - wanted) < 1e-9) return;
+  controls.maxDistance = wanted;
+  written.current = wanted;
 }
 
 function applyMobileOffset(
   camera: THREE.PerspectiveCamera,
   state: MobileOffsetState,
-  mode: 'mobile' | 'desktop',
+  mode: LayoutMode2,
   w: number,
   h: number,
+  headerBottom: number,
+  compute: () => MobileFrame,
 ): MobileFrame | null {
-  if (state.mode === mode && state.w === w && state.h === h) return null;
+  if (state.mode === mode && state.w === w && state.h === h && state.headerBottom === headerBottom) return null;
   state.mode = mode;
   state.w = w;
   state.h = h;
+  state.headerBottom = headerBottom;
 
   if (mode === 'desktop') {
     /*
@@ -406,8 +438,16 @@ function applyMobileOffset(
     return null;
   }
 
-  const frame = computeMobileFrame(w, h);
-  camera.setViewOffset(w, h, 0, frame.viewOffsetY, w, h);
+  const frame = compute();
+  /*
+   * The GENERALISED offset: both axes, from the free rect's centre.
+   *
+   * `setViewOffset(W, H, ox, oy, W, H)` with `ox = W/2 - cx` and `oy = H/2 - cy`. The sub-window keeps the full
+   * W x H, so the zoom is unchanged and the disc stays a circle — a lens shift, not a rescale. Both signs were
+   * proven by projecting a real camera in `mobileFrame.test.ts`, which is what the prompt's "flip a sign if
+   * needed" asks for; the answer was that neither needed flipping.
+   */
+  camera.setViewOffset(w, h, frame.viewOffsetX, frame.viewOffsetY, w, h);
   /*
    * Explicit, per the step: `setViewOffset` only STORES the parameters and flags the matrix, and the commit
    * is this call. Writing it out also makes the projection write visible to `projectionWriter.test.ts`, which
@@ -455,9 +495,10 @@ export function CameraDirector({
    * publishes is only ever read by this file's frame loop and by the DOM shell that decides which overlay to
    * render. A second listener anywhere else would be a second source of truth for the same boolean.
    *
-   * `startLayoutModeObserver` is idempotent, so React 18's development double-mount cannot install two.
+   * `startLayoutObserver` is ref-counted and idempotent, so React 18's development double-mount cannot install
+   * two, and joining the one `App` already started is one `refs += 1`.
    */
-  useEffect(() => startLayoutModeObserver(MOBILE_QUERY), []);
+  useEffect(() => startLayoutObserver(), []);
 
   /* ---------------------------------------------------------------- focus machine */
 
@@ -492,7 +533,9 @@ export function CameraDirector({
    * so a frame that does NOT cross a mode or size boundary can reuse the previous `MobileFrame` instead of
    * recomputing the fit — the offset only changes when the window does.
    */
-  const mobileOffset = useRef<MobileOffsetState>({ mode: null, w: 0, h: 0 });
+  const mobileOffset = useRef<MobileOffsetState>({ mode: null, w: 0, h: 0, headerBottom: 0 });
+  /** The `controls.maxDistance` this module last wrote, so it writes only on a change. */
+  const maxDistanceWritten = useRef<number | null>(null);
   const mobileCache = useRef<MobileFrame | null>(null);
   /** True while THIS module is writing, so its own `change` events are ignored. */
   const writing = useRef(false);
@@ -679,32 +722,42 @@ export function CameraDirector({
      */
     if (IS_LOCKED) {
       noteLocked();
-    } else if (getLayoutMode() === 'mobile') {
+    } else if (getLayoutSignal().mode !== 'desktop') {
       /*
        * ===================================================== 2a. THE MOBILE BRANCH ====
        *
-       * A separate branch rather than a conditional inside the desktop body, for the same reason the two
-       * focus policies are separate bodies: the desktop arithmetic has to stay byte-identical (S1 residual 0),
-       * and the only way to be sure a shared branch did not perturb it is to not share one.
+       * A separate branch rather than a conditional inside the desktop body, for the same reason the two focus
+       * policies are separate bodies: the desktop arithmetic has to stay byte-identical (S1 residual 0), and the
+       * only way to be sure a shared branch did not perturb it is to not share one.
        *
-       * What differs from desktop:
+       * Step MOBILE2 replaced MOBILE1's fixed 55 % band with the layout's own free rectangle, and the distance with
+       * the unclamped fit:
        *
-       *   - the free rectangle is FIXED (full width, top 55 %), not measured from `data-occluder` panels,
-       *     because the sheet is not a panel and its tier must not move the globe;
-       *   - the offset is applied through `applyMobileOffset`, which is idempotent on `(mode, W, H)` and is
-       *     therefore also the thing that re-applies after R3F's own resize;
-       *   - the distance is NOT eased frame by frame: the fit's own channel below leaves `userZoomed`
-       *     semantics intact, but there is no offset easing because the offset never animates (a moving
-       *     principal point is a moving picture).
+       *   - the free rect comes from `computeFreeRect` (header bottom, peek clamp, dock width);
+       *   - the offset is the GENERALISED two-axis lens shift `W/2 - cx`, `H/2 - cy`;
+       *   - `dFit = dContain` (no ceiling clamp) and `controls.maxDistance = max(5, 1.25·dContain)`.
        *
        * Everything else — the fit's distance channel, `userZoomed`, the probe — is the desktop code, moved
        * wholesale rather than reimplemented.
        */
       const w = size.width;
       const h = size.height;
-      const mobile = applyMobileOffset(camera, mobileOffset.current, 'mobile', w, h);
-      const frame = mobile ?? (mobileCache.current as MobileFrame);
+      const signal = getLayoutSignal();
+      const mode = signal.mode;
+
+      /* One fit per layout change, reused for both the offset and the distance. */
+      const fit = computeMobileFit(mode, w, h, signal.headerBottom);
+      const mobile = applyMobileOffset(camera, mobileOffset.current, mode, w, h, signal.headerBottom, () =>
+        asMobileFrame(fit, w, h),
+      );
+      const frame = mobile ?? asMobileFrame(fit, w, h);
       mobileCache.current = frame;
+
+      /*
+       * THE CEILING. Written every mobile frame, and cleared back to 5 on the desktop branch below — so a rotation
+       * to desktop cannot leave a mobile `maxDistance` behind.
+       */
+      applyMaxDistance(controls, maxDistanceWritten, fit.dMaxMode);
 
       const offset = camera.position.clone().sub(controls.target);
       const currentDistance = offset.length();
@@ -714,13 +767,20 @@ export function CameraDirector({
 
       const userZoomedMobile = machine.current.context.userZoomed;
       rigOwnsDistance.current = !userZoomedMobile;
-      if (!userZoomedMobile && Math.abs(frame.dTarget - currentDistance) > 1e-6) {
-        const k = prefersReducedMotion() ? 1 : 1 - Math.exp(-stepDt / FRAME_TIME_CONSTANT_S);
-        const wanted = THREE.MathUtils.clamp(
-          frame.dTarget,
-          controls.minDistance,
-          controls.maxDistance,
-        );
+      /*
+       * A MODE CHANGE re-fits with no animation, and resets the "the user owns the distance" latch.
+       *
+       * The prompt's rule: on a rotation or resize the director re-fits, keeps the camera DIRECTION and the
+       * selected region, and sets the distance to the new dFit if the view was default. `mobile` is non-null
+       * exactly when the mode or the size or the header changed, which is the definition of a mode change — and
+       * on that frame the fit takes the distance even if the user had zoomed, because a distance chosen for a
+       * 390x844 portrait band is meaningless at 844x390.
+       */
+      const reFit = mobile !== null;
+      const frameWantsDistance = !userZoomedMobile || reFit;
+      if (frameWantsDistance && Math.abs(frame.dTarget - currentDistance) > 1e-6) {
+        const k = reFit || prefersReducedMotion() ? 1 : 1 - Math.exp(-stepDt / FRAME_TIME_CONSTANT_S);
+        const wanted = THREE.MathUtils.clamp(frame.dTarget, controls.minDistance, controls.maxDistance);
         const eased = THREE.MathUtils.lerp(currentDistance, wanted, k);
         const nextDistance = Math.abs(wanted - eased) < 1e-5 ? wanted : eased;
         withOwnWrite(() => {
@@ -730,6 +790,7 @@ export function CameraDirector({
         lastFit.current = nextDistance;
         lastSeenDistance.current = nextDistance;
       }
+      if (reFit) dispatch({ type: 'USER_ZOOM_RESET' });
 
       {
         const dir = orbitDirection(camera, controls);
@@ -767,7 +828,12 @@ export function CameraDirector({
         probe.current = {
           state: {
             mode: 'live',
-            insets: { left: 0, right: 0, top: 0, bottom: h * (1 - MOBILE_FREE_TOP_FRACTION) },
+            insets: {
+              left: frame.free.x,
+              right: w - (frame.free.x + frame.free.w),
+              top: frame.free.y,
+              bottom: h - (frame.free.y + frame.free.h),
+            },
             free: { ...frame.free },
             target: { dx: frame.dx, dy: frame.dy, d: frame.dTarget },
             current: { dx: frame.dx, dy: frame.dy, d: camDistance },
@@ -781,9 +847,14 @@ export function CameraDirector({
             spinning: getViewState().spinning,
             hasRegion: getViewState().hasRegion,
             focusPolicy: 'live',
-            layoutMode: 'mobile',
+            layoutMode: mode,
             viewOffsetY: frame.viewOffsetY,
+            viewOffsetX: frame.viewOffsetX,
             clampedByMax: frame.clampedByMax,
+            dMax: controls.maxDistance,
+            dFit: fit.dFit,
+            radiusBudget: fit.rect.radiusBudget,
+            headerBottom: signal.headerBottom,
           },
         };
       }
@@ -798,8 +869,14 @@ export function CameraDirector({
        * `clearViewOffset` when `camera.view` is actually non-null — so on an ordinary desktop frame this is
        * one comparison and nothing else, which is what keeps `cameraViewIsNull` true and S1 at 0.
        */
-      applyMobileOffset(camera, mobileOffset.current, 'desktop', w, h);
+      applyMobileOffset(camera, mobileOffset.current, 'desktop', w, h, 0, () => mobileCache.current as MobileFrame);
       mobileCache.current = null;
+      /*
+       * THE CEILING, restored. A page that was a phone keeps `max(5, 1.25·dContain)` in `controls.maxDistance`
+       * until this runs, and leaving it would let a desktop user zoom out past the design ceiling — a desktop
+       * behaviour change, which is exactly what this step must not cause. Same constant the JSX prop holds.
+       */
+      applyMaxDistance(controls, maxDistanceWritten, MAX_DISTANCE);
 
       const frame = computeFrame({
         viewport: { w, h },
@@ -946,6 +1023,8 @@ export function CameraDirector({
             spinning: getViewState().spinning,
             hasRegion: getViewState().hasRegion,
             focusPolicy: 'live',
+            /** Desktop's ceiling, reported so LM8 can assert 5 without reading the controls. */
+            dMax: controls.maxDistance,
           },
         };
       }

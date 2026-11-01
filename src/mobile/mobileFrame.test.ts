@@ -1,178 +1,166 @@
 /**
- * Step B — the mobile frame, and the view-offset SIGN, proven by projection.
+ * The mobile fit, and the view-offset SIGN on BOTH axes, proven by projection.
  *
- * The prompt is explicit that the sign must be established by measurement and not guessed: "Project the
- * controls target and require its screen y to equal 0.275 * H within 1 px. If the sign is wrong, flip it."
- * So every geometric claim here is checked by building a REAL `THREE.PerspectiveCamera`, applying the offset
- * this module returns, and projecting the world origin through the resulting matrix. A wrong sign fails by
- * 2 x the offset (379.8 px at 390x844), not by a rounding error.
+ * The prompt is explicit that the sign must be established by measurement and not guessed: "Project the controls
+ * target and require its screen position to equal (cx, cy) within 1 px. If the sign is wrong, flip it." So every
+ * geometric claim here builds a REAL `THREE.PerspectiveCamera`, applies the offset this module returns, and
+ * projects the world origin through the resulting matrix. A wrong sign fails by 2 x the offset (measured: 379.8 px
+ * at 390x844 for the Y axis), not by a rounding error.
+ *
+ * Step MOBILE2 replaced the fixed 55 % band with `computeFreeRect`, so the wanted centre is no longer
+ * `0.275·H` — it is whatever the layout law says, which is what these cases read. The sign proof is unchanged in
+ * kind and now covers X as well as Y, because the landscape dock moves the centre horizontally.
  */
 import * as THREE from 'three';
 import { describe, expect, it } from 'vitest';
-import { computeMobileFrame } from './mobileFrame';
-import { MOBILE_FREE_TOP_FRACTION, VIEW_CENTER_FRACTION } from './snapMath';
-import { FOV_DEG, MAX_DISTANCE } from '@/layout/framing';
+import { MOBILE_ENVELOPE, computeMobileFit, viewOffsetFor } from './mobileFrame';
+import { computeFreeRect, resolveLayoutMode } from './layoutMath';
+import { D0, FOV_DEG, MAX_DISTANCE, PIN_ENVELOPE } from '@/layout/framing';
+import { SHELLS } from '@/scene/constants';
 
-/** The step's own viewport. */
-const W = 390;
-const H = 844;
+/** The step's own viewport, and a landscape one for the X-axis proof. */
+const PORTRAIT = { w: 390, h: 844, header: 104 };
+const LANDSCAPE = { w: 924, h: 412, header: 60 };
 
-/** A camera at the shipped pose, with the mobile offset installed exactly as the director installs it. */
-function cameraWith(frame: ReturnType<typeof computeMobileFrame>): THREE.PerspectiveCamera {
-  const camera = new THREE.PerspectiveCamera(FOV_DEG, W / H, 0.1, 400);
+/**
+ * A camera at the shipped pose with the fit's offsets installed exactly as the director installs them.
+ *
+ * The camera's aspect is the FULL viewport's, and the sub-window is the full `W x H` — a lens shift, so the
+ * projection keeps the same scale and the disc stays a circle.
+ */
+function cameraWith(vp: { w: number; h: number }, offset: { x: number; y: number }): THREE.PerspectiveCamera {
+  const camera = new THREE.PerspectiveCamera(FOV_DEG, vp.w / vp.h, 0.1, 400);
   camera.position.set(0, 1.15, 3.15);
   camera.lookAt(0, 0, 0);
-  camera.setViewOffset(W, H, 0, frame.viewOffsetY, W, H);
+  camera.setViewOffset(vp.w, vp.h, offset.x, offset.y, vp.w, vp.h);
   camera.updateMatrixWorld(true);
   return camera;
 }
 
 /** Where a world point lands, in CSS px from the viewport's top-left. */
-function project(camera: THREE.PerspectiveCamera, point: [number, number, number]) {
+function project(camera: THREE.PerspectiveCamera, vp: { w: number; h: number }, point: [number, number, number]) {
   const v = new THREE.Vector3(...point).project(camera);
-  return { x: ((v.x + 1) / 2) * W, y: ((1 - v.y) / 2) * H };
+  return { x: ((v.x + 1) / 2) * vp.w, y: ((1 - v.y) / 2) * vp.h };
 }
 
-describe('the offset sign, measured', () => {
-  it('puts the orbit target at 0.275 * H within 1 px', () => {
-    const frame = computeMobileFrame(W, H);
-    const camera = cameraWith(frame);
-    const p = project(camera, [0, 0, 0]);
-    const wanted = VIEW_CENTER_FRACTION * H;
-
-    expect(VIEW_CENTER_FRACTION).toBeCloseTo(0.275, 12);
-    expect(Math.abs(p.y - wanted), `projected y ${p.y} vs wanted ${wanted}`).toBeLessThanOrEqual(1);
-    /* And the x is untouched: the offset is vertical only. */
-    expect(Math.abs(p.x - W / 2)).toBeLessThanOrEqual(0.001);
+describe('the offset signs, measured', () => {
+  it('PORTRAIT: the orbit target lands on (cx, cy) within 1 px', () => {
+    const fit = computeMobileFit('portrait', PORTRAIT.w, PORTRAIT.h, PORTRAIT.header);
+    const camera = cameraWith(PORTRAIT, { x: fit.offsetX, y: fit.offsetY });
+    const p = project(camera, PORTRAIT, [0, 0, 0]);
+    expect(Math.abs(p.x - fit.rect.cx), `x ${p.x} vs cx ${fit.rect.cx}`).toBeLessThanOrEqual(1);
+    expect(Math.abs(p.y - fit.rect.cy), `y ${p.y} vs cy ${fit.rect.cy}`).toBeLessThanOrEqual(1);
   });
 
-  it('would fail by 2x the offset if the sign were flipped, which is what makes the check meaningful', () => {
+  it('LANDSCAPE: the same, with a NON-zero X offset — this is the axis MOBILE1 never had to prove', () => {
+    const fit = computeMobileFit('phoneLandscape', LANDSCAPE.w, LANDSCAPE.h, LANDSCAPE.header);
     /*
-     * The negative control. Same camera, same position, offset negated: the target lands at
-     * H - 0.275*H + ... i.e. far below the wanted line. If this test ever starts PASSING, the projection
-     * convention changed and the product's sign is now wrong.
+     * The dock is on the right, so the centre sits LEFT of the viewport middle and `W/2 - cx` is POSITIVE — the
+     * measured sign, not the guessed one. A positive `offsetX` selects a window to the right of the full frame, so
+     * the content appears to move left, which is exactly where the centre belongs.
      */
-    const frame = computeMobileFrame(W, H);
-    const flipped = new THREE.PerspectiveCamera(FOV_DEG, W / H, 0.1, 400);
-    flipped.position.set(0, 1.15, 3.15);
-    flipped.lookAt(0, 0, 0);
-    flipped.setViewOffset(W, H, 0, -frame.viewOffsetY, W, H);
-    flipped.updateMatrixWorld(true);
-
-    const wanted = VIEW_CENTER_FRACTION * H;
-    const p = project(flipped, [0, 0, 0]);
-    expect(Math.abs(p.y - wanted)).toBeGreaterThan(300);
+    expect(fit.offsetX).toBeCloseTo(LANDSCAPE.w / 2 - fit.rect.cx, 12);
+    expect(fit.offsetX).toBeGreaterThan(0);
+    const camera = cameraWith(LANDSCAPE, { x: fit.offsetX, y: fit.offsetY });
+    const p = project(camera, LANDSCAPE, [0, 0, 0]);
+    expect(Math.abs(p.x - fit.rect.cx), `x ${p.x} vs cx ${fit.rect.cx}`).toBeLessThanOrEqual(1);
+    expect(Math.abs(p.y - fit.rect.cy), `y ${p.y} vs cy ${fit.rect.cy}`).toBeLessThanOrEqual(1);
   });
 
-  it('leaves the target at the canvas centre with no offset, so the effect is attributable', () => {
-    const plain = new THREE.PerspectiveCamera(FOV_DEG, W / H, 0.1, 400);
-    plain.position.set(0, 1.15, 3.15);
-    plain.lookAt(0, 0, 0);
-    plain.updateMatrixWorld(true);
-    const p = project(plain, [0, 0, 0]);
-    expect(p.y).toBeCloseTo(H / 2, 6);
+  it('a flipped X sign misses by twice the offset, which is what makes the check meaningful', () => {
+    const fit = computeMobileFit('phoneLandscape', LANDSCAPE.w, LANDSCAPE.h, LANDSCAPE.header);
+    const flipped = cameraWith(LANDSCAPE, { x: -fit.offsetX, y: fit.offsetY });
+    const p = project(flipped, LANDSCAPE, [0, 0, 0]);
+    /* Twice the offset, within a pixel of float noise: 2 x 175.56 = 351.1. */
+    expect(Math.abs(p.x - fit.rect.cx)).toBeGreaterThan(2 * Math.abs(fit.offsetX) - 1);
   });
 
-  it('holds at 667 and 926 too, not only at the step viewport', () => {
-    for (const height of [667, 844, 926]) {
-      const frame = computeMobileFrame(390, height);
-      const camera = new THREE.PerspectiveCamera(FOV_DEG, 390 / height, 0.1, 400);
-      camera.position.set(0, 1.15, 3.15);
-      camera.lookAt(0, 0, 0);
-      camera.setViewOffset(390, height, 0, frame.viewOffsetY, 390, height);
-      camera.updateMatrixWorld(true);
-      const v = new THREE.Vector3(0, 0, 0).project(camera);
-      const y = ((1 - v.y) / 2) * height;
-      expect(Math.abs(y - VIEW_CENTER_FRACTION * height), `height ${height}`).toBeLessThanOrEqual(1);
-    }
+  it('a flipped Y sign misses by twice the offset', () => {
+    const fit = computeMobileFit('portrait', PORTRAIT.w, PORTRAIT.h, PORTRAIT.header);
+    const flipped = cameraWith(PORTRAIT, { x: fit.offsetX, y: -fit.offsetY });
+    const p = project(flipped, PORTRAIT, [0, 0, 0]);
+    /* Twice the offset, within a pixel: 2 x 23.96 = 47.9. */
+    expect(Math.abs(p.y - fit.rect.cy)).toBeGreaterThan(2 * Math.abs(fit.offsetY) - 1);
+    /* ...and the product does not ship the flipped sign. The inequality is the measured size of the error. */
+    const right = project(cameraWith(PORTRAIT, { x: fit.offsetX, y: fit.offsetY }), PORTRAIT, [0, 0, 0]);
+    expect(Math.abs(right.y - fit.rect.cy)).toBeLessThanOrEqual(1);
+  });
+
+  it('the offset is the layout centre expressed the way setViewOffset wants it', () => {
+    const fit = computeMobileFit('portrait', PORTRAIT.w, PORTRAIT.h, PORTRAIT.header);
+    expect(fit.offsetX).toBeCloseTo(PORTRAIT.w / 2 - fit.rect.cx, 12);
+    expect(fit.offsetY).toBeCloseTo(PORTRAIT.h / 2 - fit.rect.cy, 12);
+    /* And the helper agrees with the fit, so nothing re-derives it. */
+    expect(viewOffsetFor(PORTRAIT.w, PORTRAIT.h, fit.rect.cx, fit.rect.cy)).toEqual({
+      x: fit.offsetX,
+      y: fit.offsetY,
+    });
   });
 });
 
-describe('the free rect and the fit', () => {
-  it('is full width and the top 55 percent', () => {
-    const frame = computeMobileFrame(W, H);
-    expect(frame.free.w).toBeCloseTo(W, 6);
-    expect(frame.free.h).toBeCloseTo(MOBILE_FREE_TOP_FRACTION * H, 6);
-    expect(frame.free.x).toBeCloseTo(0, 6);
-    expect(frame.free.y).toBeCloseTo(0, 6);
+describe('the fit', () => {
+  it('uses the LARGER of the pin envelope and the atmosphere shell', () => {
+    expect(MOBILE_ENVELOPE).toBeCloseTo(Math.max(PIN_ENVELOPE, SHELLS.atmosphere), 12);
+    /* Today the pin envelope wins; asserted so a retune of either number shows up as a diff here. */
+    expect(MOBILE_ENVELOPE).toBeCloseTo(1.10242, 5);
   });
 
-  it('reports dMax as the binding constraint at 390 x 844', () => {
-    /*
-     * The prompt asks this to be reported rather than assumed. `dContain` 7.1726 needs a camera further out
-     * than `<OrbitControls maxDistance>` 5 allows, so the disc ends up larger than `rMax` — the same honest
-     * clamp the 1024x768 desktop case already documents.
-     */
-    const frame = computeMobileFrame(W, H);
-    expect(frame.dContain).toBeCloseTo(7.172611, 5);
-    expect(frame.dTarget).toBe(MAX_DISTANCE);
-    expect(frame.clampedByMax).toBe(true);
-  });
-
-  it('clamps on EVERY mobile viewport probed, not only at 390 x 844', () => {
-    /*
-     * Measured, not assumed (`.cache/mob/probe-fit.mjs`): `dContain` is 5.79 to 7.85 across 375x667,
-     * 390x844, 390x926, 360x740, 667x375, 1024x768, 1200x600, 1920x1080 and 768x1024, and the asymptote is
-     * 6.8167 as the viewport widens without bound — every one above the ceiling of 5. So this is not a quirk
-     * of the spec viewport: on a phone the fit ALWAYS exceeds `<OrbitControls maxDistance>` and the ceiling
-     * always wins.
-     *
-     * That is reported as a known limit rather than fixed, because raising `maxDistance` is a
-     * `<GlobeScene>` change and the step's scope excludes desktop changes.
-     */
-    const probe = [
-      [375, 667],
-      [390, 844],
-      [390, 926],
-      [360, 740],
-      [667, 375],
-      [1024, 768],
-      [768, 1024],
-    ] as const;
-    for (const [w, h] of probe) {
-      const frame = computeMobileFrame(w, h);
-      expect(frame.clampedByMax, `${w}x${h}`).toBe(true);
-      expect(frame.dTarget, `${w}x${h}`).toBe(MAX_DISTANCE);
-      expect(frame.dContain, `${w}x${h}`).toBeGreaterThan(MAX_DISTANCE);
+  it('dFit equals dContain: no ceiling clamp on mobile', () => {
+    for (const vp of [PORTRAIT, LANDSCAPE, { w: 320, h: 568, header: 104 }, { w: 960, h: 1440, header: 104 }]) {
+      const mode = resolveLayoutMode(vp.w, vp.h);
+      const fit = computeMobileFit(mode, vp.w, vp.h, vp.header);
+      expect(fit.dFit, `${vp.w}x${vp.h}`).toBeCloseTo(fit.dContain, 12);
     }
   });
 
-  it('consequently draws the disc LARGER than rMax at 390 x 844, which is the limit to report', () => {
-    /*
-     * The size of the compromise, as a number: the free rect allows an `rMax` of 171.0 px radius, and the
-     * ceiling of 5 renders a 248.5 px radius — so the globe spills 77.5 px past the free rect on each side
-     * and its 497 px diameter is wider than the 390 px screen. Recorded in `docs/MOBILE.md`, not fixed.
-     */
-    const frame = computeMobileFrame(W, H);
-    const focalPx = H / 2 / Math.tan((FOV_DEG * Math.PI) / 180 / 2);
-    const rendered = Math.tan(Math.asin(1.10242 / MAX_DISTANCE)) * focalPx;
-
-    expect(frame.rMax).toBeCloseTo(171, 6);
-    expect(rendered).toBeCloseTo(248.5, 1);
-    expect(rendered).toBeGreaterThan(frame.rMax);
-    expect(frame.rMax - rendered).toBeCloseTo(-77.5, 1);
-  });
-
-  it('offsets DOWN in the positive direction, which is the sign `setViewOffset` takes', () => {
-    const frame = computeMobileFrame(W, H);
-    /* The centre is above the middle, so `dy` (the reported shift) is negative and the window offset is its
-     * negation: +0.225 * H. */
-    expect(frame.dy).toBeCloseTo(-0.225 * H, 6);
-    expect(frame.viewOffsetY).toBeCloseTo(0.225 * H, 6);
-    expect(frame.viewOffsetY).toBeGreaterThan(0);
-  });
-
-  it('keeps the view offset independent of the viewport height, as a FRACTION', () => {
-    for (const height of [600, 667, 844, 926, 1200]) {
-      const frame = computeMobileFrame(390, height);
-      expect(frame.viewOffsetY / height).toBeCloseTo(0.225, 9);
+  it('dMaxMode is max(5, 1.25 * dContain), so zoom-out headroom is always at least 1.2 * dFit', () => {
+    for (const vp of [PORTRAIT, LANDSCAPE, { w: 320, h: 568, header: 104 }, { w: 412, h: 924, header: 104 }]) {
+      const mode = resolveLayoutMode(vp.w, vp.h);
+      const fit = computeMobileFit(mode, vp.w, vp.h, vp.header);
+      expect(fit.dMaxMode, `${vp.w}x${vp.h}`).toBeCloseTo(Math.max(MAX_DISTANCE, 1.25 * fit.dContain), 12);
+      expect(fit.dMaxMode).toBeGreaterThanOrEqual(1.2 * fit.dFit);
+      /* And the floor: the desktop ceiling is never lowered. */
+      expect(fit.dMaxMode).toBeGreaterThanOrEqual(MAX_DISTANCE);
     }
   });
 
-  it('degrades to a degenerate frame rather than NaN for a zero viewport', () => {
-    const frame = computeMobileFrame(0, 0);
-    expect(frame.degenerate).toBe(true);
-    expect(Number.isFinite(frame.viewOffsetY)).toBe(true);
-    expect(Number.isFinite(frame.dTarget)).toBe(true);
+  it('the disc fits the radius budget at the fitted distance', () => {
+    /*
+     * The inverse check of the d_contain law: at `dFit`, a sphere of radius `MOBILE_ENVELOPE` must have a
+     * silhouette radius no larger than `Rb`. This is the arithmetic the LM3 case then measures in pixels.
+     */
+    for (const vp of [PORTRAIT, LANDSCAPE]) {
+      const mode = resolveLayoutMode(vp.w, vp.h);
+      const fit = computeMobileFit(mode, vp.w, vp.h, vp.header);
+      const focalPx = vp.h / 2 / Math.tan((FOV_DEG * Math.PI) / 180 / 2);
+      const silhouette = (focalPx * MOBILE_ENVELOPE) / Math.sqrt(fit.dFit ** 2 - MOBILE_ENVELOPE ** 2);
+      expect(silhouette, `${vp.w}x${vp.h}`).toBeLessThanOrEqual(fit.rect.radiusBudget + 1e-9);
+    }
+  });
+
+  it('the rect it reports is the layout law’s rect, not a second computation', () => {
+    const fit = computeMobileFit('portrait', PORTRAIT.w, PORTRAIT.h, PORTRAIT.header);
+    expect(fit.rect).toEqual(computeFreeRect('portrait', PORTRAIT.w, PORTRAIT.h, PORTRAIT.header));
+  });
+
+  it('a header taller than the viewport floors the radius budget rather than producing a negative one', () => {
+    /*
+     * `computeFreeRect` clamps the header's bottom to the viewport and floors the budget at 40 px, so this
+     * pathological input yields a usable — if tiny — disc rather than a negative radius or a NaN distance. The fit
+     * is NOT reported degenerate, because the rect never actually collapses: that is the floor doing its job.
+     */
+    const fit = computeMobileFit('portrait', 390, 844, 5000);
+    expect(fit.rect.radiusBudget).toBe(40);
+    expect(fit.degenerate).toBe(false);
+    expect(Number.isFinite(fit.dFit)).toBe(true);
+    /* And with a 40 px budget the camera has to sit far back — that is the honest consequence. */
+    expect(fit.dFit).toBeGreaterThan(D0);
+  });
+
+  it('a zero-size viewport reports the shipped distance rather than NaN', () => {
+    const fit = computeMobileFit('portrait', 0, 0, 0);
+    expect(Number.isFinite(fit.dContain)).toBe(true);
+    expect(Number.isFinite(fit.dFit)).toBe(true);
+    expect(Number.isFinite(fit.dMaxMode)).toBe(true);
   });
 });

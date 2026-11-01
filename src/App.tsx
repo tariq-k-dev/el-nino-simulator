@@ -1,7 +1,8 @@
-import { useCallback, useState, useSyncExternalStore } from 'react';
+import { useCallback, useEffect, useState, useSyncExternalStore } from 'react';
 import { GlobeScene } from '@/scene/GlobeScene';
 import { MobileShell } from '@/mobile/MobileShell';
-import { getLayoutMode, subscribeLayoutMode } from '@/scene/viewStore';
+import { getLayoutSignal, startLayoutObserver, subscribeLayout } from '@/scene/viewStore';
+import { isMobileMode } from '@/mobile/layoutMath';
 import { Header } from '@/components/Header';
 import { ControlDeck } from '@/components/ControlDeck';
 import { RegionDrawer } from '@/components/RegionDrawer';
@@ -25,15 +26,20 @@ export default function App() {
   } = useScenario();
 
   /**
-   * Which layout to render.
+   * Which layout to render, and the two numbers the mobile free rectangle starts from.
    *
    * `useSyncExternalStore` on the same module-scope lane `CameraDirector` reads non-reactively inside its frame
-   * loop. One listener (started by the director), one value, two readers: the camera and the DOM shell can
-   * therefore never disagree about which layout is mounted, which is the property the M1 case checks at 767,
+   * loop. One listener, one value, three readers (this shell, the director, the probe): the camera and the DOM
+   * can therefore never disagree about which layout is mounted, which is the property the M1 case checks at 767,
    * 768 and 1024.
+   *
+   * The observer is started HERE rather than only by the director because `data-layout-mode` has to be right on
+   * the first paint, and `startLayoutObserver` reads synchronously. `App` mounts before the scene does, so this
+   * is the first component that can start it. It is ref-counted, so the director's own call joins this one.
    */
-  const layoutMode = useSyncExternalStore(subscribeLayoutMode, getLayoutMode, getLayoutMode);
-  const isMobile = layoutMode === 'mobile';
+  useEffect(() => startLayoutObserver(), []);
+  const layout = useSyncExternalStore(subscribeLayout, getLayoutSignal, getLayoutSignal);
+  const isMobile = isMobileMode(layout.mode);
 
   const [activeRegion, setActiveRegion] = useState<RegionId | null>(null);
   const [focusNonce, setFocusNonce] = useState(0);
@@ -84,7 +90,11 @@ export default function App() {
   const timeline = analytics.timeline.map((p) => p.anomaly);
 
   return (
-    <div className="relative h-full w-full overflow-hidden bg-void-950">
+    <div
+      className="relative h-full w-full overflow-hidden bg-void-950"
+      /* The mode as an attribute, so a spec (and a reader of the DOM) can see what the camera sees. */
+      data-layout-mode={layout.mode}
+    >
       {/* Ambient depth: two fixed radial washes behind the canvas */}
       <div className="pointer-events-none absolute inset-0 z-0">
         <div
@@ -240,6 +250,9 @@ export default function App() {
       */}
       {isMobile ? (
         <MobileShell
+          mode={layout.mode}
+          viewportW={layout.width}
+          headerBottom={layout.headerBottom}
           scenario={scenario}
           metrics={analytics.metrics}
           analytics={analytics}
@@ -249,7 +262,9 @@ export default function App() {
           onSelect={selectRegion}
           onClearSelection={clearSelection}
           onScenarioChange={setScenario}
-          onResetScenario={reset}
+          exporting={exporting}
+          onToggleUnits={toggleUnits}
+          onExport={handleExport}
         />
       ) : null}
 

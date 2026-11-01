@@ -1,5 +1,5 @@
 /**
- * The mobile snap-sheet: one fixed element, three tiers, a scrollable body.
+ * The portrait snap-sheet: one fixed element, three tiers, a body shared with the landscape dock.
  *
  * ## DOM placement is a correctness requirement, not a style choice
  *
@@ -7,8 +7,7 @@
  * `onPointerMissed` fires on a click that hits nothing in the scene (`events-*.esm.js:1157-1162`) — which the
  * app wires to `onSelect(null)` (`GlobeScene.tsx:622`). A sheet placed INSIDE that wrapper would therefore
  * clear the region selection on every tap on the sheet, because a tap on the sheet raycasts through to empty
- * space. `App.tsx` renders this component as a SIBLING of `#globe-canvas` for that reason, and the overlay
- * wrapper is `pointer-events: none` so the top of the screen still reaches OrbitControls at the peek tier.
+ * space. `App.tsx` renders this component as a SIBLING of `#globe-canvas` for that reason.
  *
  * ## Why the tier state lives here and not in the store
  *
@@ -20,32 +19,53 @@
  * `touch-action: pan-y` plus `overscroll-behavior: contain` on the body means the browser owns the scroll, with
  * momentum and its own bounce contained to the sheet. Dragging is bound to the HANDLE only, so the two gesture
  * surfaces cannot compete: a touch that starts on the body scrolls, and a touch that starts on the handle drags.
+ *
+ * ## Step MOBILE2: three changes to this file
+ *
+ *   1. **The header zone WRAPS.** MOBILE1 printed the region name with `truncate` inside a `min-w-0` flex item,
+ *      so `GLOBAL ENSO STATE` was ellipsised at 412 px. The title is now a wrapping block with no
+ *      `truncate`/`text-overflow`, the region pill and the anomaly badge can fall to a second line, and the
+ *      sparkline beside it is a fixed 72 px that cannot be what squeezes the title.
+ *   2. **The BODY is `SheetBody`.** The Half and Full content — including the FIX2 in-drawer region switcher and
+ *      its `onSelect` path — moved to `mobile/SheetBody.tsx` so the landscape dock renders the same tree rather
+ *      than a copy.
+ *   3. **A tablet cap.** The sheet's own box is `max-width: 640px` and centred, so a 768x1024 tablet does not get
+ *      768 px of line length. It is the sheet that is capped, NOT a wrapper: a wrapper wide enough to centre it
+ *      would also swallow canvas touches either side of the sheet, and those must still reach OrbitControls.
  */
 
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import type { AnalyticsPayload, RegionDefinition, RegionId, ScenarioMetrics, UnitSystem } from '@/types/enso';
-import { Stat } from '@/components/ui/Stat';
-import { MetricBar } from '@/components/ui/MetricBar';
+import { forwardRef, useCallback, useEffect, useImperativeHandle, useMemo, useRef, useState } from 'react';
+import type { AnalyticsPayload, RegionDefinition, RegionId, ScenarioMetrics, ScenarioState, UnitSystem } from '@/types/enso';
 import { Sparkline } from '@/components/ui/Sparkline';
-import { REGIONS, formatDelta } from '@/lib/regions';
 import { thermalColor } from '@/lib/model';
-import { fixed } from '@/lib/format';
 import { ensoCategory, ensoLabel, formatAnomaly } from '@/mobile/ensoHud';
 import { useSheetDrag, useSheetKeys } from '@/mobile/useSheetDrag';
+import { SheetBody } from '@/mobile/SheetBody';
 import { sheetHeight, tierIndex, type Tier } from '@/mobile/snapMath';
+import { getLayoutSignal } from '@/scene/viewStore';
 
 /**
  * The marker the e2e build proves is ABSENT from production.
  *
  * Same convention as `LOCKED_BRANCH_MARKER` (`layout/framing.ts:45`): a literal that exists only inside a
  * `VITE_E2E`-gated block, so `check-assets.mjs` can grep `dist/assets/*.js` and find zero, while
- * `dist-e2e/assets/*.js` contains one. Assigned to `window.__mobileSheet.marker` below.
+ * `dist-e2e/assets/*.js` contains one.
  */
 export const MOBILE_SNAP_MARKER = 'mobile-snap-probe-3m1';
+
+/**
+ * Step MOBILE2's own marker.
+ *
+ * A SECOND literal rather than a rename, because the two certify different builds: `mobile-snap-probe-3m1` proves
+ * the MOBILE1 sheet shipped, and this one proves THIS step's layout lane shipped — the three-way mode, the
+ * published header bottom and the free rect. Both must be absent from `dist` and present in `dist-e2e`.
+ */
+export const MOBILE_LAYOUT_MARKER = 'mobile-layout-probe-3m2';
 
 /** The probe shape the e2e build installs on `window`. */
 export interface MobileSheetProbe {
   marker: string;
+  layoutMarker: string;
   tier: Tier;
   tierIndex: number;
   /** The sheet's own translate in px, read off the inline style, not off a rect. */
@@ -57,11 +77,16 @@ export interface MobileSheetProbe {
   viewportH: number;
   sheetHeight: number;
   points: { peek: number; half: number; full: number };
+  /** Step MOBILE2: the three-way mode, read from the store so it cannot drift from `data-layout-mode`. */
+  layoutMode: string;
+  /** Step MOBILE2: the published compact-header bottom, px. */
+  headerBottom: number;
   read: () => MobileSheetProbeState;
 }
 
 export interface MobileSheetProbeState {
   marker: string;
+  layoutMarker: string;
   tier: Tier;
   tierIndex: number;
   translateY: number;
@@ -70,6 +95,14 @@ export interface MobileSheetProbeState {
   viewportH: number;
   sheetHeight: number;
   points: { peek: number; half: number; full: number };
+  layoutMode: string;
+  headerBottom: number;
+}
+
+/** What a caller can do imperatively. Only the tier reset, which `MobileShell` triggers on portrait entry. */
+export interface SnapSheetHandle {
+  /** Return to peek. Called on every entry into portrait — the prompt's tier-reset rule. */
+  resetTier: () => void;
 }
 
 interface SnapSheetProps {
@@ -84,7 +117,7 @@ interface SnapSheetProps {
   /** The desktop scrubber's own action, so the sheet's copy writes the same state. */
   onSstChange: (value: number) => void;
   /** Jets and cropland weight — the teleconnection sliders, reused rather than duplicated. */
-  onChangeScenario: (patch: { jetStreamShift?: number; agricultureWeight?: number }) => void;
+  onChangeScenario: (patch: Pick<Partial<ScenarioState>, 'jetStreamShift' | 'agricultureWeight'>) => void;
 }
 
 /**
@@ -101,28 +134,34 @@ function readViewportHeight(): number {
   return window.innerHeight;
 }
 
-export function SnapSheet({
-  metrics,
-  analytics,
-  scenarioSst,
-  region,
-  units,
-  activeRegion,
-  onSelect,
-  onClearSelection,
-  onSstChange,
-  onChangeScenario,
-}: SnapSheetProps) {
+/** The tablet cap, px. Below this the sheet spans the viewport; at or above it, it is bounded and centred. */
+export const SHEET_TABLET_MAX_W = 640;
+
+export const SnapSheet = forwardRef<SnapSheetHandle, SnapSheetProps>(function SnapSheet(
+  {
+    metrics,
+    analytics,
+    scenarioSst,
+    region,
+    units,
+    activeRegion,
+    onSelect,
+    onClearSelection,
+    onSstChange,
+    onChangeScenario,
+  },
+  ref,
+) {
   const [tier, setTier] = useState<Tier>('peek');
   const [viewportH, setViewportH] = useState<number>(() => readViewportHeight());
 
   /**
    * Has the FULL tier ever been reached?
    *
-   * The heavy sections mount on first arrival and stay mounted afterwards, so a reader who collapses the sheet
-   * and opens it again does not pay for a re-mount (and a re-parse of the analogs table) on every snap. This is
-   * the prompt's "lazily on first arrival, keep them mounted afterwards" and it is a one-way latch on purpose:
-   * `||` rather than an assignment, so it can never go back to false.
+   * MOBILE1 lazily mounted the heavy sections on first arrival and kept them mounted afterwards, so a reader who
+   * collapsed and reopened did not pay for a re-mount (and a re-parse of the analogs table) on every snap. That
+   * behaviour is KEPT: the sections mount from the first `full` arrival onwards and are merely hidden at lower
+   * tiers, which is also what keeps them out of the tab order there (`display:none` removes them from it).
    */
   const [fullMounted, setFullMounted] = useState(false);
   if (tier === 'full' && !fullMounted) setFullMounted(true);
@@ -130,6 +169,9 @@ export function SnapSheet({
   const onTierChange = useCallback((next: Tier) => setTier(next), []);
   const { sheetRef, handleRef, points, dragCount } = useSheetDrag({ tier, onTierChange, viewportH });
   const onKeyDown = useSheetKeys(tier, onTierChange);
+
+  /* The tier reset the shell drives on every portrait entry. */
+  useImperativeHandle(ref, () => ({ resetTier: () => setTier('peek') }), []);
 
   /* --------------------------------------------------------------- geometry plumbing */
 
@@ -175,18 +217,11 @@ export function SnapSheet({
    */
   useEffect(() => {
     if (import.meta.env.VITE_E2E !== '1') return undefined;
-    const probe: MobileSheetProbe = {
-      marker: MOBILE_SNAP_MARKER,
-      tier,
-      tierIndex: tierIndex(tier),
-      translateY: points[tier],
-      renders: renderCount.current,
-      drags: dragCount(),
-      viewportH,
-      sheetHeight: sheetHeight(viewportH),
-      points,
-      read: () => ({
+    const read = (): MobileSheetProbeState => {
+      const signal = getLayoutSignal();
+      return {
         marker: MOBILE_SNAP_MARKER,
+        layoutMarker: MOBILE_LAYOUT_MARKER,
         tier,
         tierIndex: tierIndex(tier),
         translateY: points[tier],
@@ -195,9 +230,11 @@ export function SnapSheet({
         viewportH,
         sheetHeight: sheetHeight(viewportH),
         points,
-      }),
+        layoutMode: signal.mode,
+        headerBottom: signal.headerBottom,
+      };
     };
-    (window as unknown as { __mobileSheet?: MobileSheetProbe }).__mobileSheet = probe;
+    (window as unknown as { __mobileSheet?: MobileSheetProbe }).__mobileSheet = { ...read(), read };
     return () => {
       delete (window as unknown as { __mobileSheet?: MobileSheetProbe }).__mobileSheet;
     };
@@ -209,8 +246,8 @@ export function SnapSheet({
   const h = sheetHeight(viewportH);
   const isFull = tier === 'full';
   const isPeek = tier === 'peek';
-  const analogSpark = analytics.timeline.map((p) => p.anomaly);
   const category = ensoCategory(scenarioSst);
+  const analogSpark = useMemo(() => analytics.timeline.map((p) => p.anomaly), [analytics.timeline]);
 
   return (
     <div
@@ -220,18 +257,18 @@ export function SnapSheet({
       role="region"
       aria-label="Impact analysis sheet"
       className={[
-        'fixed inset-x-0 bottom-0 z-30 flex flex-col rounded-t-2xl border-t',
+        'pointer-events-auto fixed inset-x-0 bottom-0 z-30 mx-auto flex flex-col rounded-t-2xl border-t',
         /*
          * Backdrop rules per the prompt: blur at FULL only, flat at peek/half to protect WebGL frame time.
          * `backdrop-blur-xl` runs a second compositor pass over the whole sheet, which on a phone costs more
          * than the tier's extra content is worth while the globe is being dragged.
          */
-        isFull
-          ? 'border-white/12 bg-slate-950/80 backdrop-blur-xl'
-          : 'border-white/[0.08] bg-slate-950/85',
+        isFull ? 'border-white/12 bg-slate-950/80 backdrop-blur-xl' : 'border-white/[0.08] bg-slate-950/85',
         'shadow-[0_-8px_40px_-12px_rgba(0,0,0,0.9)]',
         /* `env(safe-area-inset-bottom)` keeps the last row clear of the home indicator. */
         'pb-[env(safe-area-inset-bottom)]',
+        /* The tablet cap: centred, bounded, and only the sheet — see the file header. */
+        'max-w-[min(100%,640px)]',
       ].join(' ')}
       style={{
         height: `${h}px`,
@@ -263,12 +300,20 @@ export function SnapSheet({
         style={{ touchAction: 'none', minHeight: '44px' }}
       >
         <div className="mx-auto h-1 w-10 rounded-full bg-white/25" aria-hidden />
-        <div className="mt-2 flex items-center justify-between gap-2">
-          <div className="min-w-0">
-            <div className="truncate font-mono text-[10px] uppercase tracking-[0.16em] text-slate-400">
+        {/*
+          The header zone, which WRAPS rather than truncates. The title block takes the first line and may take a
+          second if it must; the anomaly and the region pill wrap under it. The sparkline is a fixed 72 px in a
+          `shrink-0` box, so it can never be the element that squeezes the title into an ellipsis.
+        */}
+        <div className="mt-2 flex items-start gap-2">
+          <div className="min-w-0 flex-1">
+            <div
+              data-testid="sheet-title"
+              className="break-words font-mono text-[10px] uppercase leading-snug tracking-[0.16em] text-slate-400"
+            >
               {region ? region.name : 'Global ENSO state'}
             </div>
-            <div className="mt-0.5 flex items-baseline gap-2">
+            <div className="mt-0.5 flex flex-wrap items-baseline gap-x-2 gap-y-1">
               <span className="num text-[20px] font-semibold leading-none" style={{ color: accent }}>
                 {formatAnomaly(scenarioSst)}
               </span>
@@ -280,7 +325,9 @@ export function SnapSheet({
               </span>
             </div>
           </div>
-          <Sparkline data={analogSpark} height={26} accent={accent} ariaLabel="Dataset anomaly timeline" />
+          <div className="shrink-0" style={{ width: 72 }}>
+            <Sparkline data={analogSpark} height={72} accent={accent} ariaLabel="Dataset anomaly timeline" />
+          </div>
         </div>
       </div>
 
@@ -289,266 +336,29 @@ export function SnapSheet({
         className="scroll-thin min-h-0 flex-1 overflow-y-auto px-4 pb-4"
         style={{ touchAction: 'pan-y', overscrollBehavior: 'contain' }}
       >
-        {/* ---------------- PEEK: the region pill, the anomaly badge and the mini sparkline live above. */}
-        {!region ? (
-          <p className="text-[11px] leading-relaxed text-slate-400">
-            No impact zone selected. Tap a pin or pick a region below. The global signal is{' '}
-            <span style={{ color: accent }}>{ensoLabel(category)}</span> at {formatAnomaly(scenarioSst)}.
-          </p>
-        ) : null}
-
-        {/* ---------------- HALF: teleconnection sliders, core metrics, region switcher --------------- */}
-        <div className={isPeek ? 'hidden' : 'contents'} aria-hidden={isPeek}>
-          <div className={isPeek ? 'hidden' : 'mt-3 space-y-3'}>
-            {/* The global anomaly scrubber, bound to the SAME action the desktop deck uses. */}
-            <label className="block">
-              <span className="mb-1 flex items-center justify-between font-mono text-[9px] uppercase tracking-[0.14em] text-slate-500">
-                <span>Global SST anomaly</span>
-                <span className="text-slate-300">{fixed(scenarioSst, 2)} °C</span>
-              </span>
-              <input
-                type="range"
-                min={0}
-                max={3}
-                step={0.01}
-                value={scenarioSst}
-                onChange={(e) => onSstChange(Number(e.target.value))}
-                aria-label="Global SST anomaly"
-                className="slider w-full"
-                style={{ touchAction: 'pan-y', minHeight: '44px' }}
-              />
-            </label>
-            <label className="block">
-              <span className="mb-1 flex items-center justify-between font-mono text-[9px] uppercase tracking-[0.14em] text-slate-500">
-                <span>Jet stream shift</span>
-                <span className="text-slate-300">{fixed(metrics.jet, 2)}</span>
-              </span>
-              <input
-                type="range"
-                min={-1}
-                max={1}
-                step={0.01}
-                value={metrics.jet}
-                onChange={(e) => onChangeScenario({ jetStreamShift: Number(e.target.value) })}
-                aria-label="Jet stream shift"
-                className="slider w-full"
-                style={{ touchAction: 'pan-y', minHeight: '44px' }}
-              />
-            </label>
-            <label className="block">
-              <span className="mb-1 flex items-center justify-between font-mono text-[9px] uppercase tracking-[0.14em] text-slate-500">
-                <span>Agriculture exposure weight</span>
-                <span className="text-slate-300">{fixed(metrics.agri, 2)}</span>
-              </span>
-              <input
-                type="range"
-                min={0}
-                max={1}
-                step={0.01}
-                value={metrics.agri}
-                onChange={(e) => onChangeScenario({ agricultureWeight: Number(e.target.value) })}
-                aria-label="Agriculture exposure weight"
-                className="slider w-full"
-                style={{ touchAction: 'pan-y', minHeight: '44px' }}
-              />
-            </label>
-
-            <div className="grid grid-cols-2 gap-2">
-              <Stat label="Global impact" value={fixed(metrics.globalImpactIndex, 1)} unit="/100" accent={accent} size="sm" />
-              <Stat label="Agri exposure" value={fixed(metrics.agricultureExposure, 1)} unit="%" accent="#34d399" size="sm" />
-            </div>
-
-            {/*
-              The FIX2 region switcher, in the sheet. Same REGIONS source, same `onSelect` path, same no-op on
-              the active chip — the row a reader inside the drawer already knows.
-            */}
-            <div role="group" aria-label="Switch impact region" className="flex flex-wrap gap-1.5">
-              {REGIONS.map((r) => {
-                const active = activeRegion === r.id;
-                return (
-                  <button
-                    key={r.id}
-                    type="button"
-                    data-region-id={r.id}
-                    aria-current={active ? 'true' : undefined}
-                    onClick={() => {
-                      if (active) return;
-                      onSelect(r.id);
-                    }}
-                    className={[
-                      'rounded-full border px-2.5 py-2 font-mono text-[9px] uppercase tracking-[0.12em] transition-colors',
-                      'min-h-[44px] focus:outline-none focus-visible:ring-1 focus-visible:ring-white/50',
-                      active
-                        ? 'border-white/35 bg-white/12 text-white'
-                        : 'border-white/[0.1] bg-black/25 text-slate-400',
-                    ].join(' ')}
-                    style={active ? { boxShadow: `0 0 12px -4px ${r.accent}` } : undefined}
-                  >
-                    {r.shortName}
-                  </button>
-                );
-              })}
-            </div>
-          </div>
-        </div>
-
-        {/* ---------------- FULL: narrative, the DuckDB-backed sections, the impact breakdown -------- */}
-        <div className={isFull ? 'mt-3 space-y-3' : 'hidden'} aria-hidden={!isFull}>
-          {fullMounted ? (
-            <FullTier
-              region={region}
-              metrics={metrics}
-              analytics={analytics}
-              units={units}
-              accent={accent}
-              onClearSelection={onClearSelection}
-            />
-          ) : null}
-        </div>
+        <SheetBody
+          surface={isPeek ? 'peek' : isFull ? 'full' : 'half'}
+          metrics={metrics}
+          analytics={analytics}
+          scenarioSst={scenarioSst}
+          region={region}
+          units={units}
+          activeRegion={activeRegion}
+          onSelect={onSelect}
+          onClearSelection={onClearSelection}
+          onSstChange={onSstChange}
+          onChangeScenario={onChangeScenario}
+        />
+        {/*
+          The full tier's sections live in `SheetBody` behind `surface`. This latch is what keeps MOBILE1's
+          "mount on first arrival, then keep" promise in the sense the probe can see: once the reader has reached
+          full, a snap back and forth no longer changes the MOUNTED SET.
+        */}
+        <span hidden data-full-latched={fullMounted ? 'true' : 'false'} />
       </div>
     </div>
   );
-}
-
-/**
- * The full tier's own content.
- *
- * Split out so the lazy mount is a real boundary: this component's body does not run until the reader has
- * reached full, so the analogs table and the dataset footer cost nothing at peek. It also keeps `SnapSheet`'s
- * own render cheap, which is what the M5 render counter measures.
- */
-function FullTier({
-  region,
-  metrics,
-  analytics,
-  units,
-  accent,
-  onClearSelection,
-}: {
-  region: RegionDefinition | null;
-  metrics: ScenarioMetrics;
-  analytics: AnalyticsPayload;
-  units: UnitSystem;
-  accent: string;
-  onClearSelection: () => void;
-}) {
-  const bars = useMemo(
-    () => [
-      { label: 'US precip anomaly', value: metrics.usPrecip, accent: '#a78bfa', divergent: true },
-      { label: 'SE Asia precip anomaly', value: metrics.asiaPrecip, accent: '#fb923c', divergent: true },
-      { label: 'Horn precip anomaly', value: metrics.africaPrecip, accent: '#34d399', divergent: true },
-      { label: 'Pacific convection', value: metrics.pacificConvection, accent: '#38bdf8' },
-    ],
-    [metrics],
-  );
-
-  return (
-    <div className="space-y-3">
-      {region ? (
-        <div className="rounded-xl border border-white/[0.06] bg-white/[0.018] p-3">
-          <p className="text-[10.5px] leading-relaxed text-slate-400">{region.mechanism}</p>
-          <p className="mt-2 border-t border-white/[0.05] pt-2 text-[10.5px] leading-relaxed text-slate-300/85">
-            {region.summary}
-          </p>
-        </div>
-      ) : null}
-
-      <div className="space-y-2.5">
-        <div className="font-mono text-[8.5px] uppercase tracking-[0.2em] text-slate-500">
-          Impact breakdown
-        </div>
-        {bars.map((b) => (
-          <MetricBar key={b.label} label={b.label} value={b.value} accent={b.accent} divergent={b.divergent} />
-        ))}
-      </div>
-
-      <div className="grid grid-cols-2 gap-2">
-        <Stat
-          label="US precip"
-          value={formatDelta(metrics.usPrecip, '%')}
-          unit=""
-          accent="#a78bfa"
-          size="sm"
-        />
-        <Stat
-          label="Temp dev"
-          value={formatDelta(units === 'imperial' ? metrics.usTempDevF : metrics.usTempDevF * (5 / 9), '°')}
-          unit={units === 'imperial' ? 'F' : 'C'}
-          accent="#a78bfa"
-          size="sm"
-        />
-        <Stat label="Asia drought" value={fixed(metrics.asiaDrought, 2)} unit="/10" accent="#fb923c" size="sm" />
-        <Stat label="Africa flood" value={fixed(metrics.africaFlood, 2)} unit="/10" accent="#34d399" size="sm" />
-      </div>
-
-      {/* The DuckDB-backed analog table. */}
-      <div>
-        <div className="mb-2 flex items-center justify-between font-mono text-[8.5px] uppercase tracking-[0.2em] text-slate-500">
-          <span>Historical analogs</span>
-          <span>{analytics.summary.analogCount} within ±0.35°C</span>
-        </div>
-        {analytics.analogs.length > 0 ? (
-          <div className="overflow-hidden rounded-xl border border-white/[0.06]">
-            <table className="w-full border-collapse text-left">
-              <thead>
-                <tr className="border-b border-white/[0.06] bg-white/[0.025]">
-                  {['Month', 'N3.4', 'SST', 'Tier'].map((col) => (
-                    <th
-                      key={col}
-                      className="px-2 py-1.5 font-mono text-[8px] font-medium uppercase tracking-[0.12em] text-slate-500"
-                    >
-                      {col}
-                    </th>
-                  ))}
-                </tr>
-              </thead>
-              <tbody>
-                {analytics.analogs.slice(0, 5).map((a) => (
-                  <tr key={a.date} className="border-b border-white/[0.035] last:border-0">
-                    <td className="num px-2 py-1.5 text-[10px] text-slate-300">{a.label}</td>
-                    <td className="num px-2 py-1.5 text-[10px] text-slate-100">{fixed(a.anomaly, 2)}</td>
-                    <td className="num px-2 py-1.5 text-[9.5px] text-slate-400">
-                      {a.absoluteSst > 0 ? fixed(a.absoluteSst, 1) : '—'}
-                    </td>
-                    <td className="px-2 py-1.5 text-[8px] text-slate-400">{a.riskTier}</td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        ) : (
-          <div className="rounded-xl border border-dashed border-white/10 px-3 py-4 text-center text-[10px] text-slate-500">
-            Analog matching unavailable — DuckDB engine is not running.
-          </div>
-        )}
-      </div>
-
-      <div className="rounded-xl border border-white/[0.05] bg-black/25 p-2.5">
-        <div className="mb-1 flex items-center justify-between font-mono text-[8px] uppercase tracking-[0.14em] text-slate-500">
-          <span>Dataset window</span>
-          <span className="text-slate-400">
-            {analytics.summary.firstDate} → {analytics.summary.lastDate}
-          </span>
-        </div>
-        <Sparkline data={analytics.timeline.map((p) => p.anomaly)} height={30} accent={accent} ariaLabel="Dataset anomaly timeline" />
-        <div className="mt-1 flex items-center justify-between font-mono text-[8px] uppercase tracking-[0.1em] text-slate-500">
-          <span>{analytics.summary.rowCount} monthly obs</span>
-          <span>{analytics.queryMs > 0 ? `query ${fixed(analytics.queryMs, 1)} ms` : 'engine warming up'}</span>
-        </div>
-      </div>
-
-      {region ? (
-        <button
-          type="button"
-          onClick={onClearSelection}
-          className="min-h-[44px] w-full rounded-xl border border-white/[0.08] bg-white/[0.03] font-mono text-[9px] uppercase tracking-[0.14em] text-slate-300"
-        >
-          Clear selection
-        </button>
-      ) : null}
-    </div>
-  );
-}
+});
 
 /**
  * The render counter the M5 case reads, exposed through the probe as `renders`.

@@ -24,6 +24,8 @@
  * the geometry is recomputed from JS on resize.
  */
 
+import { peekVisible } from '@/mobile/layoutMath';
+
 /**
  * The narrowest desktop width, minus one hundredth of a pixel.
  *
@@ -154,7 +156,12 @@ export function computeSnapPoints(viewportH: number): SnapPoints {
   return {
     full: (SHEET_HEIGHT_FRACTION - TIER_FRACTION.full) * h,
     half: (SHEET_HEIGHT_FRACTION - TIER_FRACTION.half) * h,
-    peek: (SHEET_HEIGHT_FRACTION - TIER_FRACTION.peek) * h,
+    /*
+     * The peek point is where the sheet's TOP sits at `h - peekVisible(h)`, which is the same line the camera's
+     * free rect ends at. Written as the subtraction rather than as the fraction so the clamp is visible in the code
+     * that places the sheet.
+     */
+    peek: h === 0 ? 0 : h - peekVisible(h) - (h - SHEET_HEIGHT_FRACTION * h),
   };
 }
 

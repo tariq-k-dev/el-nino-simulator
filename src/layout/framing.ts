@@ -175,9 +175,19 @@ export interface FrameProbeState {
    * required field would force edits in files this step must not touch. A reader defaults it to `'desktop'`,
    * which is the pre-step behaviour and stays true on every existing spec viewport.
    */
-  layoutMode?: 'desktop' | 'mobile';
+  layoutMode?: 'desktop' | 'mobile' | 'portrait' | 'phoneLandscape';
   /** Step 3-MOBILE1: the mobile window offset in px, positive-down as `setViewOffset` takes it. */
   viewOffsetY?: number;
+  /** Step MOBILE2: the horizontal half of the lens shift, positive-right as `setViewOffset` takes it. */
+  viewOffsetX?: number;
+  /** Step MOBILE2: `controls.maxDistance` as the director last wrote it. 5 on desktop. */
+  dMax?: number;
+  /** Step MOBILE2: the fit distance (`dContain` on mobile). */
+  dFit?: number;
+  /** Step MOBILE2: the radius budget `Rb` the fit was computed from. */
+  radiusBudget?: number;
+  /** Step MOBILE2: the published compact-header bottom, px. */
+  headerBottom?: number;
   /** Step 3-MOBILE1: true when `dMax` bound the mobile fit, so the disc is bigger than `rMax` allows. */
   clampedByMax?: boolean;
 }

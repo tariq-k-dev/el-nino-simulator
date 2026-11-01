@@ -35,9 +35,6 @@ const PHONE = { width: 390, height: 844 };
 /** The tier rect tops the step asserts (M4), with its own 2 px tolerance. */
 const TIER_TOPS = { full: 101, half: 439, peek: 692 } as const;
 
-/** `VIEW_CENTER_FRACTION` — restated here on purpose, so the spec does not agree with the product by import. */
-const TARGET_FRACTION = 0.275;
-
 /* ---------------------------------------------------------------------------- setup */
 
 /**
@@ -238,7 +235,13 @@ test.describe('mobile snap sheet', () => {
     await open(page);
 
     await expect(page.locator('[data-mobile-sheet]')).toHaveCount(1);
-    await expect(page.getByTestId('mobile-island')).toHaveCount(1);
+    /*
+     * Step MOBILE2 B: the floating island is GONE and the ENSO chip in the compact header carries the same text.
+     * The `mobile-island` testid must be absent — that is the deletion, asserted rather than assumed.
+     */
+    await expect(page.getByTestId('mobile-island')).toHaveCount(0);
+    await expect(page.getByTestId('enso-chip')).toHaveCount(1);
+    await expect(page.locator('[data-layout-mode="portrait"]')).toHaveCount(1);
     await expect(page.locator('[data-testid="drawer-switcher"]')).toHaveCount(0);
     await expect(page.locator('[data-occluder="right-panel"]')).toHaveCount(0);
     await expect(page.locator('[data-occluder="right-drawer"]')).toHaveCount(0);
@@ -251,12 +254,31 @@ test.describe('mobile snap sheet', () => {
     expect(deckVisible).toBe(false);
   });
 
-  test('M1: at 767 the sheet exists; at 768 and 1024x768 only the desktop layout does', async ({ page }) => {
+  /**
+   * Step MOBILE2 C re-words this case to the NEW law.
+   *
+   * MOBILE1's mode was `max-width: 767.98px`, so 768 was desktop. The mode is now
+   * `resolveLayoutMode(w, h)` (`mobile/layoutMath.ts`), in which 768x900 is PORTRAIT: `w < 768` is false but
+   * `w < 1024 && h > w` is true, and a 768x900 window is unmistakably a tablet held upright. So the boundary this
+   * case walks is the one the law now has — 767 portrait, 768 portrait, 1023 portrait, 1024x768 desktop — and the
+   * sheet's presence follows the mode rather than the old width query.
+   */
+  test('M1: at 767, 768 and 1023 the sheet exists; at 1024x768 only the desktop layout does', async ({ page }) => {
     await open(page, { width: 767, height: 900 }, { waitForSheet: true });
     await expect(page.locator('[data-mobile-sheet]')).toHaveCount(1);
 
+    /* A tall viewport at each of the three widths, plus the two landscape shapes the law sends to phoneLandscape. */
+    for (const vp of [{ width: 768, height: 900 }, { width: 1023, height: 1024 }]) {
+      await page.setViewportSize(vp);
+      await expect
+        .poll(() => page.evaluate(() => window.__frame!.layoutMode), { timeout: 15_000, intervals: [100] })
+        .toBe('portrait');
+      await expect(page.locator('[data-mobile-sheet]')).toHaveCount(1);
+      await expect(page.locator('[data-layout-mode="portrait"]')).toHaveCount(1);
+      await expect(page.getByTestId('enso-chip')).toHaveCount(1);
+    }
+
     for (const vp of [
-      { width: 768, height: 900 },
       { width: 1024, height: 768 },
     ]) {
       await page.setViewportSize(vp);
@@ -266,6 +288,11 @@ test.describe('mobile snap sheet', () => {
         .toBe('desktop');
       await expect(page.locator('[data-mobile-sheet]')).toHaveCount(0);
       await expect(page.getByTestId('mobile-island')).toHaveCount(0);
+      await expect(page.getByTestId('enso-chip')).toHaveCount(0);
+      /* No compact header and no dock on desktop either (step MOBILE2, cases LM1 and LM6 check the same thing). */
+      await expect(page.locator('[data-occluder="compact-header"]')).toHaveCount(0);
+      await expect(page.locator('[data-landscape-dock]')).toHaveCount(0);
+      await expect(page.locator('[data-layout-mode]')).toHaveAttribute('data-layout-mode', 'desktop');
       await expect(page.locator('[data-occluder="right-panel"]')).toHaveCount(1);
       /*
        * The desktop camera left the MOBILE branch with nothing to show: the view offset is the desktop fit's own
@@ -298,49 +325,100 @@ test.describe('mobile snap sheet', () => {
 
   /* ------------------------------------------------------------------ M2 view offset */
 
-  test('M2: the projected orbit target sits at 0.275 * H, and camera.view is null on desktop', async ({ page }) => {
+  /**
+   * M2, re-worded for step MOBILE2 C.
+   *
+   * MOBILE1 asserted the target lands at `0.275 * H`, which was the centre of its fixed 55 % band. That band is
+   * gone: the free rectangle now comes from the layout law, whose centre is
+   * `min(mid, 0.52·H − 28)`, and the camera's offset is `W/2 − cx`, `H/2 − cy`. So the honest assertion is that the
+   * projected target equals THE PROBE'S OWN published centre — read from the same frame, not restated as a
+   * fraction — which is what makes this case measure the pipeline rather than the constant.
+   */
+  test('M2: the projected orbit target sits at the published free-rect centre, and the offset is its complement', async ({
+    page,
+  }) => {
     await open(page);
 
     const measured = await page.evaluate(() => {
       const g = window.__globe!;
       const t = g.target();
       const p = g.project(t);
-      const cam = window.__camera as { view: unknown };
-      return { y: p.y, x: p.x, view: cam.view, H: window.innerHeight };
+      const cam = window.__camera as { view: { offsetX: number; offsetY: number; width: number; height: number } | null };
+      const snap = window.__frame!.snapshot();
+      return {
+        x: p.x,
+        y: p.y,
+        view: cam.view,
+        W: window.innerWidth,
+        H: window.innerHeight,
+        free: snap.free,
+        /* The FIT's centre, as the probe publishes it: `dy` is `cy - H/2`, so this is the authoritative `cy`. */
+        fitCy: snap.target.dy + window.innerHeight / 2,
+        viewOffsetX: window.__frame!.viewOffsetX,
+        viewOffsetY: window.__frame!.viewOffsetY,
+        radiusBudget: window.__frame!.radiusBudget,
+        dFit: window.__frame!.dFit,
+        dMax: window.__frame!.dMax,
+      };
     });
 
     expect(measured.view, 'camera.view must be non-null on mobile').not.toBeNull();
-    const wanted = TARGET_FRACTION * measured.H;
-    expect(Math.abs(measured.y - wanted), `target y ${measured.y} vs ${wanted}`).toBeLessThanOrEqual(1.5);
-    expect(Math.abs(measured.x - PHONE.width / 2)).toBeLessThanOrEqual(1.5);
 
-    /* Desktop: the same read, at a desktop size, must report a null view. */
+    /*
+     * The centre the LAYOUT published, for this frame.
+     *
+     * `cx` is the rect's own midpoint, because the law sets `cx = W/2` (portrait). `cy` is `min(mid, 0.52·H − 28)`
+     * and is therefore NOT always the rect's midpoint — at 390x844 with a two-row header the midpoint is 425.04 and
+     * the cap is 410.88, so the cap wins and the rect's midpoint is the wrong oracle. `target.dy` carries the real
+     * `cy`, which is what the camera was fitted to.
+     */
+    const cx = measured.free.x + measured.free.w / 2;
+    const cy = measured.fitCy;
+    expect(Math.abs(measured.x - cx), `x ${measured.x} vs cx ${cx}`).toBeLessThanOrEqual(1);
+    expect(Math.abs(measured.y - cy), `y ${measured.y} vs cy ${cy}`).toBeLessThanOrEqual(1);
+
+    /*
+     * And the offset actually installed is the centre's complement — the lens shift, proven against the camera's
+     * own `view` record rather than against the probe's copy of it. The sub-window is the full W x H, so the zoom
+     * is unchanged and the disc stays a circle.
+     */
+    expect(measured.view!.width).toBe(measured.W);
+    expect(measured.view!.height).toBe(measured.H);
+    expect(Math.abs(measured.view!.offsetX - (measured.W / 2 - cx))).toBeLessThanOrEqual(1);
+    expect(Math.abs(measured.view!.offsetY - (measured.H / 2 - cy))).toBeLessThanOrEqual(1);
+    /* The probe agrees with the camera. */
+    expect(Math.abs(measured.viewOffsetX - measured.view!.offsetX)).toBeLessThanOrEqual(0.05);
+    expect(Math.abs(measured.viewOffsetY - measured.view!.offsetY)).toBeLessThanOrEqual(0.05);
+
+    /* And the ceiling is the unclamped one, so the fit is not squashed. */
+    expect(measured.dMax).toBeGreaterThanOrEqual(measured.dFit);
+    expect(measured.radiusBudget).toBeGreaterThan(0);
+
+    /* Desktop: the mobile fields return to their defaults and the ceiling is 5 again. */
     await page.setViewportSize({ width: 1280, height: 800 });
     await expect
       .poll(() => page.evaluate(() => window.__frame!.layoutMode), { timeout: 15_000, intervals: [100] })
       .toBe('desktop');
     await waitForDesktopFrame(page);
 
-    /*
-     * The mobile fields are the defaults again, so nothing of the mobile branch survives the resize — and the
-     * camera's offset is the desktop fit's own, not 0.225 * H = 189.9 which is what the mobile branch installs.
-     */
     const after = await page.evaluate(() => {
       const cam = window.__camera as { view: { offsetY: number } | null };
       return {
         viewOffsetY: window.__frame!.viewOffsetY,
+        viewOffsetX: window.__frame!.viewOffsetX,
+        dMax: window.__frame!.dMax,
+        radiusBudget: window.__frame!.radiusBudget,
         offsetY: cam.view ? cam.view.offsetY : null,
         dy: window.__frame!.target.dy,
       };
     });
     expect(after.viewOffsetY).toBe(0);
+    expect(after.viewOffsetX).toBe(0);
+    /* The desktop ceiling is restored — a mobile mode must not leave its `maxDistance` behind. */
+    expect(after.dMax).toBe(5);
+    expect(after.radiusBudget).toBe(0);
+    /* And the offset installed is the DESKTOP fit's own, not the mobile branch's 0.225 * H. */
     expect(after.offsetY).not.toBeCloseTo(0.225 * 800, 0);
-    /*
-     * Same bound as the M1 sweep, for the same measured reason: `waitForDesktopFrame` guarantees a frame RAN,
-     * not that the fit has stopped easing, and the probe's own settled criterion is 0.05 px. Measured here:
-     * -59.1108 against a target of -59.125, i.e. 0.0142 px of remaining ease. A 1e-6 comparison would call the
-     * desktop fit wrong while it is, by the product's own contract, arrived.
-     */
     expect(Math.abs((after.offsetY as number) - -after.dy)).toBeLessThan(0.05);
   });
 
@@ -507,6 +585,37 @@ test.describe('mobile snap sheet', () => {
     s = await readTop();
     expect(s.tier).toBe('full');
     expect(Math.abs(s.top - TIER_TOPS.full)).toBeLessThanOrEqual(2);
+
+    /*
+     * Step MOBILE2 C: the PEEK CLAMP, which is the half of M4 this step changes.
+     *
+     * `peekVisible = max(0.18·H, 112 + safeBottom)`. At 844 the fraction wins (151.92 > 112), so the 692 px top
+     * above is unchanged — which is why the numbers above still hold. At 568 the FLOOR wins (0.18·568 = 102.24 <
+     * 112), so the band is 112 px and the sheet's top must be `568 - 112 = 456`, not the 465.8 the fraction would
+     * give. Ten pixels, and it is the difference between the handle row fitting and not.
+     */
+    await page.setViewportSize({ width: 320, height: 568 });
+    await expect
+      .poll(() => page.evaluate(() => window.__frame!.layoutMode), { timeout: 15_000, intervals: [100] })
+      .toBe('portrait');
+    /*
+     * Back to peek EXPLICITLY. The reset-on-portrait-entry rule does NOT fire here, and must not: 390x844 ->
+     * 320x568 is portrait to portrait, which is a resize rather than an entry, and resetting a reader's tier on
+     * every resize would be the "sheet jumps under the thumb" defect in reverse. The rule is exercised by LM7,
+     * which rotates.
+     */
+    await page.getByRole('slider', { name: 'Sheet position' }).press('Home');
+    await expect.poll(async () => (await readTop()).tier, { timeout: 15_000, intervals: [100] }).toBe('peek');
+    /* `visualViewport.height` is the sheet's own basis; on this headless size it equals innerHeight. */
+    const peeked = await page.evaluate(() => {
+      const el = document.querySelector('[data-mobile-sheet]') as HTMLElement;
+      const r = el.getBoundingClientRect();
+      return { top: r.top, H: window.innerHeight, freeBottom: window.__frame!.free.y + window.__frame!.free.h };
+    });
+    const band = peeked.H - peeked.top;
+    expect(band, `peek band ${band} at 320x568 must be the 112 px floor`).toBeCloseTo(112, 0);
+    /* And the camera's free rectangle ends exactly at that line — the same number, one source. */
+    expect(Math.abs(peeked.freeBottom - peeked.top)).toBeLessThanOrEqual(1);
   });
 
   test('M4: at peek a canvas touch at y = 400 reaches OrbitControls', async ({ page }) => {
@@ -817,17 +926,26 @@ test.describe('mobile snap sheet', () => {
   }) => {
     await open(page);
 
+    /*
+     * Step MOBILE2 B: the text lives in the compact header's chip now. The chip's TEXT node is read on its own
+     * (`enso-chip-text`), not the button, so the chevron/ping spans cannot pollute the comparison — and the test
+     * ids are the only thing that changed, not the assertion.
+     */
     const readIsland = () =>
       page.evaluate(() => {
-        const btn = document.querySelector('[data-testid="mobile-island"]');
-        return btn ? (btn.textContent ?? '').trim() : null;
+        const span = document.querySelector('[data-testid="enso-chip-text"]');
+        return span ? (span.textContent ?? '').trim() : null;
       });
 
     const expectedText = async () =>
       page.evaluate(() => {
         const s = window.__frame!.snapshot();
         void s;
-        /* The store's own value, read from the sheet's probe inputs — the anomaly is on the sheet's header. */
+        /*
+         * The sheet's own reading of the SAME store value, from its header zone. Step MOBILE2: the selector is the
+         * sheet's anomaly readout specifically (`.num` inside `[data-testid="sheet-title"]`'s sibling row), so it
+         * cannot accidentally read the STAT component's value.
+         */
         const el = document.querySelector('[data-mobile-sheet] .num');
         return el ? el.textContent?.trim() ?? '' : '';
       });
@@ -840,11 +958,10 @@ test.describe('mobile snap sheet', () => {
     const sheetReading = await expectedText();
     expect(text!).toContain(sheetReading.replace('°C', '').trim());
 
-    /* Expand and use the scrubber. */
-    await page.getByTestId('mobile-island').tap();
-    await expect
-      .poll(() => page.getByTestId('mobile-island').getAttribute('aria-expanded'))
-      .toBe('true');
+    /* Expand the chip's scrubber popover and use it. */
+    await page.getByTestId('enso-chip').tap();
+    await expect.poll(() => page.getByTestId('enso-chip').getAttribute('aria-expanded')).toBe('true');
+    await expect(page.getByTestId('enso-popover')).toHaveCount(1);
 
     const distanceBefore = await page.evaluate(() => window.__globe!.distance());
     const scrubber = page.getByRole('slider', { name: 'Global SST anomaly' }).first();

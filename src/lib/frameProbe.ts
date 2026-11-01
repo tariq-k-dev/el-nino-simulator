@@ -18,7 +18,7 @@
  * `scripts/check-assets.mjs` fails a production build that contains the name.
  */
 import type * as THREE from 'three';
-import { D0, FRAMING_MODE, type FrameProbeState, type FramingMode } from '@/layout/framing';
+import { D0, FRAMING_MODE, MAX_DISTANCE, type FrameProbeState, type FramingMode } from '@/layout/framing';
 import { getLayoutMode, getViewState } from '@/scene/viewStore';
 
 export interface FrameProbeSnapshot {
@@ -41,10 +41,20 @@ export interface FrameProbeSnapshot {
   hasRegion: boolean;
   /** Step 3B2: which focus policy this build runs — `locked` keeps aim-at-pin, `live` faces the pin. */
   focusPolicy: FramingMode;
-  /** Step 3-MOBILE1: which layout the page is running. */
-  layoutMode: 'desktop' | 'mobile';
+  /** Step 3-MOBILE1 / MOBILE2: which layout the page is running. */
+  layoutMode: 'desktop' | 'mobile' | 'portrait' | 'phoneLandscape';
   /** Step 3-MOBILE1: the window offset in px, positive-down. 0 on desktop. */
   viewOffsetY: number;
+  /** Step MOBILE2: the horizontal lens shift, positive-right. 0 on desktop. */
+  viewOffsetX: number;
+  /** Step MOBILE2: `controls.maxDistance` as the director last wrote it. 5 on desktop. */
+  dMax: number;
+  /** Step MOBILE2: the fit distance (`dContain` on mobile, the clamped fit on desktop). */
+  dFit: number;
+  /** Step MOBILE2: the radius budget the mobile fit used. 0 on desktop. */
+  radiusBudget: number;
+  /** Step MOBILE2: the published compact-header bottom. 0 on desktop. */
+  headerBottom: number;
   /** Step 3-MOBILE1: true when `dMax` bound the mobile fit. */
   clampedByMax: boolean;
 }
@@ -73,11 +83,21 @@ export interface FrameProbe {
   /** Step 3B2: `locked` (aim-at-pin) or `live` (face-pin). */
   readonly focusPolicy: FramingMode;
   /** Step 3-MOBILE1: which layout the page is running. `desktop` on every pre-step viewport. */
-  readonly layoutMode: 'desktop' | 'mobile';
+  readonly layoutMode: 'desktop' | 'mobile' | 'portrait' | 'phoneLandscape';
   /** Step 3-MOBILE1: the window offset in px, positive-down as `setViewOffset` takes it. 0 on desktop. */
   readonly viewOffsetY: number;
   /** Step 3-MOBILE1: true when `dMax` bound the mobile fit, so the disc is larger than `rMax`. */
   readonly clampedByMax: boolean;
+  /** Step MOBILE2: the horizontal lens shift, positive-right as `setViewOffset` takes it. */
+  readonly viewOffsetX: number;
+  /** Step MOBILE2: `controls.maxDistance` as the director last wrote it. */
+  readonly dMax: number;
+  /** Step MOBILE2: the fit distance. */
+  readonly dFit: number;
+  /** Step MOBILE2: the radius budget the fit used. */
+  readonly radiusBudget: number;
+  /** Step MOBILE2: the published compact-header bottom. */
+  readonly headerBottom: number;
   /** One coherent read of every field, from the same frame. */
   snapshot(): FrameProbeSnapshot;
 }
@@ -133,6 +153,11 @@ function lockedState(camera: THREE.Camera): FrameProbeState {
     layoutMode: getLayoutMode(),
     viewOffsetY: 0,
     clampedByMax: false,
+    viewOffsetX: 0,
+    dMax: MAX_DISTANCE,
+    dFit: D0,
+    radiusBudget: 0,
+    headerBottom: 0,
   };
 }
 
@@ -209,6 +234,26 @@ export function createFrameProbe(
       const s = state();
       return s.clampedByMax ?? false;
     },
+    get viewOffsetX() {
+      const s = state();
+      return s.viewOffsetX ?? 0;
+    },
+    get dMax() {
+      const s = state();
+      return s.dMax ?? MAX_DISTANCE;
+    },
+    get dFit() {
+      const s = state();
+      return s.dFit ?? s.target.d;
+    },
+    get radiusBudget() {
+      const s = state();
+      return s.radiusBudget ?? 0;
+    },
+    get headerBottom() {
+      const s = state();
+      return s.headerBottom ?? 0;
+    },
     snapshot() {
       const s = state();
       return {
@@ -230,6 +275,11 @@ export function createFrameProbe(
         layoutMode: s.layoutMode ?? 'desktop',
         viewOffsetY: s.viewOffsetY ?? 0,
         clampedByMax: s.clampedByMax ?? false,
+        viewOffsetX: s.viewOffsetX ?? 0,
+        dMax: s.dMax ?? MAX_DISTANCE,
+        dFit: s.dFit ?? s.target.d,
+        radiusBudget: s.radiusBudget ?? 0,
+        headerBottom: s.headerBottom ?? 0,
       };
     },
   };
