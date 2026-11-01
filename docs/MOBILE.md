@@ -193,3 +193,145 @@ Two counter-reading rules the spec learned the hard way, both now stated as code
 - **Compare easing offsets at the product's own settle bound (0.05 px), not at 1e-6.** `waitForDesktopFrame`
   guarantees a frame RAN, not that the fit has stopped easing. Measured: 196.8594 against a target of 196.875,
   and −59.1108 against −59.125 — 0.0156 and 0.0142 px of remaining ease on fits that are arrived by contract.
+
+
+---
+
+# Step 2B-STEP3-MOBILE2 — the layout law, the free rect, the unclamped ceiling
+
+MOBILE1 asked one question with one media query ("is the viewport under 768 px wide?"). That answered
+sheet-versus-desktop correctly and answered the SHAPE badly: an 844x390 phone is 844 px wide, so it got the
+desktop overlays on a 390 px-tall screen. MOBILE2 replaces the question with a total function of two integers and
+derives everything else — the free rectangle, the radius budget, the distance ceiling, the header, the dock — from
+it.
+
+## 1. The modes
+
+`resolveLayoutMode(w, h)` (`src/mobile/layoutMath.ts`), evaluated in this order:
+
+    1. phoneLandscape   if w < 1024 AND h < 600 AND w > h
+    2. portrait         if w < 768  OR (w < 1024 AND h > w)
+    3. desktop          otherwise
+
+`phoneLandscape` is first because it is the narrowest condition and clause 2 would otherwise capture its members
+(`844x390` has `h > w` false). Clause 2's `w < 768` is the only part of MOBILE1's breakpoint that survives
+verbatim — it is what the M1 boundary case compares against — and the `(w < 1024 AND h > w)` half is what makes
+768x1024 and 960x1440 portrait.
+
+Computed from `innerWidth`/`innerHeight` on `resize` and `orientationchange`, coalesced to one
+`requestAnimationFrame`, and **synchronously at store init** so no first paint is in the wrong mode. Published as
+`data-layout-mode` on the app root and read non-reactively by the frame loop.
+
+**Accepted gaps** (documented, deliberately not fixed — each is a real viewport nobody in the matrix uses, and
+every fix moves a boundary the acceptance suite bands):
+
+- a 768..1023 wide window in LANDSCAPE with `h >= 600` is portrait (1023x601 portrait, 1024x600 desktop);
+- a square 768x768 or 900x900 is desktop (`h > w` false, `w < 768` false);
+- 1024x1366 is desktop although it is a portrait tablet.
+
+## 2. The free rectangle
+
+Published to the store, consumed only by `CameraDirector`.
+
+    headerBottom   measured by a ResizeObserver on the compact header (getBoundingClientRect().bottom),
+                   published when it moves by 0.5 px or more.
+
+    portrait       left 0, right W, top headerBottom, bottom H - peekVisible
+                   peekVisible = max(0.18*H, 112 + safe-area-inset-bottom)
+                   cx = W/2
+                   cy = min(mid, 0.52*H - 28)
+
+    phoneLandscape dockW = min(clamp(320, 0.38*W, 400), 0.5*W), docked RIGHT
+                   left 0, right W - dockW, top headerBottom, bottom H
+                   cx = right/2, cy = (top + bottom)/2
+
+    both           Rb = max(min(cx-left, right-cx, cy-top, bottom-cy) - 12, 40)
+
+The `min(mid, 0.52H - 28)` term in portrait is a legibility rule, not a fitting one: the Half tier's top is
+`0.52*H`, so a centred face-pinned pin must sit above that line. At 390x844 with a two-row header the midpoint
+(425.04) is BELOW the cap (410.88), so the cap binds; the camera is fitted to the cap, which is why the acceptance
+case compares against the probe's published centre and not against the rectangle's midpoint.
+
+## 3. The fit, and the ceiling
+
+The law is `dContainFor(radiusPx, focalPx, re)` in `layout/frame.ts` — **one** function, called by the desktop
+free-rect fit with the rectangle's `rMax` and by the mobile fit with `Rb`. Nothing re-derives it.
+
+    re       = MOBILE_ENVELOPE = max(pin envelope 1.10242, atmosphere limb 1.1) = 1.10242
+    dContain = sqrt(re^2 + (focalPx*re/Rb)^2)
+    dFit     = dContain                      (mobile: no ceiling clamp)
+    dMaxMode = max(5, 1.25 * dContain)
+
+`dMaxMode` is written to `controls.maxDistance` by `CameraDirector` and nowhere else; desktop writes 5 back, so a
+rotation to desktop cannot leave a mobile ceiling behind. Measured headroom: at 390x844 `dFit` 6.71, `dMaxMode`
+8.39 — 1.25x, comfortably above the 1.2x the acceptance case requires.
+
+**The view offset is a lens shift, not a rescale:**
+
+    camera.setViewOffset(W, H, W/2 - cx, H/2 - cy, W, H)
+
+The sub-window is the full `W x H`, so the frustum keeps its scale and the disc stays a circle. Both signs were
+proven by projecting a real `PerspectiveCamera` (`mobileFrame.test.ts`), not by reasoning: the Y sign matches
+MOBILE1's measurement, and the X sign is **positive** in landscape because the dock is on the right.
+
+## 4. The header, the chip and the dock
+
+`HeaderCompact` is the only header the mobile modes render, and it is a separate component from `Header.tsx`
+precisely so the desktop header's measured 118.25 px and its pixel proofs cannot move. It shows the h1 (wraps to
+two lines, never ellipsised), the unit toggle, Snapshot, Reset View and the ENSO chip; the subtitle is `sr-only`.
+Portrait is two rows, phoneLandscape one. All controls are 44 px; `ResetViewButton`'s own class measures 26 px, so
+it sits in a 44x44 stretch box **in `HeaderCompact` only**, leaving the shared component byte-identical.
+
+The island (`TopIsland.tsx`) is DELETED, and with it the second rotate-ccw icon that reset the scenario rather than
+the view — the "ghost duplicate" the prompt names.
+
+The chip prints `formatIsland(anomalyC)` and opens a scrubber popover that floats above the canvas and changes no
+layout, so it cannot re-fit the camera. Its anomaly honours the unit toggle with a **DELTA** conversion (`x1.8`,
+no `+32`) while the CATEGORY always classifies the °C value, because the ONI bands are °C thresholds. Escape closes
+the popover only — the handler is capture-phase and calls `stopPropagation`, so the app's own Escape (which clears
+the region) never sees it. A pointerdown outside the whole HEADER closes it; taps on the unit toggle are inside by
+design, because comparing the value in the other unit is the one thing a reader does next.
+
+`LandscapeDock` is a fixed right-hand column of width `dockWidth(W)`, starting at the published `headerBottom`, with
+no tiers and no drag. It and `SnapSheet` both render `SheetBody` — the Half/Full content including the FIX2 region
+switcher and its single `selectRegion` path — so the two surfaces cannot select differently.
+
+## 5. The single-writer list
+
+After mount, `CameraDirector.tsx` is the ONLY module that writes:
+
+    camera.position.set/copy · camera.quaternion · camera.up · camera.zoom · camera.fov
+    setViewOffset · clearViewOffset · updateProjectionMatrix
+    controls.target · controls.minDistance · controls.maxDistance · controls.update()
+
+`singleWriter.test.ts` scans `src/` for each of those, allows only `CameraDirector.tsx` and (for the declarative
+`<Canvas camera>` props and the `<OrbitControls>` bounds at mount) `GlobeScene.tsx`, and — since MOBILE2 — carries a
+NEGATIVE FIXTURE: a synthetic source assigning each zoom bound must be flagged, and a comparison (`!==`) must not
+be. Without that fixture the two patterns would pass vacuously.
+
+## 6. The tier reset, and where it does NOT fire
+
+The tier returns to peek on every **entry into portrait**. An entry is a mode TRANSITION, so a rotation
+(portrait → phoneLandscape → portrait) resets, while a resize between two portrait viewports does not — resetting a
+reader's tier on every resize would be the "sheet jumps under the thumb" defect in reverse. Measured: 390x844 to
+320x568 keeps the tier; the LM7 rotation case asserts the reset.
+
+## 7. The Snapshot finding (measured, not fixed)
+
+`captureCanvas()` (`lib/canvasCapture.ts`) forces one `gl.render()` and reads `toDataURL()` in the same task, so the
+capture is the FULL canvas with the CURRENT projection matrix — **the view offset IS included**, because
+`setViewOffset` edits that matrix and nothing clears it. With `dpr={[1, 2]}` and `<AdaptiveDpr>`, the captured
+pixel size can be below `2x` CSS. Report only; not changed here.
+
+## 8. Test hooks (MOBILE2)
+
+| hook | where | what it proves |
+|---|---|---|
+| `data-layout-mode` | the app root | the three-way mode, for the DOM and for a spec |
+| `[data-occluder="compact-header"]` | `HeaderCompact` | the compact header mounted, and where its bottom is |
+| `[data-testid="enso-chip"]` / `-chip-text` / `enso-popover` | `HeaderCompact` | the chip, its text node, the popover |
+| `[data-landscape-dock]` / `[data-dock-scroll]` | `LandscapeDock` | the dock and its scroller |
+| `[data-testid="sheet-title"]` | `SnapSheet` | the title, for the typography case |
+| `window.__frame.{viewOffsetX,dMax,dFit,radiusBudget,headerBottom}` | `frameProbe.ts` | the fit, without reading three internals |
+| `mobile-layout-probe-3m2` | `MOBILE_LAYOUT_MARKER` | 0 in `dist`, present in `dist-e2e` |
+| `mobile-snap-probe-3m1` | `MOBILE_SNAP_MARKER` | unchanged: the sheet's own probe still ships to `dist-e2e` only |
