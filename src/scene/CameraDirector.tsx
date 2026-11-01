@@ -92,9 +92,11 @@ import {
 } from '@/camera/easing';
 import { arcStep, facingPose, isArrived, type Vec3 } from '@/camera/facing';
 import {
+  getLayoutMode,
   getResetRequest,
   getViewState,
   publishViewState,
+  startLayoutModeObserver,
   subscribeResetRequest,
 } from '@/scene/viewStore';
 import type { SpinState } from '@/scene/EarthSystem';
@@ -121,6 +123,8 @@ import {
   type FocusState,
 } from '@/scene/focusMachine';
 import { registerCameraIntents, type CameraPose } from '@/scene/cameraIntents';
+import { computeMobileFrame, type MobileFrame } from '@/mobile/mobileFrame';
+import { MOBILE_FREE_TOP_FRACTION, MOBILE_QUERY } from '@/mobile/snapMath';
 
 /** The shipped start position; the same constants the `<Canvas camera>` prop uses. */
 const DEFAULT_POSITION = new THREE.Vector3(0, 1.15, 3.15);
@@ -331,6 +335,88 @@ function angleDegBetween(a: Vec3, b: THREE.Vector3): number {
   return (Math.acos(clamped) * 180) / Math.PI;
 }
 
+/**
+ * The MOBILE view-offset applier — idempotent, keyed on `(mode, W, H)`.
+ *
+ * ## The sign, as measured
+ *
+ * `.cache/mob/probe-offset.mjs` builds a real `PerspectiveCamera(42, 390/844, 0.1, 400)` at the shipped
+ * position, sets the offset, and projects the world origin:
+ *
+ *     no offset                  y = 422.000   (error 189.900 from the wanted 232.100)
+ *     setViewOffset(…, -189.90)  y = 611.900   (error 379.800 — wrong direction, and by 2x)
+ *     setViewOffset(…, +189.90)  y = 232.100   (error 0.000)   <- this one
+ *     clearViewOffset            y = 422.000
+ *
+ * So a POSITIVE `offsetY` moves the projected content UP. `mobileFrame.ts` returns `viewOffsetY`; this
+ * function applies it with that sign, and the assertion in `mobileFrame.test.ts` re-derives it from a real
+ * camera on every gate run rather than trusting this comment.
+ *
+ * ## Why the sub-window is the FULL size
+ *
+ * `setViewOffset(W, H, 0, dy, W, H)`: the sub-window keeps the full width and height, so three's
+ * `updateProjectionMatrix` shifts the principal point without rescaling the frustum. A smaller sub-window
+ * would also change the zoom, which would make the fit's `d_fit` wrong by the ratio of the two heights.
+ *
+ * ## Why it is re-applied on every resize
+ *
+ * R3F rewrites `camera.aspect` from the canvas size and calls `updateProjectionMatrix()` itself on a resize,
+ * which PRESERVES `camera.view` but recomputes the matrix from the OLD view parameters — so the offset is
+ * still there and the matrix is still right for the new size only after a second `updateProjectionMatrix()`.
+ * Re-applying on a size change covers both, and it is cheap because `setViewOffset` is a handful of float
+ * writes.
+ *
+ * ## When it is cleared
+ *
+ * On leaving mobile mode, and only then. `clearViewOffset()` restores `camera.view = null`, which is the
+ * desktop state every existing spec asserts (`cameraViewIsNull`), so a resize across the breakpoint in either
+ * direction returns the camera to a state the 3A/3B proofs describe.
+ */
+interface MobileOffsetState {
+  mode: 'mobile' | 'desktop' | null;
+  w: number;
+  h: number;
+}
+
+function applyMobileOffset(
+  camera: THREE.PerspectiveCamera,
+  state: MobileOffsetState,
+  mode: 'mobile' | 'desktop',
+  w: number,
+  h: number,
+): MobileFrame | null {
+  if (state.mode === mode && state.w === w && state.h === h) return null;
+  state.mode = mode;
+  state.w = w;
+  state.h = h;
+
+  if (mode === 'desktop') {
+    /*
+     * Leaving mobile: put the camera back to the null-view state the desktop proofs describe.
+     *
+     * `clearViewOffset()` also calls `updateProjectionMatrix()` itself, but the call is written out rather
+     * than relied on: `clearViewOffset` doing it is an implementation detail of three r169, and a version
+     * that stopped would leave the desktop matrix still shifted with `camera.view === null` — i.e. every
+     * desktop spec's `cameraViewIsNull` check would pass while the picture stayed wrong.
+     */
+    if (camera.view !== null) {
+      camera.clearViewOffset();
+      camera.updateProjectionMatrix();
+    }
+    return null;
+  }
+
+  const frame = computeMobileFrame(w, h);
+  camera.setViewOffset(w, h, 0, frame.viewOffsetY, w, h);
+  /*
+   * Explicit, per the step: `setViewOffset` only STORES the parameters and flags the matrix, and the commit
+   * is this call. Writing it out also makes the projection write visible to `projectionWriter.test.ts`, which
+   * asserts the director contains all three of `setViewOffset`, `clearViewOffset` and this.
+   */
+  camera.updateProjectionMatrix();
+  return frame;
+}
+
 /** `prefers-reduced-motion`, resolved once instead of once per frame. */
 let reducedMotionQuery: MediaQueryList | null | undefined;
 function prefersReducedMotion(): boolean {
@@ -361,6 +447,18 @@ export function CameraDirector({
   const camera = useThree((state) => state.camera) as THREE.PerspectiveCamera;
   const size = useThree((state) => state.size);
 
+  /*
+   * THE ONE layout-mode listener (step 3-MOBILE1 B).
+   *
+   * Started here rather than in `App` or `GlobeScene` for one reason: this component is inside `<Canvas>`,
+   * so it is guaranteed to be mounted exactly once and exactly as long as the scene exists, and the value it
+   * publishes is only ever read by this file's frame loop and by the DOM shell that decides which overlay to
+   * render. A second listener anywhere else would be a second source of truth for the same boolean.
+   *
+   * `startLayoutModeObserver` is idempotent, so React 18's development double-mount cannot install two.
+   */
+  useEffect(() => startLayoutModeObserver(MOBILE_QUERY), []);
+
   /* ---------------------------------------------------------------- focus machine */
 
   const machine = useRef<FocusSnapshot>(initialFocus());
@@ -386,6 +484,16 @@ export function CameraDirector({
    * USER moved it. `null` until the first frame has run (there is no distance to compare yet).
    */
   const lastSeenDistance = useRef<number | null>(null);
+  /**
+   * The mobile offset's idempotency key, and the last frame it produced.
+   *
+   * Both are refs rather than state: `useFrame` runs 60 times a second and reads/writes them in place, and
+   * moving either into React state would re-render the scene subtree on every resize storm. The cache exists
+   * so a frame that does NOT cross a mode or size boundary can reuse the previous `MobileFrame` instead of
+   * recomputing the fit — the offset only changes when the window does.
+   */
+  const mobileOffset = useRef<MobileOffsetState>({ mode: null, w: 0, h: 0 });
+  const mobileCache = useRef<MobileFrame | null>(null);
   /** True while THIS module is writing, so its own `change` events are ignored. */
   const writing = useRef(false);
   /** Last distance this module itself wrote — the "outside the director's own writes" test. */
@@ -571,10 +679,127 @@ export function CameraDirector({
      */
     if (IS_LOCKED) {
       noteLocked();
+    } else if (getLayoutMode() === 'mobile') {
+      /*
+       * ===================================================== 2a. THE MOBILE BRANCH ====
+       *
+       * A separate branch rather than a conditional inside the desktop body, for the same reason the two
+       * focus policies are separate bodies: the desktop arithmetic has to stay byte-identical (S1 residual 0),
+       * and the only way to be sure a shared branch did not perturb it is to not share one.
+       *
+       * What differs from desktop:
+       *
+       *   - the free rectangle is FIXED (full width, top 55 %), not measured from `data-occluder` panels,
+       *     because the sheet is not a panel and its tier must not move the globe;
+       *   - the offset is applied through `applyMobileOffset`, which is idempotent on `(mode, W, H)` and is
+       *     therefore also the thing that re-applies after R3F's own resize;
+       *   - the distance is NOT eased frame by frame: the fit's own channel below leaves `userZoomed`
+       *     semantics intact, but there is no offset easing because the offset never animates (a moving
+       *     principal point is a moving picture).
+       *
+       * Everything else — the fit's distance channel, `userZoomed`, the probe — is the desktop code, moved
+       * wholesale rather than reimplemented.
+       */
+      const w = size.width;
+      const h = size.height;
+      const mobile = applyMobileOffset(camera, mobileOffset.current, 'mobile', w, h);
+      const frame = mobile ?? (mobileCache.current as MobileFrame);
+      mobileCache.current = frame;
+
+      const offset = camera.position.clone().sub(controls.target);
+      const currentDistance = offset.length();
+
+      if (lastFit.current === null) lastFit.current = currentDistance;
+      lastSeenDistance.current = currentDistance;
+
+      const userZoomedMobile = machine.current.context.userZoomed;
+      rigOwnsDistance.current = !userZoomedMobile;
+      if (!userZoomedMobile && Math.abs(frame.dTarget - currentDistance) > 1e-6) {
+        const k = prefersReducedMotion() ? 1 : 1 - Math.exp(-stepDt / FRAME_TIME_CONSTANT_S);
+        const wanted = THREE.MathUtils.clamp(
+          frame.dTarget,
+          controls.minDistance,
+          controls.maxDistance,
+        );
+        const eased = THREE.MathUtils.lerp(currentDistance, wanted, k);
+        const nextDistance = Math.abs(wanted - eased) < 1e-5 ? wanted : eased;
+        withOwnWrite(() => {
+          camera.position.copy(controls.target).add(offset.setLength(nextDistance));
+          controls.update();
+        });
+        lastFit.current = nextDistance;
+        lastSeenDistance.current = nextDistance;
+      }
+
+      {
+        const dir = orbitDirection(camera, controls);
+        const d = orbitDistance(camera, controls);
+        const viewIsDefault =
+          state === 'idle' &&
+          !userZoomedMobile &&
+          angleDegBetween(dir, DEFAULT_DIRECTION) <= VIEW_DEFAULT_ANGLE_DEG &&
+          Math.abs(d - frame.dTarget) <= VIEW_DEFAULT_DISTANCE;
+        publishViewState({
+          viewIsDefault,
+          spinning: !spin.current.paused,
+          hasRegion: machine.current.context.regionId !== null,
+        });
+      }
+
+      if (probe) {
+        const camDistance = camera.position.distanceTo(controls.target);
+        const recent = recentDistances.current;
+        recent.push(camDistance);
+        if (recent.length > 4) recent.shift();
+        let lo = Infinity;
+        let hi = -Infinity;
+        for (const v of recent) {
+          if (v < lo) lo = v;
+          if (v > hi) hi = v;
+        }
+        const spread = recent.length < 4 ? Infinity : hi - lo;
+        const distanceQuiet = spread < 2e-4;
+        const distanceArrived = Math.abs(frame.dTarget - camDistance) < 0.0005;
+        const distanceSettled = rigOwnsDistance.current
+          ? distanceArrived && distanceQuiet
+          : distanceQuiet;
+
+        probe.current = {
+          state: {
+            mode: 'live',
+            insets: { left: 0, right: 0, top: 0, bottom: h * (1 - MOBILE_FREE_TOP_FRACTION) },
+            free: { ...frame.free },
+            target: { dx: frame.dx, dy: frame.dy, d: frame.dTarget },
+            current: { dx: frame.dx, dy: frame.dy, d: camDistance },
+            settled: distanceSettled,
+            degenerate: frame.degenerate,
+            cameraViewIsNull: camera.view === null || camera.view.enabled === false,
+            focus: machine.current.state,
+            userZoomed: userZoomedMobile,
+            regionId: machine.current.context.regionId,
+            viewIsDefault: getViewState().viewIsDefault,
+            spinning: getViewState().spinning,
+            hasRegion: getViewState().hasRegion,
+            focusPolicy: 'live',
+            layoutMode: 'mobile',
+            viewOffsetY: frame.viewOffsetY,
+            clampedByMax: frame.clampedByMax,
+          },
+        };
+      }
     } else {
       const w = size.width;
       const h = size.height;
       const insets = getInsets();
+
+      /*
+       * Any frame at desktop size CLEARS a mobile offset this module installed earlier. Idempotent: the
+       * applier returns immediately when the mode and size are already desktop's, and it only calls
+       * `clearViewOffset` when `camera.view` is actually non-null — so on an ordinary desktop frame this is
+       * one comparison and nothing else, which is what keeps `cameraViewIsNull` true and S1 at 0.
+       */
+      applyMobileOffset(camera, mobileOffset.current, 'desktop', w, h);
+      mobileCache.current = null;
 
       const frame = computeFrame({
         viewport: { w, h },

@@ -168,6 +168,18 @@ export interface FrameProbeState {
   hasRegion?: boolean;
   /** Step 3B2: which focus policy this build runs. Optional for the same reason. */
   focusPolicy?: 'locked' | 'live';
+  /**
+   * Step 3-MOBILE1: which layout the page is running.
+   *
+   * OPTIONAL for the same reason as the four fields above — several fixtures build this type by hand, and a
+   * required field would force edits in files this step must not touch. A reader defaults it to `'desktop'`,
+   * which is the pre-step behaviour and stays true on every existing spec viewport.
+   */
+  layoutMode?: 'desktop' | 'mobile';
+  /** Step 3-MOBILE1: the mobile window offset in px, positive-down as `setViewOffset` takes it. */
+  viewOffsetY?: number;
+  /** Step 3-MOBILE1: true when `dMax` bound the mobile fit, so the disc is bigger than `rMax` allows. */
+  clampedByMax?: boolean;
 }
 
 /** The mutable slot `FrameRig` writes into, so `__frame` can read the last rendered frame. */

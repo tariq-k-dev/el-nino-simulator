@@ -19,7 +19,7 @@
  */
 import type * as THREE from 'three';
 import { D0, FRAMING_MODE, type FrameProbeState, type FramingMode } from '@/layout/framing';
-import { getViewState } from '@/scene/viewStore';
+import { getLayoutMode, getViewState } from '@/scene/viewStore';
 
 export interface FrameProbeSnapshot {
   mode: FramingMode;
@@ -41,6 +41,12 @@ export interface FrameProbeSnapshot {
   hasRegion: boolean;
   /** Step 3B2: which focus policy this build runs — `locked` keeps aim-at-pin, `live` faces the pin. */
   focusPolicy: FramingMode;
+  /** Step 3-MOBILE1: which layout the page is running. */
+  layoutMode: 'desktop' | 'mobile';
+  /** Step 3-MOBILE1: the window offset in px, positive-down. 0 on desktop. */
+  viewOffsetY: number;
+  /** Step 3-MOBILE1: true when `dMax` bound the mobile fit. */
+  clampedByMax: boolean;
 }
 
 export interface FrameProbe {
@@ -66,6 +72,12 @@ export interface FrameProbe {
   readonly hasRegion: boolean;
   /** Step 3B2: `locked` (aim-at-pin) or `live` (face-pin). */
   readonly focusPolicy: FramingMode;
+  /** Step 3-MOBILE1: which layout the page is running. `desktop` on every pre-step viewport. */
+  readonly layoutMode: 'desktop' | 'mobile';
+  /** Step 3-MOBILE1: the window offset in px, positive-down as `setViewOffset` takes it. 0 on desktop. */
+  readonly viewOffsetY: number;
+  /** Step 3-MOBILE1: true when `dMax` bound the mobile fit, so the disc is larger than `rMax`. */
+  readonly clampedByMax: boolean;
   /** One coherent read of every field, from the same frame. */
   snapshot(): FrameProbeSnapshot;
 }
@@ -113,6 +125,14 @@ function lockedState(camera: THREE.Camera): FrameProbeState {
     spinning: getViewState().spinning,
     hasRegion: getViewState().hasRegion,
     focusPolicy: FRAMING_MODE,
+    /*
+     * Step 3-MOBILE1, locked truth. A locked page installs no window offset, so there is no mobile offset to
+     * report and `layoutMode` is the mode the DOM shell would have to agree with. Read from the store rather
+     * than hardcoded, so a locked page on a phone still reports `'mobile'` and a spec can tell the two apart.
+     */
+    layoutMode: getLayoutMode(),
+    viewOffsetY: 0,
+    clampedByMax: false,
   };
 }
 
@@ -177,6 +197,18 @@ export function createFrameProbe(
       const s = state();
       return s.focusPolicy ?? s.mode;
     },
+    get layoutMode() {
+      const s = state();
+      return s.layoutMode ?? 'desktop';
+    },
+    get viewOffsetY() {
+      const s = state();
+      return s.viewOffsetY ?? 0;
+    },
+    get clampedByMax() {
+      const s = state();
+      return s.clampedByMax ?? false;
+    },
     snapshot() {
       const s = state();
       return {
@@ -195,6 +227,9 @@ export function createFrameProbe(
         spinning: s.spinning ?? true,
         hasRegion: s.hasRegion ?? getViewState().hasRegion,
         focusPolicy: s.focusPolicy ?? s.mode,
+        layoutMode: s.layoutMode ?? 'desktop',
+        viewOffsetY: s.viewOffsetY ?? 0,
+        clampedByMax: s.clampedByMax ?? false,
       };
     },
   };

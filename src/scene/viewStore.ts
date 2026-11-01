@@ -114,3 +114,111 @@ export function __resetViewStore(): void {
   current = INITIAL;
   resetCount = 0;
 }
+
+/* ------------------------------------------------------------------ the LAYOUT MODE lane */
+
+/**
+ * Which layout the page is running: the desktop overlays or the mobile sheet and HUD.
+ *
+ * ## Why this lives here rather than in a React context or a `useMediaQuery`
+ *
+ * `CameraDirector` needs it INSIDE `useFrame`, and a frame callback cannot call a hook: a `useState`
+ * subscription would re-render the whole scene subtree on an orientation change (fine, once) but would also
+ * mean the director's frame closure held a STALE value between the change and the re-render — one frame of
+ * the desktop frustum on a phone, which is a visibly wrong picture rather than a no-op. Reading a
+ * module-scope value non-reactively inside the loop has neither problem, and it is the same pattern this
+ * file already uses for the RESET channel.
+ *
+ * ## Why one listener, and why it is started by the caller
+ *
+ * `matchMedia('(max-width: 767.98px)')` rather than a `resize` handler comparing `innerWidth`: a resize
+ * listener fires for every pixel of a window drag, and it also fires when only the HEIGHT changed, which
+ * cannot cross a width breakpoint. The media query fires exactly at the crossing. Starting it from a
+ * component (`useLayoutModeObserver`) keeps module import side-effect free, which is what lets the unit
+ * tests import this file without a DOM.
+ *
+ * The default is `desktop` — deliberately, so a document with no `matchMedia` (jsdom, SSR, a test) behaves
+ * exactly as it did before this step. Failing to `mobile` would put a sheet over every screenshot in the
+ * existing suite.
+ */
+export type LayoutMode = 'mobile' | 'desktop';
+
+let layoutMode: LayoutMode = 'desktop';
+let layoutModeQuery: MediaQueryList | null = null;
+let layoutModeHandler: ((event: MediaQueryListEvent) => void) | null = null;
+const layoutModeListeners = new Set<() => void>();
+
+/** The mode as of right now. Read non-reactively by the frame loop. */
+export function getLayoutMode(): LayoutMode {
+  return layoutMode;
+}
+
+export function subscribeLayoutMode(listener: () => void): () => void {
+  layoutModeListeners.add(listener);
+  return () => {
+    layoutModeListeners.delete(listener);
+  };
+}
+
+/** Set the mode and notify, but only on an actual change — the caller may be a media query firing twice. */
+function setLayoutMode(next: LayoutMode): void {
+  if (next === layoutMode) return;
+  layoutMode = next;
+  for (const listener of layoutModeListeners) listener();
+}
+
+/**
+ * Start the ONE media-query listener. Idempotent, and returns a cleanup.
+ *
+ * `addEventListener('change')` is used with an `addListener` fallback rather than the reverse: the legacy
+ * `addListener` is deprecated and absent on some engines, while `addEventListener` on a `MediaQueryList` is
+ * present in every browser this app supports. The fallback exists only so an old Safari does not silently
+ * lose the change event, which would leave the page in whichever layout it loaded with.
+ */
+export function startLayoutModeObserver(query: string, win: Window | undefined = typeof window === 'undefined' ? undefined : window): () => void {
+  if (!win || typeof win.matchMedia !== 'function') return () => undefined;
+  if (layoutModeQuery && layoutModeHandler) {
+    /* Already running: re-read once so a caller after a resize does not see a stale value. */
+    setLayoutMode(layoutModeQuery.matches ? 'mobile' : 'desktop');
+    return () => undefined;
+  }
+  const mql = win.matchMedia(query);
+  const handler = (event: MediaQueryListEvent): void => {
+    setLayoutMode(event.matches ? 'mobile' : 'desktop');
+  };
+  layoutModeQuery = mql;
+  layoutModeHandler = handler;
+  if (typeof mql.addEventListener === 'function') mql.addEventListener('change', handler);
+  else if (typeof mql.addListener === 'function') mql.addListener(handler);
+  setLayoutMode(mql.matches ? 'mobile' : 'desktop');
+
+  return () => {
+    if (typeof mql.removeEventListener === 'function') mql.removeEventListener('change', handler);
+    else if (typeof mql.removeListener === 'function') mql.removeListener(handler);
+    layoutModeQuery = null;
+    layoutModeHandler = null;
+    /*
+     * Back to the default with the observer gone, not left at whatever it last read.
+     *
+     * The invariant is "no observer means desktop": that is what a document with no `matchMedia` gets, and
+     * leaving the last value behind would make the mode depend on WHEN the unmount happened — a page torn down
+     * on a phone would keep reporting `mobile` to anything that reads the store afterwards, including a later
+     * `CameraDirector` that has not started its observer yet. The desktop branch clears the view offset on its
+     * next frame, so this cannot leave a stale frustum behind either.
+     */
+    setLayoutMode('desktop');
+  };
+}
+
+/** Test-only: force the mode, so a unit test can exercise both branches without a browser. */
+export function __setLayoutModeForTest(next: LayoutMode): void {
+  setLayoutMode(next);
+}
+
+/** Test-only: drop the listener and go back to the desktop default. */
+export function __resetLayoutMode(): void {
+  layoutMode = 'desktop';
+  layoutModeQuery = null;
+  layoutModeHandler = null;
+  layoutModeListeners.clear();
+}
