@@ -167,7 +167,12 @@ async function settlePose(page: Page, timeoutMs = 15_000): Promise<Pose> {
 }
 
 /** Boot a page in `url`, click the region's card, and return the settled pose plus the fly duration. */
-async function flyTo(page: Page, url: string, region: string): Promise<Pose> {
+async function flyTo(
+  page: Page,
+  url: string,
+  region: string,
+  mode: 'locked' | 'live',
+): Promise<Pose> {
   await page.addInitScript(connectionInit({ saveData: false, effectiveType: '4g', downlink: 10 }));
   await page.goto(url);
 
@@ -228,21 +233,46 @@ async function flyTo(page: Page, url: string, region: string): Promise<Pose> {
    * store (`docs/STEP3-FRAME.md` §2 — "a spec must not read it and expect real insets"), and in
    * LOCKED mode there is no `__frame` to read instead.
    *
-   * `__globe.target()` is the mode-independent signal and the more honest one: the fly-to's whole
-   * effect is that `controls.target` leaves the origin for the pin (`CameraRig.tsx:54`). If the target
-   * moves, the selection was received; if it does not, the click missed and waiting longer would only
-   * make the failure slower.
+   * `__globe.target()` was the mode-independent signal in locked mode: the fly-to's whole effect is
+   * that `controls.target` leaves the origin for the pin (`CameraRig.tsx:54`). If the target moves, the
+   * selection was received; if it does not, the click missed and waiting longer would only make the
+   * failure slower. That is still true in LOCKED mode and the poll below keeps it there; live mode
+   * cannot use it (the target never leaves the origin) and polls the machine instead — see W2.
    */
-  await expect
-    .poll(
-      () =>
-        page.evaluate(() => {
-          const t = window.__globe!.target();
-          return Math.hypot(t[0], t[1], t[2]) > 0.02;
-        }),
-      { timeout: 15_000, intervals: [100] },
-    )
-    .toBe(true);
+  /*
+   * WAIVER W2 — the start signal is MODE-AWARE.
+   *
+   * It used to be `|__globe.target()| > 0.02` unconditionally, which is a statement about the locked
+   * aim-at-pin fly-to: the target leaves the origin for the pin. The live face-pin policy keeps the
+   * target at the ORIGIN for the whole arc, so that poll can never become true and every live case
+   * would fail on a 15 s timeout. In live mode the honest "the selection was received" signal is the
+   * machine's own state, published as `__frame.focus`, which is `focusing` from the click until the
+   * fly-to arrives. Locked mode keeps the original poll verbatim.
+   */
+  if (mode === 'live') {
+    await expect
+      .poll(
+        () =>
+          page.evaluate(() => {
+            const f = window.__frame;
+            if (!f) return null;
+            return f.focus !== 'idle';
+          }),
+        { timeout: 15_000, intervals: [100] },
+      )
+      .toBe(true);
+  } else {
+    await expect
+      .poll(
+        () =>
+          page.evaluate(() => {
+            const t = window.__globe!.target();
+            return Math.hypot(t[0], t[1], t[2]) > 0.02;
+          }),
+        { timeout: 15_000, intervals: [100] },
+      )
+      .toBe(true);
+  }
 
   const settled = await settlePose(page);
   return { ...settled, flyMs: Date.now() - t0, _: atRest } as Pose & { _: Pose };
@@ -294,7 +324,7 @@ test.describe('camera golden poses', () => {
     const key = caseKey(region, mode, w, h);
     test(`${key}: the fly-to pose is ${WRITE ? 'recorded' : 'unchanged'}`, async ({ page }) => {
       await page.setViewportSize({ width: w, height: h });
-      const pose = await flyTo(page, mode === 'live' ? live : LOCKED, region);
+      const pose = await flyTo(page, mode === 'live' ? live : LOCKED, region, mode);
 
       console.log(
         `[golden] ${key} pos=(${pose.position.map((n) => n.toFixed(6)).join(',')}) ` +
@@ -335,7 +365,7 @@ test.describe('camera golden poses', () => {
       expect(golden, `${key} is missing from the fixture`).toBeDefined();
 
       await page.setViewportSize({ width: w, height: h });
-      const pose = await flyTo(page, mode === 'live' ? live : LOCKED, region);
+      const pose = await flyTo(page, mode === 'live' ? live : LOCKED, region, mode);
       const err = compare(pose, golden);
       console.log(
         `[golden] ${key} err position=${err.position.toExponential(2)} ` +
@@ -344,7 +374,28 @@ test.describe('camera golden poses', () => {
       );
 
       expect(err.position, `${key}: camera position moved by ${err.position} R`).toBeLessThanOrEqual(tol);
-      expect(err.target, `${key}: controls.target moved by ${err.target} R`).toBeLessThanOrEqual(tol);
+      /*
+       * WAIVER W2 — the target assertion is MODE-AWARE, and the live target is excluded from the
+       * fixture comparison.
+       *
+       * LOCKED keeps the original comparison verbatim: the aim-at-pin fly-to parks `controls.target` on
+       * the pin, and the fixture's locked entries were captured from exactly that (|t| ~ 1.0 R).
+       *
+       * LIVE asserts the face-pin invariant instead — the target never leaves the origin — because that
+       * IS the policy: the camera orbits to the pin's normal and the orbit target stays put, which is
+       * what keeps the globe centred on the free rect. Comparing it to the fixture's ~1.0 R would be
+       * asserting the behaviour the step removes.
+       */
+      if (mode === 'live') {
+        const t = pose.target;
+        const radius = Math.hypot(t[0], t[1], t[2]);
+        expect(
+          radius,
+          `${key}: face-pin must keep controls.target at the origin, got |t| = ${radius} R`,
+        ).toBeLessThanOrEqual(1e-6);
+      } else {
+        expect(err.target, `${key}: controls.target moved by ${err.target} R`).toBeLessThanOrEqual(tol);
+      }
       expect(err.quat, `${key}: orientation changed by ${err.quat}`).toBeLessThanOrEqual(tol);
       expect(err.distance, `${key}: distance moved by ${err.distance} R`).toBeLessThanOrEqual(tol);
     }
