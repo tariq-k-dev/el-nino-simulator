@@ -673,3 +673,32 @@ this one occurrence against a bundle that predates those changes.
 **Operating advice:** close heavy background apps (JetBrains indexers, extra Chrome profiles, Python
 jobs) before a full `pnpm e2e`. The run that failed took 20.3 min; the same suite on a quiet machine
 was ~10 min, and this test measures a time-based settle, not a state.
+
+### Step 3-MOBILE1 — `mobile-sheet.spec.ts`, the first phone-viewport spec (15 cases)
+
+Registered in the batched runner at **480_000 ms**, 2x the slower of two measured isolated walls
+(222 s and 234 s). The file drives every gesture through CDP `Input.dispatchTouchEvent`, not
+`page.mouse`: a mouse stream bypasses the `touch-action` machinery the sheet's isolation depends on, so
+a drag driven by `page.mouse` would pass even with `touch-action: auto` on the handle.
+
+Three tolerance decisions in it were forced by measurement, and each is written into the spec as a
+comment at the assertion:
+
+| case | naive assertion | measured | what the spec asserts |
+|---|---|---|---|
+| M1 sweep, M2 desktop | `view.offsetY` within 1e-6 of `-frame.dy` | 196.8594 vs 196.875; −59.1108 vs −59.125 | within **0.05 px**, the probe's own settled criterion (`|dTarget − d| < 0.05`) |
+| M5 render counter | `during.renders === before.renders`, `before` read at `open()` | counter 12 at t=268 ms, 13 at t=885 ms, 13 for the next 18 s | baseline taken at REST via `settledRenders()`; the drag itself still must not move it, and exactly one render follows release |
+| M3 tappable set | tap every pin the probe lists | PACIFIC projects to x = −9 at 390x844 (the fit clamps at dMax, the disc is 497 px wide) | only pins inside the viewport and above the sheet; excluded ids are printed, not dropped |
+
+M3 also clears the selection with a canvas tap rather than `Escape`: the drawer owns the Escape handler
+and is desktop-only, so on a phone Escape left `pacific` selected for the whole 20 s poll. That gap is a
+known limit in `docs/MOBILE.md`.
+
+M10 originally asserted `expect(chipsAtPeek).toBeGreaterThanOrEqual(0)`, which cannot fail. It is now a
+twelve-Tab walk from the handle asserted in both directions: at peek no region chip and no slider is
+reachable, at full the sliders and all four chips are.
+
+**Counts.** Full suite is now **153**: the 138 of Step 3B2-FIX2-CONT plus `mobile-sheet.spec.ts` **15**.
+Per file: boot 10, camera-golden 9, determinism 2, focus-ux 22, frame 20, frame-director 5, gate-clock 1,
+globe 5, harden 8, history-gate 1, limb 2, look 9, mobile-sheet 15, negative 14, pin-click 7, ref 2,
+reset-ux 11, scene-gate 2, switcher-ux 8.

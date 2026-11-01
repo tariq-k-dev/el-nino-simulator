@@ -1112,3 +1112,47 @@ thirteen files before it.
 So the step's honest totals are: **138 expected, 138 accounted for** — 134 pass in the batch, and the 4 that did
 not (3 in `pin-click` behind a timeout I under-funded, 2 switcher S2 cases behind a known sampler race, N10)
 are all green when run alone, except N10, which is green alone and known-red in a batch by the existing rule.
+
+## 2B-STEP3-MOBILE1 (this session) — the phone layout, and a spec at a viewport nothing had measured
+
+Commits: P0 `96c4ffc`, P1 `ef09ab3`, A `8488e10`, B `be1b3d2`, C `90b7932`, D `f5b9a48`, E `959bbef` +
+`133b2fe`, F `6e46f7c`. Prompt saved verbatim as `docs/prompts/step3-mobile1.md` and committed alone, as P0
+asks; the sentinel line is `END OF PROMPT 2B-STEP3-MOBILE1`.
+
+**P1's three STOP conditions, all checked and none hit.** FIX2 is present (`pin-click.spec.ts` at **7** cases
+and `RegionDrawer` carrying the in-drawer switcher). The desktop free rect took a SECOND free rect without
+moving a desktop pixel, because the mobile fit goes through the same `computeFrame` law with different insets
+— the 15 layout rects and the camera goldens are unchanged, and `camera.view` keeps its pre-existing desktop
+value (see the correction below). The global anomaly scrubber exists on desktop and is reused verbatim.
+
+**One prompt statement was re-read against the repo, and the honest form is what the spec asserts.**
+The prompt says "camera.view must stay null on desktop so the projection matrix is bit-identical". That is
+true of the LOCKED build — the E2E default, which returns before computing a frame — and has never been true
+of LIVE desktop, which has installed the free-rect offset since Step 3A2. Measured at HEAD:
+1280x800 `view { offsetX: -22.421875, offsetY: -59.125 }`, 768x900 `offsetY: 196.8909`. So M1/M2 assert that
+desktop's offset equals the DESKTOP FIT's own (`frame.dy` negated) and that the mobile branch left no trace
+(`frame.viewOffsetY === 0`, `clampedByMax === false`), which is a statement about THIS step rather than about
+a mode. Disclosed as a deviation.
+
+**The measurements that decided the spec's tolerances**, each now a comment at its assertion:
+
+| reading | measured | what the spec does instead of the naive form |
+|---|---|---|
+| desktop offset vs `-dy` at 1e-6 | 196.8594 vs 196.875; −59.1108 vs −59.125 | asserts within **0.05 px** — the probe's own `settled` bound, i.e. the product's stated accept criterion |
+| render counter baseline at `open()` | 12 at t=268 ms, 13 at t=885 ms, then 13 for 18 s | `settledRenders()` takes the baseline at REST; the boot render is the app's, not the drag's |
+| PACIFIC pin at 390x844 | projects to **x = −9** | M3 taps only in-viewport pins above the sheet and PRINTS the excluded ids |
+
+**Isolated runs of the new file:** five, because the gate goes green long before a spec that has never
+executed does. `mobile-run4` 12/15 (M1, M3, M6), `run5`/`run6` 1 red (M6 control, 0.00 deg), `run7` **15/15
+green** (the M6 fix: the control re-parks the camera between taps), `run8` 13/15 on a re-run after the file
+changed, `run10` **15/15 at 3.6 min**, `run12` **15/15 at 3.9 min**. The two passing walls are 222 s and
+234 s, which is why the runner budget is **480_000** (2x the slower) and not the 450_000 first committed.
+
+**`M10` was a tautology and is now a real check.** It asserted `expect(chipsAtPeek).toBeGreaterThanOrEqual(0)`
+on a count of hidden chips — a bound no count can violate. Replaced with a twelve-Tab walk asserted in both
+directions: at peek no region chip and no slider is reachable, at full the sliders and all four chips are.
+Measured first (`probe-tab`): at peek every chip has `getClientRects().length === 0` inside a `hidden` parent,
+and the walk lands only on the island, the three header buttons, the reset control and the handle.
+
+**Counts.** Unit gate **1020 passed / 47 files** at HEAD. The e2e suite is **154 expected** across 19 files
+(the 139 before this step, plus `mobile-sheet.spec.ts` 15); the batched run's own table is the arithmetic.
