@@ -27,6 +27,19 @@ export interface GlobeProbeHandle {
   pins(): Array<{ id: string; x: number; y: number; behind: boolean; facing: boolean }>;
   /** Pin core positions in WORLD space, for negative tests that inject at a pin. */
   pinAnchors(): Array<{ id: string; world: [number, number, number] }>;
+  /**
+   * Per pin: the CORE and SURFACE world positions plus the outward normal, spun by the live rotation.
+   *
+   * Present on the runtime handle since the negative suite needed it (`globeProbe.ts`), but never mirrored
+   * here until `pin-click.spec.ts` needed a pin's world position for `dot(normal, towardCamera)`. A
+   * declaration only — no runtime change.
+   */
+  pinsWorld(): Array<{
+    name: string;
+    core: [number, number, number];
+    surface: [number, number, number];
+    normal: [number, number, number];
+  }>;
   setCamera(position: [number, number, number]): Promise<void>;
   setAzimuth(deg: number): Promise<void>;
   /**

@@ -687,6 +687,8 @@ function expectedCounts() {
     'focus-ux.spec.ts': 22,
     // Step 3B2-FIX1 B: R1 x8 (four regions x two viewports) + R2 + R3 + R4.
     'reset-ux.spec.ts': 11,
+    // Step 3B2-FIX1 D: the sweep, the spin-on rate, the hypothesis stacks and the D4 assertions.
+    'pin-click.spec.ts': 4,
     'negative.spec.ts': 14,
     'ref.spec.ts': 2,
     'scene-gate.spec.ts': 2,
