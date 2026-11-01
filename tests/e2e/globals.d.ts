@@ -117,6 +117,12 @@ export interface FrameProbeHandle {
   readonly userZoomed: boolean;
   /** Step 3B: the targeted region, or null. */
   readonly regionId: string | null;
+  /** Step 3B2: true when the camera is at the framed default pose. */
+  readonly viewIsDefault: boolean;
+  /** Step 3B2: true while the planet spins. */
+  readonly spinning: boolean;
+  /** Step 3B2: `locked` (aim-at-pin) or `live` (face-pin). */
+  readonly focusPolicy: 'live' | 'locked';
   snapshot(): {
     mode: 'live' | 'locked';
     insets: { top: number; right: number; bottom: number; left: number };
@@ -129,6 +135,9 @@ export interface FrameProbeHandle {
     focus: 'idle' | 'focusing' | 'focused' | 'returning';
     userZoomed: boolean;
     regionId: string | null;
+    viewIsDefault: boolean;
+    spinning: boolean;
+    focusPolicy: 'live' | 'locked';
   };
 }
 

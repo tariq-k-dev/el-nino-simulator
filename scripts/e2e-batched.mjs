@@ -524,6 +524,10 @@ function expectedCounts() {
     'camera-golden.spec.ts': 9,
     // Step 3B: the five NEW director behaviours (wheel/flag, resize, select, close, drag-cancels-fly).
     'frame-director.spec.ts': 5,
+    // Step 3B2: U1-U10. U1 is parameterised over four viewports, U2 over three plus the 1024x768
+    // centring-only branch, U5 over three close paths and U7 over two timings. Counted from
+    // `playwright --list`, not by hand: 22.
+    'focus-ux.spec.ts': 22,
     'negative.spec.ts': 14,
     'ref.spec.ts': 2,
     'scene-gate.spec.ts': 2,

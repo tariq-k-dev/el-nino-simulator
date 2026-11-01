@@ -154,6 +154,10 @@ export const FILE_TIMEOUTS_MS = {
   'camera-golden.spec.ts': 6 * 60_000,
   // frame-director.spec: 5 cases, each booting a page; 2x the measured isolated time, rounded up.
   'frame-director.spec.ts': 6 * 60_000,
+  // focus-ux.spec: measured 6.1 min for the 22 cases in one isolated process (first full pass) -> 2x is
+  // 12.2 min, rounded up to 13 min. It is the slowest non-pixel file: every case boots a page, waits out
+  // the insets transition and flies between two regions.
+  'focus-ux.spec.ts': 13 * 60_000,
   'globe.spec.ts': 3 * 60_000,
   'boot.spec.ts': 10 * 60_000,
   'harden.spec.ts': 4 * 60_000,
