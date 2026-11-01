@@ -46,6 +46,7 @@ import argparse
 import sys
 from datetime import date
 from pathlib import Path
+from typing import cast
 from urllib.error import URLError
 from urllib.request import Request, urlopen
 
@@ -85,7 +86,9 @@ def fetch(offline: bool) -> str:
     """Download the CPC table, or reuse the cache. Returns the raw text."""
     if offline:
         if not CACHE_FILE.exists():
-            print(f"ERROR: --offline given but no cache at {CACHE_FILE}", file=sys.stderr)
+            print(
+                f"ERROR: --offline given but no cache at {CACHE_FILE}", file=sys.stderr
+            )
             raise SystemExit(1)
         print(f"  using cached download: {CACHE_FILE.name}")
         return CACHE_FILE.read_text(encoding="utf-8", errors="replace")
@@ -125,7 +128,10 @@ def parse(raw: str) -> pl.DataFrame:
             skipped += 1
 
     if not rows:
-        print("ERROR: parsed zero data rows - the source format may have changed.", file=sys.stderr)
+        print(
+            "ERROR: parsed zero data rows - the source format may have changed.",
+            file=sys.stderr,
+        )
         raise SystemExit(1)
 
     print(f"  parsed {len(rows):,} rows" + (f" ({skipped} skipped)" if skipped else ""))
@@ -171,7 +177,9 @@ def enrich(df: pl.DataFrame, since: int) -> pl.DataFrame:
         (-0.5 - anomaly * 0.8 - JET * 0.6).alias("temp_deviation_us_f"),
         # Southeast Asia / Indonesia
         (-10.0 - anomaly * 22.0 - JET * 9.0).alias("precip_anomaly_se_asia"),
-        (anomaly * 3.2 * (1.0 + JET * 0.15)).clip(0.0, 10.0).alias("drought_index_se_asia"),
+        (anomaly * 3.2 * (1.0 + JET * 0.15))
+        .clip(0.0, 10.0)
+        .alias("drought_index_se_asia"),
         # Horn of Africa
         (20.0 + anomaly * 25.0 + JET * -4.0).alias("precip_anomaly_africa"),
         (anomaly * 2.8).clip(0.0, 10.0).alias("flood_index_horn"),
@@ -264,10 +272,18 @@ def write_schema(df: pl.DataFrame) -> None:
 
 
 def main() -> int:
-    parser = argparse.ArgumentParser(description="Build the ENSO parquet from NOAA CPC data.")
-    parser.add_argument("--offline", action="store_true", help="use the cached CPC download")
-    parser.add_argument("--since", type=int, default=1950, help="drop months before this year")
-    parser.add_argument("--out", type=Path, default=OUTPUT_FILE, help="output parquet path")
+    parser = argparse.ArgumentParser(
+        description="Build the ENSO parquet from NOAA CPC data."
+    )
+    parser.add_argument(
+        "--offline", action="store_true", help="use the cached CPC download"
+    )
+    parser.add_argument(
+        "--since", type=int, default=1950, help="drop months before this year"
+    )
+    parser.add_argument(
+        "--out", type=Path, default=OUTPUT_FILE, help="output parquet path"
+    )
     args = parser.parse_args()
 
     print(f"Source: {SOURCE_NAME}")
@@ -304,16 +320,23 @@ def main() -> int:
         pl.col("nino_34_anomaly").max().round(2).alias("max"),
     ).row(0, named=True)
 
-    print(f"\n  {stats['rows']:,} monthly observations ({stats['first']} -> {stats['last']})")
+    print(
+        f"\n  {stats['rows']:,} monthly observations ({stats['first']} -> {stats['last']})"
+    )
     print(f"  Niño 3.4 anomaly range: {stats['min']} .. {stats['max']} C")
-    print(f"  wrote {args.out.relative_to(PROJECT_ROOT)} ({args.out.stat().st_size / 1024:.0f} KB)")
-    print(f"  wrote {CSV_FILE.relative_to(PROJECT_ROOT)} ({CSV_FILE.stat().st_size / 1024:.0f} KB)")
+    print(
+        f"  wrote {args.out.relative_to(PROJECT_ROOT)} ({args.out.stat().st_size / 1024:.0f} KB)"
+    )
+    print(
+        f"  wrote {CSV_FILE.relative_to(PROJECT_ROOT)} ({CSV_FILE.stat().st_size / 1024:.0f} KB)"
+    )
 
     duplicates = df.height - df["date"].n_unique()
     if duplicates:
         print(f"ERROR: {duplicates} duplicate dates", file=sys.stderr)
         return 1
-    if df["date"].max() < date(2020, 1, 1):
+    max_date = cast(date | None, df["date"].max())
+    if max_date is None or max_date < date(2020, 1, 1):
         print("ERROR: dataset looks truncated - check the source.", file=sys.stderr)
         return 1
 
