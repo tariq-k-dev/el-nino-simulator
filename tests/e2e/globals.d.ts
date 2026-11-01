@@ -137,6 +137,12 @@ export interface FrameProbeHandle {
   readonly spinning: boolean;
   /** Step 3B2: `locked` (aim-at-pin) or `live` (face-pin). */
   readonly focusPolicy: 'live' | 'locked';
+  /** Step 3-MOBILE1: which layout the page is running. */
+  readonly layoutMode: 'desktop' | 'mobile';
+  /** Step 3-MOBILE1: the window offset in px, positive-down. 0 on desktop. */
+  readonly viewOffsetY: number;
+  /** Step 3-MOBILE1: true when `dMax` bound the mobile fit. */
+  readonly clampedByMax: boolean;
   snapshot(): {
     mode: 'live' | 'locked';
     insets: { top: number; right: number; bottom: number; left: number };
@@ -153,6 +159,9 @@ export interface FrameProbeHandle {
     hasRegion: boolean;
     spinning: boolean;
     focusPolicy: 'live' | 'locked';
+    layoutMode: 'desktop' | 'mobile';
+    viewOffsetY: number;
+    clampedByMax: boolean;
   };
 }
 
@@ -187,6 +196,34 @@ declare global {
     __THREE?: typeof import('three');
     __camera?: unknown;
     __gl?: unknown;
+    /**
+     * E2E-only: the mobile snap sheet's state. Installed by `SnapSheet` under `VITE_E2E`.
+     *
+     * `renders` is a render counter and `drags` a gesture counter, so M5 can assert that a drag produces NO
+     * render and exactly one after release — a claim no DOM read can make.
+     */
+    __mobileSheet?: {
+      marker: string;
+      tier: 'peek' | 'half' | 'full';
+      tierIndex: number;
+      translateY: number;
+      renders: number;
+      drags: number;
+      viewportH: number;
+      sheetHeight: number;
+      points: { peek: number; half: number; full: number };
+      read(): {
+        marker: string;
+        tier: 'peek' | 'half' | 'full';
+        tierIndex: number;
+        translateY: number;
+        renders: number;
+        drags: number;
+        viewportH: number;
+        sheetHeight: number;
+        points: { peek: number; half: number; full: number };
+      };
+    };
     /** E2E-only: single-purpose ablation seam for the globe look flags. */
     __lookToggles?: {
       set(patch: Record<string, boolean>): Record<string, boolean>;

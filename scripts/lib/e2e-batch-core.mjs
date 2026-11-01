@@ -190,6 +190,10 @@ export const FILE_TIMEOUTS_MS = {
   'limb.spec.ts': 120_000,
   'ref.spec.ts': 120_000,
   'scene-gate.spec.ts': 120_000,
+  // Step 3-MOBILE1 E: M1-M10, 15 cases. Measured isolated wall 3.7 min (222 s), so 2x is 444 s; rounded up to
+  // 450_000 per this table's own rule. The wall is dominated by fixed waits — the file drives real CDP touch
+  // streams and reads the camera pose between gestures — not by rendering.
+  'mobile-sheet.spec.ts': 450_000,
 };
 
 /** Default when a file is not in the table (a new spec gets a generous backstop, not none). */

@@ -695,6 +695,9 @@ function expectedCounts() {
     'negative.spec.ts': 14,
     'ref.spec.ts': 2,
     'scene-gate.spec.ts': 2,
+    // Step 3-MOBILE1 E: M1 x2 (the 390x844 layout case and the 767/768/1024 sweep), M2, M3 x2, M4 x2, M5 x2,
+    // M6, M7, M8, M9 x2, M10 = 15. Counted from `playwright --list`, not by hand.
+    'mobile-sheet.spec.ts': 15,
   };
   return {
     perFile,

@@ -221,6 +221,9 @@ describe('fileTimeoutMs', () => {
     // Step 3B2-FIX2-CONT A5: 7 cases, measured 9.7 min isolated. 1_200_000 is 2x that. The previous
     // 240 s budget killed the file at 3/7 in the first batched run after the case count grew.
     'pin-click.spec.ts': 1_200_000,
+    // Step 3-MOBILE1 E: 15 cases, measured 3.7 min isolated (222 s) on the final green run. 2x is 444 s,
+    // rounded up to 450 s. Not from run3 — this file did not exist then.
+    'mobile-sheet.spec.ts': 450_000,
   };
 
   it('covers exactly the files the measured run covers, plus the declared additions', () => {
