@@ -498,3 +498,44 @@ request as a monotonic counter, because a DOM button outside `<Canvas>` cannot h
 | **S7** rects | 15 / 15 identical before and after; header height 118.25 px unchanged; only `[data-testid="reset-view"]` added (116.08 x 29 at x 1299.92, y 31.5) |
 | unit tests | **885 / 40 files** (was 880 / 39; +5 for the Reset control and the view store) |
 | `focus-ux.spec.ts` | **22 / 22** in two separate processes (6.0 min, 5.9 min) |
+
+## 12. As built — 3B2-FIX1: Reset semantics
+
+The defect: Reset View reset the camera and resumed the spin but left `activeRegion` set, so the region card
+and the drawer stayed open over a default-pose globe — a state the app never loads into.
+
+**The rule now lives in `src/scene/resetView.ts`**, as one function that drives BOTH channels:
+
+| channel | what it reaches | why both |
+|---|---|---|
+| `requestViewReset` = `viewStore.requestReset()` | the director's `RESET` transition: `returning`, `userZoomed: false`, `regionId: null`, spin resumed | needed when nothing is selected at all (Reset after a plain wheel), and it is the ONLY thing that clears a user zoom, because the machine's CLOSE rule deliberately preserves one |
+| `clearSelection` = `selectRegion(null)` | the app's selection state → drawer closed, card deselected, `focusNonce` untouched | the same path the drawer's X and Escape take, so Reset cannot reach a state the other close affordances cannot |
+
+**Order is load-bearing, not stylistic.** `RESET` is dispatched first and synchronously, so the machine is
+already `returning` with `userZoomed: false` and `regionId: null` when React re-renders and the director's
+selection effect fires `SELECT(null)`. `SELECT(null)` in `returning` is `closeOrStay`, which returns the
+snapshot unchanged — the two paths cannot start competing returns.
+
+**Why the final pose is identical to U5's.** It is the same `returning` animation from the same machine state:
+`runLiveFlyTo` with `state === 'returning'` targets `DEFAULT_DIRECTION`, and the fit's distance channel — live
+in every state since AM1 — eases to `d_fit` of the closed (or open) rect. Nothing about Reset adds a writer.
+
+**`hasRegion` was added to `viewStore`.** The prompt requires Reset to be enabled whenever `activeRegion` is
+non-null "even if the camera happens to look default". `viewIsDefault` is a question about the POSE, so the
+control needed a second fact. `GlobeScene` publishes it from the `activeRegion` prop (one effect per
+selection), the director publishes it from `machine.regionId` on every frame so a frame cannot clear it, and
+the store drops duplicate writes. `ResetViewButton` is disabled only when `viewIsDefault && !hasRegion`.
+
+**Keyboard focus.** A keyboard user can reach Reset while focus is inside the drawer. The drawer closes to
+`aria-hidden` and off-canvas, so focus inside it is focus on an imperceptible node. `ResetViewButton` checks
+`document.activeElement.closest('[data-occluder="right-drawer"]')` BEFORE closing and moves focus to itself
+when it was; the unit test covers both directions, and R4 asserts it end to end.
+
+**Measured (`reset-ux.spec.ts`, 11/11 at `aad1338`, re-run 11/11 in the full batch):** direction error vs the
+fresh-load pose **0.00000 deg** on all 8 R1 legs, distance 3.778788 against a 3.778586 analytic fit target,
+`|target|` **0.00e+0**, `userZoomed false`, `spinning true`, `viewIsDefault true`, drawer `aria-hidden="true"`,
+Reset `aria-disabled="true"`. R2 (zoomed, no region) starts at d 3.27301 and ends at 3.778374. R3 catches the
+machine still `focusing` and ends in the same state. R4's post-Reset `activeElement` is the Reset button.
+
+**S1 unchanged:** `ref.spec.ts` residual `maxAbs=0 differing=0`, sha `934ecd13…d29a44`; `camera-golden` 9/9 at
+8.88e-16. The Reset work touches no render path.

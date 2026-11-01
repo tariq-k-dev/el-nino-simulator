@@ -381,12 +381,39 @@ construction, so the inventory check skips that status (the TIMEOUT row already 
 summary said "count mismatch in: boot.spec.ts" beside the TIMEOUT, which reads as bookkeeping when the only
 fact is that the backstop fired.
 
+### Step 3B2-FIX1 — what this step added to the suite
+
+Two new files, both registered in `expectedCounts()` and `FILE_TIMEOUTS_MS`:
+
+| file | cases | what it certifies | measured (isolated) |
+|---|---:|---|---:|
+| `reset-ux.spec.ts` | **11** | Reset View returns the app to its exact load state: R1 x8 (4 regions x 2 viewports), R2 (zoomed, no region), R3 (mid-flight), R4 (keyboard focus out of the closed drawer) | 2.2 min (11/11) |
+| `pin-click.spec.ts` | **4** | the pin-click measurement and its hypotheses (D1 sweep 48 clicks, D1 spin-on, D2 stacks) plus the D4 assertions | 39.4 s + 6.3 s for two of the four |
+
+Full suite is now **127**: the previous 112 + 11 + 4.
+
+**`reset-ux.spec.ts` compares against a pose sampled right after a FRESH LOAD of the same viewport**, not
+against a hardcoded vector — the load pose is the product's own definition of "the load state". Measured at
+`aad1338`: direction error **0.00000 deg**, distance 3.778788 against a 3.778586 fit target, `|target|`
+**0.00e+0**, `userZoomed false`, `spinning true`, `viewIsDefault true`, drawer `aria-hidden="true"`,
+Reset `aria-disabled="true"` — identical on all 8 R1 legs.
+
+**`pin-click.spec.ts` D4 is RED, on purpose and truthfully.** It asserts the post-fix behaviour the prompt
+asks for (front pins 100 % at every angle, back pins never), and no pin fix was implemented in this step — see
+`docs/STEP3D-PIN-AUDIT.md`. The measurement it rests on: **front 9/23 selected (39.1 %), back 13/24 selected
+(54.2 %)**. Its D1/D2 cases pass; D4 fails and names every angle.
+
+**N10 remains known-red in a full run** (`differing=263`, `maxAbs=0.7152`), classified by the step-N rule:
+`maxAbs <= 1.0` and only the differing-pixel assertion failed. See `docs/D10-REPORT.md` for the 15-run
+diagnostic, which finds the count swings 15-320 px at ONE commit with load, warm-up and version ruled out.
+
 ### Expected counts
 
 `look.spec.ts` **9**, `negative.spec.ts` **14**, `globe.spec.ts` **5** = **28** for `e2e:look`.
 Full suite: boot 10, **camera-golden 9**, determinism 2, **focus-ux 22**, **frame 20**,
 **frame-director 5**, gate-clock 1, globe 5, harden 8, history-gate 1, limb 2, look 9, negative 14,
-**ref 2**, scene-gate 2 = **112**
+`ref 2`, scene-gate 2 = **112**; Step 3B2-FIX1 added `reset-ux.spec.ts` **11** and `pin-click.spec.ts` **4**
+= **127**
 (was 76 at the close of Step 3A2; Step 3B added `camera-golden.spec.ts` **9** and
 `frame-director.spec.ts` **5** = 90; Step 3B2 added `focus-ux.spec.ts` **22** = 112). The 74 recorded in an earlier revision omitted `ref.spec.ts`'s two
 tests from the sum while the runner itself reported 76, which is how the arithmetic drifted from the

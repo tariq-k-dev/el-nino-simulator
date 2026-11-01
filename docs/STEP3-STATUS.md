@@ -15,7 +15,79 @@ Session log for the Step 3 framing work. One row per step; each prompt lives in 
 | 2B-STEP3-B | **CLOSED** — CameraDirector the single camera writer | `4c7801d`…`f1d659c` | 848 unit tests / 38 files; 90 e2e expected |
 | 2B-STEP3-B2 | PARTIAL — audit found C1/C2; B (pure facing core) landed | `e1c97a1`, `0ffeddf`, `904b149`, `5e5c9ea`, `b53fded` | 880 unit tests / 39 files; stopped before C |
 | 2B-STEP3-B2-CONT | **STOPPED at C** — AM5's pre-edit grep found C3 | `541b58b`, `4787efb` | AM1-AM5 recorded; C3 quantified |
+| 2B-STEP3-B2-FIX1 | PARTIAL — A/B/E landed; C stopped at the C2 audit, D measured but not fixed | `2a76c2e`, `9d6bbaf`, `aad1338`, `dcf2214`, `199187e`, `a9df3ab` | 900 unit tests / 40 files; e2e expected 127 |
 | 2B-STEP3-B2-CONT2 | **CLOSED** — live face-pin shipped, W1 + W2, Reset control, 22 focus-ux cases | `7cd793b`…`this` | 885 unit tests / 40 files; e2e expected 112 |
+
+---
+
+## 2B-STEP3-B2-FIX1 — runner hardening, Reset, cards audit, pin measurement, D10
+
+Head before the step: `5e7c826`. **Steps A, B and E landed; C stopped at its own C2 audit; D measured the
+defect and did not fix it.** Reported this way because that is what the tree contains.
+
+| step | commit | result |
+|---|---|---|
+| P0 | `2a76c2e` | the prompt alone |
+| A | `9d6bbaf` | runner hardening: timeout kills the file's tree AND its server, the port is proved free, an HTTP liveness probe runs before every file, a file the harness cannot serve is `not-run (infra)`, summaries archive to `.cache/e2e-archive/`, `--self-test` proves the kill path (7/7 twice) |
+| B | `aad1338` | Reset View returns to the exact load state; `reset-ux.spec.ts` 11/11; S1 residual 0 with sha `934ecd13` unchanged |
+| C | `dcf2214` | **STOP at C2.** The cards are visually covered by the 86-90 % opaque drawer panel, not blocked by a transparent wrapper |
+| D | `199187e` | **measurement only.** front 9/23, back 13/24; hypothesis (f) confirmed, the pin fix not implemented |
+| E | `a9df3ab` | D10 report: 15 runs at one commit, 15-320 px, load and warm-up ruled out |
+
+**Unit tests: 900 / 40 files** (885 + 7 for A + 8 for B). **e2e expected 127** (112 + 11 + 4).
+
+### Full batched run (one run, hardened runner)
+
+34.8 min, **15/17 files**, **127 tests ran**: 125 passed, 2 failed, 0 skipped, 127 expected. Zero retries and
+zero `not-run (infra)` rows — no timeout fired. Archived immediately to
+`.cache/e2e-archive/2026-11-01T07-13-45-821Z-batched-summary.json`.
+
+| file | status | passed | failed | skipped | expected | wall |
+|---|---|---:|---:|---:|---:|---:|
+| boot | ok | 10 | 0 | 0 | 10 | 404.6 s |
+| camera-golden | ok | 9 | 0 | 0 | 9 | 146.3 s |
+| determinism | ok | 2 | 0 | 0 | 2 | 15.4 s |
+| focus-ux | ok | 22 | 0 | 0 | 22 | 316.0 s |
+| frame-director | ok | 5 | 0 | 0 | 5 | 40.3 s |
+| frame | ok | 20 | 0 | 0 | 20 | 121.3 s |
+| gate-clock | ok | 1 | 0 | 0 | 1 | 52.0 s |
+| globe | ok | 5 | 0 | 0 | 5 | 52.9 s |
+| harden | ok | 8 | 0 | 0 | 8 | 108.7 s |
+| history-gate | ok | 1 | 0 | 0 | 1 | 16.2 s |
+| limb | ok | 2 | 0 | 0 | 2 | 15.4 s |
+| look | ok | 9 | 0 | 0 | 9 | 317.4 s |
+| **negative** | **FAIL** | 13 | **1** | 0 | 14 | 194.1 s |
+| **pin-click** | **FAIL** | 3 | **1** | 0 | 4 | 129.2 s |
+| ref | ok | 2 | 0 | 0 | 2 | 13.2 s |
+| reset-ux | ok | 11 | 0 | 0 | 11 | 135.0 s |
+| scene-gate | ok | 2 | 0 | 0 | 2 | 11.0 s |
+| **total** | **15/17** | **125** | **2** | **0** | **127** | **34.8 min** |
+
+125 + 2 + 0 = 127. `testsSkipped` came back `null` for every file (Playwright prints no skipped count for a
+suite with none); the 0 is that null read as zero.
+
+**Red 1 — N10, KNOWN-RED.** `negative.spec.ts:579`, `differing=263` against `<= 50`, `maxAbs=0.7152` against
+`<= 1.0`. Classified by the step-N rule (maxAbs within the floor, only the px assertion failed). `docs/D10-REPORT.md`
+measured the same check 15 times at one commit: 15-320 px, 4 greens.
+
+**Red 2 — D4, INTENDED.** `pin-click.spec.ts` D4 asserts post-fix behaviour and the fix is not in the tree.
+It names every failing angle; `docs/STEP3D-PIN-AUDIT.md` carries the pre-fix numbers. Not rerun in isolation:
+there is nothing for it to pass with, and calling that an artifact would be false.
+
+### Deviations, stated plainly
+
+1. **B needed no WAIVER W3**: the B1 grep found no assertion outside `focus-ux.spec.ts` U5/U6 that the new
+   Reset behaviour contradicts, and U5/U6 both still pass unedited (U6's `regionId` null assertion is now also
+   satisfied by the selection clear). W3 was therefore not spent.
+2. **Reset publishes `hasRegion` through `viewStore`** rather than deriving the enable state from the pose. The
+   prompt's wording ("enabled whenever `activeRegion` is non-null") needs that flag somewhere React can read
+   without a frame, and the store was already the one thing it reads from the scene.
+3. **Step C stopped** rather than choosing among the options, as C2 requires.
+4. **Step D implemented no fix.** D1/D2 are measured and committed; the two candidate fixes are specified in
+   the audit doc but not written.
+5. **Step E's worktree arm was not run** — all 15 runs are at one commit, and the report says so rather than
+   presenting three commits it did not check out. Its "after heavy file" and "warm vs cold" arms were also not
+   run; both are declared unmeasured in the report.
 
 ---
 
