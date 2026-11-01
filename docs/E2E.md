@@ -711,3 +711,58 @@ reachable, at full the sliders and all four chips are.
 Per file: boot 10, camera-golden 9, determinism 2, focus-ux 22, frame 20, frame-director 5, gate-clock 1,
 globe 5, harden 8, history-gate 1, limb 2, look 9, mobile-sheet 15, negative 14, pin-click 7, ref 2,
 reset-ux 11, scene-gate 2, switcher-ux 8.
+
+
+---
+
+## Step 2B-STEP3-MOBILE2 E — `layout-matrix.spec.ts`
+
+One new spec file, **10 cases**, registered in the batched runner at **1 200 000 ms** and in
+`expectedCounts()` at 10. The budget is **2x the measured ISOLATED wall (9.2 min)**, not 2x a batched wall —
+there was no batched measurement when it was set, and the table says so in both places rather than presenting a
+guess as a measurement.
+
+What it measures: LM1 the mode table over 13 viewports, LM2 the compact header (one of each control, an
+unclipped h1, no pairwise overlap, 44 px targets, the published `headerBottom`), LM3 the disc AND envelope inside
+the free rect with >= 8 px, LM4 zoom-out headroom, LM5 a face-pinned pin above the Half sheet, LM6 the landscape
+dock, LM7 a rotation round-trip, LM8 desktop's unchanged controls in the LOCKED build, LM9 the chip popover, and
+the 412x924 sheet typography.
+
+Measured LM3 margins (disc edge against the free rect, px) — all 13 viewports clear the 8 px bound with 11.4 px
+to spare at the tightest:
+
+| viewport | disc r | L | R | T | B |
+|---|---:|---:|---:|---:|---:|
+| 390x844 | 165.6 | 29.4 | 29.4 | 87.3 | 115.6 |
+| 412x924 | 175.6 | 30.4 | 30.4 | 118.9 | 129.6 |
+| 360x640 | 122.0 | 58.0 | 58.0 | 24.8 | 98.0 |
+| 375x667 | 134.7 | 52.8 | 52.8 | 26.2 | 93.4 |
+| 430x932 | 183.7 | 31.3 | 31.3 | 115.0 | 123.9 |
+| 320x568 | 88.2 | 71.8 | 71.8 | 21.2 | 100.5 |
+| 768x1024 | 296.7 | 87.3 | 87.3 | 44.1 | 44.1 |
+| 820x1180 | 354.3 | 55.7 | 55.7 | 50.5 | 50.5 |
+| 960x1440 | 422.2 | 57.8 | 57.8 | 89.2 | 89.2 |
+| 667x375 | 70.7 | 102.8 | 102.8 | 19.4 | 19.4 |
+| 844x390 | 135.0 | 126.6 | 126.6 | 27.0 | 27.0 |
+| 924x412 | 144.9 | 141.5 | 141.5 | 28.1 | 28.1 |
+| 932x430 | 153.0 | 136.0 | 136.0 | 29.0 | 29.0 |
+
+Two PRODUCT defects the suite found, both fixed in `HeaderCompact` and both invisible to any review:
+
+- `ResetViewButton` measures **26 px tall** in the compact header (its own class is `px-3 py-1.5` with an
+  `sr-only` label). Fixed with a 44x44 stretch box in `HeaderCompact` ONLY, leaving the shared component — and
+  therefore the desktop header — byte-identical.
+- The chip's popover **closed itself when the unit toggle was pressed**: its outside-pointerdown test was
+  `chipRoot.contains(target)`, and the toggle is a SIBLING inside the same `<header>`. The boundary is now the
+  whole header, because comparing the value in the other unit is the one thing a reader does next.
+
+Two bugs were OURS in the spec, recorded so a later reader does not mistake them for product changes: LM7 read the
+camera direction while `focus` was still `focusing` (capturing 4.48 deg of an unfinished fly-to arc as a "rotation
+error"), and LM2's outside-tap target `(8, 8)` sits inside the header's own padding box, which is now deliberately
+"inside".
+
+**Harness notes.** The runner refuses to start if its port is held before the first file ("port 4300 is already in
+use"), and a killed run leaves the Brotli server holding it: `netstat -ano | grep ':4300 .*LISTENING'` then
+`taskkill /PID <pid> /T /F`. `node scripts/e2e-batched.mjs` also prints `stdin is not a tty` and exits when its
+stdout is a redirected pipe under this shell — launched through `Start-Process ... -RedirectStandardOutput` it
+runs normally, which is how the recorded full run was produced.

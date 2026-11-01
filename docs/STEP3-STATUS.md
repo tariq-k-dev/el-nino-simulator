@@ -17,6 +17,8 @@ Session log for the Step 3 framing work. One row per step; each prompt lives in 
 | 2B-STEP3-B2-CONT | **STOPPED at C** — AM5's pre-edit grep found C3 | `541b58b`, `4787efb` | AM1-AM5 recorded; C3 quantified |
 | 2B-STEP3-B2-FIX1 | PARTIAL — A/B/E landed; C stopped at the C2 audit, D measured but not fixed | `2a76c2e`, `9d6bbaf`, `aad1338`, `dcf2214`, `199187e`, `a9df3ab` | 900 unit tests / 40 files; e2e expected 127 |
 | 2B-STEP3-B2-CONT2 | **CLOSED** — live face-pin shipped, W1 + W2, Reset control, 22 focus-ux cases | `7cd793b`…`this` | 885 unit tests / 40 files; e2e expected 112 |
+| 2B-STEP3-MOBILE1 | **CLOSED** — the mobile snap sheet, the HUD island, the vertical view offset | `f7a8332` | 1020 unit tests; mobile-sheet 15/15 |
+| 2B-STEP3-MOBILE2 | **CLOSED** — the layout law, the free rect, the unclamped ceiling, the dock | `cf8b0a6`…`7d7db34` | 1090 unit tests / 48 files; layout-matrix 10 cases |
 
 ---
 
