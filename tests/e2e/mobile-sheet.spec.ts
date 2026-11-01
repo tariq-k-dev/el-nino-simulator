@@ -881,21 +881,55 @@ test.describe('mobile snap sheet', () => {
   test('M10: out-of-view controls are not focusable, and keyboard tier changes work', async ({ page }) => {
     await open(page);
 
-    /* At peek the half-tier switcher chips must not be reachable. */
-    const chipsAtPeek = await page.evaluate(() => {
-      const chips = Array.from(document.querySelectorAll('[data-region-id]'));
-      return chips.filter((el) => {
-        const r = el.getBoundingClientRect();
-        /* A chip wholly outside the viewport, or inside an aria-hidden subtree, is not perceivable. */
-        const hidden = Boolean(el.closest('[aria-hidden="true"]'));
-        return hidden || r.bottom <= 0 || r.top >= window.innerHeight;
-      }).length;
-    });
-    expect(chipsAtPeek, 'no reachable chip may be implied at peek').toBeGreaterThanOrEqual(0);
+    /*
+     * THE HALF-TIER CONTROLS, AS THE KEYBOARD SEES THEM.
+     *
+     * Two facts, both measured (`.cache/mob/probe-tab.spec.ts`): at peek all four chips have `getClientRects()
+     * .length === 0` — they sit inside a `hidden` parent, not merely a zero-height one — and a twelve-Tab walk
+     * from the handle never lands on one, nor on any of the three sliders. At full the same walk lands on
+     * `Global SST anomaly`, the two other sliders and all four chips, in that order.
+     *
+     * The assertion is therefore a real one in BOTH directions: the controls are unreachable at peek and
+     * reachable at full. An earlier revision asserted only `>= 0` on a count of hidden chips, which cannot fail
+     * and so proved nothing about either tier.
+     */
+    const walk = async (from: 'peek' | 'full'): Promise<string[]> => {
+      const handle = page.getByRole('slider', { name: 'Sheet position' });
+      await handle.focus();
+      if (from === 'full') {
+        await handle.press('End');
+        await page.waitForTimeout(600);
+      }
+      const seen: string[] = [];
+      for (let i = 0; i < 12; i += 1) {
+        await page.keyboard.press('Tab');
+        seen.push(
+          await page.evaluate(() => {
+            const el = document.activeElement as HTMLElement | null;
+            if (!el || el === document.body) return 'body';
+            return el.getAttribute('aria-label') ?? el.getAttribute('data-region-id') ?? el.tagName.toLowerCase();
+          }),
+        );
+      }
+      return seen;
+    };
 
+    const peekWalk = await walk('peek');
+    for (const hidden of ['pacific', 'us-west', 'se-asia', 'horn-africa', 'Global SST anomaly']) {
+      expect(peekWalk, `"${hidden}" must not be reachable at peek`).not.toContain(hidden);
+    }
+
+    const fullWalk = await walk('full');
+    for (const reachable of ['Global SST anomaly', 'pacific', 'horn-africa']) {
+      expect(fullWalk, `"${reachable}" must be reachable at full`).toContain(reachable);
+    }
+
+    /* Home from full returns the handle to peek, and the keyboard contract reports it. */
     const handle = page.getByRole('slider', { name: 'Sheet position' });
-    await handle.focus();
+    await handle.press('Home');
+    await page.waitForTimeout(600);
     expect(await handle.getAttribute('aria-valuenow')).toBe('0');
+    expect(await handle.getAttribute('aria-valuetext')).toBe('Peek');
 
     await handle.press('End');
     await page.waitForTimeout(600);
