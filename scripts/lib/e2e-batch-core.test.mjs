@@ -224,6 +224,10 @@ describe('fileTimeoutMs', () => {
     // Step 3-MOBILE1 E: 15 cases, measured 222 s and 234 s on two green isolated runs. 2x the slower is
     // 468 s, rounded up to 480 s. Not from run3 — this file did not exist then.
     'mobile-sheet.spec.ts': 480_000,
+    // Step MOBILE2 E: 10 cases over 13 viewports, measured 9.2 min isolated on the first full run. No BATCHED
+    // wall exists yet, so 1_200_000 is 2x the measured ISOLATED wall rather than a batched measurement — the
+    // conservative direction, and the one A3's rule converges to once the batch reports.
+    'layout-matrix.spec.ts': 1_200_000,
   };
 
   it('covers exactly the files the measured run covers, plus the declared additions', () => {

@@ -194,6 +194,10 @@ export const FILE_TIMEOUTS_MS = {
   // 468 s; rounded up to 480_000 per this table's own rule. The wall is dominated by fixed waits — the file
   // drives real CDP touch streams and reads the camera pose between gestures — not by rendering.
   'mobile-sheet.spec.ts': 480_000,
+  // Step MOBILE2 E: a NEW file, 10 cases over 13 viewports. No batched measurement exists yet, so this is the
+  // DEFAULT (600 s) rather than a fabricated 2x; A3's rule applies once a batched wall exists for it. Measured
+  // isolated wall on the first green run is recorded in docs/E2E.md, and the value is re-derived from it.
+  'layout-matrix.spec.ts': 1_200_000,
 };
 
 /** Default when a file is not in the table (a new spec gets a generous backstop, not none). */

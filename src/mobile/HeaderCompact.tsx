@@ -171,7 +171,15 @@ export function HeaderCompact({
           <span className="sr-only sm:not-sr-only">{exporting ? 'Rendering…' : 'Snapshot'}</span>
         </button>
 
-        <ResetViewButton onClearSelection={onClearSelection} />
+        {/*
+          A 44 px STRETCH BOX around the shared control.
+          `ResetViewButton`'s own class string is `px-3 py-1.5`, which measures 26 px tall with its label hidden —
+          under the prompt's touch minimum. Stretching it from a flex parent leaves `ResetViewButton` (and therefore
+          the DESKTOP header, which mounts the same component) byte-identical: the wrapper exists only in this file.
+        */}
+        <div className="flex h-11 min-w-[44px] items-stretch [&>button]:w-full">
+          <ResetViewButton onClearSelection={onClearSelection} />
+        </div>
       </div>
     </header>
   );
@@ -232,9 +240,21 @@ function EnsoChip({
       setOpen(false);
     };
 
+    /*
+     * "Outside" means outside the WHOLE HEADER, not outside the chip.
+     *
+     * The unit toggle, Snapshot and Reset are siblings of the chip in the same `<header>`, and switching units
+     * while the popover is open is the ONE thing a reader is most likely to do next — they opened it to compare
+     * the value. Measured: with `root.contains` as the test, tapping the unit toggle closed the popover (the toggle
+     * is not in the chip's subtree), so the M9 case then waited for a popover that was gone. The header's own box
+     * is the honest boundary.
+     */
     const onPointerDown = (event: PointerEvent): void => {
-      const root = rootRef.current;
-      if (root && event.target instanceof Node && root.contains(event.target)) return;
+      const target = event.target;
+      if (!(target instanceof Node)) return;
+      const header = rootRef.current?.closest('header');
+      if (header && header.contains(target)) return;
+      if (rootRef.current?.contains(target)) return;
       setOpen(false);
     };
 
