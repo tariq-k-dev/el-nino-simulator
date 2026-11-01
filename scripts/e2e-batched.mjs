@@ -35,9 +35,11 @@ import { spawn as spawnRaw } from 'node:child_process';
 import {
   buildSummary,
   fileTimeoutMs,
+  infraRows,
   pickPort,
   shouldRetry,
   validateKillTarget,
+  INFRA_STATUS,
 } from './lib/e2e-batch-core.mjs';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
@@ -45,6 +47,12 @@ const specDir = path.join(root, 'tests', 'e2e');
 
 /** Ports are allocated per file from this base; playwright.config.ts reads `E2E_PORT`. */
 const BASE_PORT = 4300;
+
+/**
+ * Extra argv for the Playwright child. Empty for a real run; `['--config', 'playwright.selftest.config.ts']`
+ * for `--selftest-run`, because the synthetic specs live in a directory the real `testDir` does not cover.
+ */
+let playwrightConfigArgs = [];
 
 /** Which spec files this run covers. */
 function selectSpecs(filters) {
@@ -204,23 +212,59 @@ function startServer(file, port) {
   return srv;
 }
 
-/** Wait until `port` accepts a connection, or give up. */
-async function waitForServer(port, timeoutMs = 30_000) {
+/**
+ * Liveness: an HTTP GET, not just a TCP connect (step 3B2-FIX1 A2).
+ *
+ * A listener that accepts and then never answers is exactly the state a killed-but-not-reaped server
+ * leaves behind, and a `net.connect` probe calls that "ready". Every later test in the file then dies on
+ * its own fetch. The check therefore requires a 2xx/3xx for `/`.
+ */
+async function httpLiveness(port, timeoutMs = 5_000) {
+  const http = await import('node:http');
+  return new Promise((resolve) => {
+    const req = http.get({ host: '127.0.0.1', port, path: '/', timeout: timeoutMs }, (res) => {
+      res.resume();
+      resolve(typeof res.statusCode === 'number' && res.statusCode >= 200 && res.statusCode < 400);
+    });
+    req.on('error', () => resolve(false));
+    req.on('timeout', () => {
+      req.destroy();
+      resolve(false);
+    });
+  });
+}
+
+/** True when NOTHING is listening on `port` (a refused connection is the signal). */
+async function portIsFree(port) {
   const net = await import('node:net');
+  return new Promise((resolve) => {
+    const sock = net.connect({ port, host: '127.0.0.1' }, () => {
+      sock.destroy();
+      resolve(false);
+    });
+    sock.on('error', () => resolve(true));
+    sock.setTimeout(1000, () => {
+      sock.destroy();
+      resolve(false);
+    });
+  });
+}
+
+/** Wait for a port to be released, which is what makes "the next file gets a fresh server" true. */
+async function waitForPortFree(port, timeoutMs = 20_000) {
   const started = Date.now();
   while (Date.now() - started < timeoutMs) {
-    const ok = await new Promise((resolve) => {
-      const sock = net.connect({ port, host: '127.0.0.1' }, () => {
-        sock.destroy();
-        resolve(true);
-      });
-      sock.on('error', () => resolve(false));
-      sock.setTimeout(1000, () => {
-        sock.destroy();
-        resolve(false);
-      });
-    });
-    if (ok) return true;
+    if (await portIsFree(port)) return true;
+    await new Promise((r) => setTimeout(r, 250));
+  }
+  return false;
+}
+
+/** Wait until `port` answers an HTTP request, or give up. */
+async function waitForServer(port, timeoutMs = 30_000) {
+  const started = Date.now();
+  while (Date.now() - started < timeoutMs) {
+    if (await httpLiveness(port)) return true;
     await new Promise((r) => setTimeout(r, 200));
   }
   return false;
@@ -238,6 +282,7 @@ function runOnce(file, port) {
     const ready = await waitForServer(port);
     if (!ready) {
       killTree(serverPid, 'server-not-ready', { file, fileStartedAt: started });
+      const freed = await waitForPortFree(port);
       resolve({
         file,
         exitCode: 1,
@@ -246,6 +291,8 @@ function runOnce(file, port) {
         status: 'failed',
         killReason: 'server-not-ready',
         timedOut: false,
+        portFree: freed,
+        ...(freed ? {} : { harnessBroken: 'server-not-ready-and-port-stuck' }),
       });
       return;
     }
@@ -294,6 +341,7 @@ function runOnce(file, port) {
          * `e2e:raw`, and never let teardown decide a result.
          */
         '--trace=off',
+        ...playwrightConfigArgs,
       ],
       {
         cwd: root,
@@ -335,10 +383,24 @@ function runOnce(file, port) {
       const verdict = validateKillTarget(child.pid, { ownPid: process.pid, serverPid, spawnPid: child.pid });
       if (verdict.ok) killTree(child.pid, `timeout ${timeoutMs}ms`, { file, fileStartedAt: started });
       else console.error(`[batched] REFUSED timeout kill: ${verdict.reason}`);
+      /*
+       * AND the server, which is a SIBLING of the Playwright process and therefore is NOT covered by
+       * `taskkill /T` on that pid. This is the step 3B2-FIX1 A2 fix for the run-1 defect: a killed
+       * Playwright tree left the Brotli server holding the port in a half-dead state, and the files
+       * after it all came back ERR_CONNECTION_REFUSED. The server is validated the same way, so a
+       * timeout can never take anything but this file's two processes.
+       */
+      const srvVerdict = validateKillTarget(serverPid, {
+        ownPid: process.pid,
+        serverPid: null,
+        spawnPid: serverPid,
+      });
+      if (srvVerdict.ok) killTree(serverPid, 'timeout-server-teardown', { file, fileStartedAt: started });
+      else console.error(`[batched] REFUSED timeout server kill: ${srvVerdict.reason}`);
     }, timeoutMs);
 
     let settled = false;
-    child.on('close', (code, signal) => {
+    child.on('close', async (code, signal) => {
       if (settled) return;
       settled = true;
       clearTimeout(timer);
@@ -358,6 +420,16 @@ function runOnce(file, port) {
       killTree(serverPid, 'server-teardown', { file, fileStartedAt: started });
       waitForExit(serverPid);
       const counts = parseCounts(output);
+      /*
+       * Step 3B2-FIX1 A2: after a timeout, prove the port is actually free before the next file starts.
+       * `killTree` returns as soon as taskkill does, which is not the same as the socket being released —
+       * and "the port is still taken" is precisely the condition that produced the false reds.
+       */
+      const freed = timedOut ? await waitForPortFree(port) : true;
+      if (!freed) {
+        console.error(`[batched] port ${port} is STILL listening after the timeout kill — the ${file} ` +
+          'left the harness unusable; the remaining files will be marked not-run (infra)');
+      }
       resolve({
         file,
         exitCode: timedOut ? null : signal ? null : code,
@@ -367,6 +439,8 @@ function runOnce(file, port) {
         killReason: timedOut ? 'timeout' : 'child-close',
         timedOut,
         serverPid,
+        portFree: freed,
+        ...(freed ? {} : { harnessBroken: 'timeout-and-port-stuck' }),
         ...counts,
       });
     });
@@ -403,9 +477,59 @@ function parseCounts(output) {
   };
 }
 
+/**
+ * Write the run summary to the ARCHIVE, outside any runner's `outputDir` (step 3B2-FIX1 A4), and to a
+ * stable path beside the run log for convenience.
+ *
+ * Why the archive is separate: Playwright deletes `outputDir` when a run starts, and `.cache/e2e-results`
+ * is the config's `outputDir`. A summary kept there was measured gone after two later isolation runs
+ * (`docs/E2E.md`), which is how the numbers in a report stop being reproducible. `.cache/e2e-archive/`
+ * is referenced by no runner and no spec, so nothing in this repo ever deletes it.
+ *
+ * The timestamp is UTC to the second and filesystem-safe: two runs in the same second would collide, so
+ * milliseconds are included.
+ */
+function writeSummary(summary, label) {
+  const dir = path.join(root, '.cache', 'e2e-archive');
+  mkdirSync(dir, { recursive: true });
+  const stamp = new Date().toISOString().replace(/[:.]/g, '-');
+  const name = `${stamp}-${label}-summary.json`;
+
+  const archived = path.join(dir, name);
+  writeFileSync(archived, `${JSON.stringify(summary, null, 2)}\n`, 'utf8');
+
+  /* A stable copy where earlier sessions expected it, written only if that directory is writable. */
+  const latest = path.join(root, '.cache', 'e2e-results', 'batched-summary.json');
+  try {
+    mkdirSync(path.dirname(latest), { recursive: true });
+    writeFileSync(latest, `${JSON.stringify(summary, null, 2)}\n`, 'utf8');
+  } catch {
+    /* The next Playwright run clears this directory anyway; the archive is the record that matters. */
+  }
+
+  console.log(`  summary: ${path.relative(root, archived)}`);
+  return archived;
+}
+
 async function main() {
-  const filters = process.argv.slice(2);
-  const specs = selectSpecs(filters);
+  const argv = process.argv.slice(2);
+
+  /* `--self-test` drives the whole A5 procedure; `--selftest-run` is its inner run over the two specs. */
+  if (argv.includes('--self-test')) {
+    const { runSelfTest } = await import('./lib/e2e-selftest.mjs');
+    const code = await runSelfTest({ root });
+    process.exit(code);
+  }
+
+  const selfTestRun = argv.includes('--selftest-run');
+  if (selfTestRun) {
+    playwrightConfigArgs = ['--config', 'playwright.selftest.config.ts'];
+  }
+
+  const filters = selfTestRun
+    ? (await import('./lib/e2e-selftest.mjs')).SELFTEST_FILES
+    : argv.filter((a) => !a.startsWith('--'));
+  const specs = selfTestRun ? filters : selectSpecs(filters);
   if (specs.length === 0) {
     console.error(`[batched] no spec files matched ${JSON.stringify(filters)} in ${specDir}`);
     process.exit(1);
@@ -416,14 +540,40 @@ async function main() {
   /** @type {import('./lib/e2e-batch-core.mjs').FileResult[]} */
   const results = [];
   const usedPorts = [];
+  /** Set when the harness is declared unusable; the remaining files are marked, never run. */
+  let harnessBroken = null;
 
   for (const [index, file] of specs.entries()) {
+    if (harnessBroken) {
+      /*
+       * A2: "If the server cannot be restored, mark the remaining files 'not-run (infra)' instead of
+       * running them into false reds." A file that cannot reach a live server produces one
+       * ERR_CONNECTION_REFUSED per test, and a report full of those reads as product breakage.
+       */
+      results.push({ ...infraRows([file], harnessBroken)[0], port: null, expected: null });
+      continue;
+    }
+
     const port = pickPort(index, usedPorts, BASE_PORT);
     usedPorts.push(port);
 
     /* Between files, never during one: so this can never kill the server of the file that is
      * running, and the current runner's own children are already gone. */
     cleanPlaywrightOrphans();
+
+    /*
+     * A2: a liveness check BEFORE every file, over HTTP. A port that is still held by a corpse from the
+     * previous file would otherwise be handed to Playwright and every test in this file would fail on
+     * its first fetch. Probing first is what turns that into one honest infra line instead of N reds.
+     */
+    if (!(await portIsFree(port))) {
+      console.error(`[batched] port ${port} is already in use before ${file} — waiting for it to drain`);
+      if (!(await waitForPortFree(port, 15_000))) {
+        harnessBroken = `port-${port}-held-before-${file}`;
+        results.push({ ...infraRows([file], harnessBroken)[0], port, expected: null });
+        continue;
+      }
+    }
 
     let attempt = 1;
     let outcome = await runOnce(file, port);
@@ -435,6 +585,7 @@ async function main() {
         const retryPort = pickPort(index + specs.length, usedPorts, BASE_PORT);
         usedPorts.push(retryPort);
         outcome = await runOnce(file, retryPort);
+        if (outcome.harnessBroken) harnessBroken = outcome.harnessBroken;
         results.push({
           ...outcome,
           file,
@@ -453,6 +604,8 @@ async function main() {
       }
     }
 
+    if (outcome.harnessBroken) harnessBroken = outcome.harnessBroken;
+
     results.push({
       // Spread the outcome so status / counts / killReason / durationMs all survive into the summary.
       ...outcome,
@@ -465,7 +618,9 @@ async function main() {
   }
 
   // C4: expected counts from the inventory guard's own constant, so the runner cannot drift from it.
-  const expected = expectedCounts();
+  const expected = selfTestRun
+    ? { perFile: { 'hangs.spec.ts': 1, 'passes.spec.ts': 1 }, totalFor: (files) => files.length }
+    : expectedCounts();
   for (const r of results) {
     r.expected = expected.perFile[r.file] ?? null;
   }
@@ -473,13 +628,15 @@ async function main() {
 
   console.log('\n===== batched e2e summary =====');
   for (const r of summary.files) {
+    const tag =
+      r.status === 'passed' ? 'ok  ' : r.status === 'TIMEOUT' ? 'TIME' : r.status === INFRA_STATUS ? 'SKIP' : 'FAIL';
     console.log(
-      `  ${r.status === 'passed' ? 'ok  ' : r.status === 'TIMEOUT' ? 'TIME' : 'FAIL'} ` +
-        `${r.file.padEnd(24)} ${(r.durationMs / 1000).toFixed(1).padStart(6)}s  port ${r.port}` +
+      `  ${tag} ` +
+        `${r.file.padEnd(24)} ${(r.durationMs / 1000).toFixed(1).padStart(6)}s  port ${String(r.port ?? '-').padEnd(5)}` +
         `  tests ${r.testsPassed ?? '?'}/${r.expected ?? '?'}` +
         `${r.status === 'TIMEOUT' ? ' (killed)' : ''}` +
-        `${r.retries ? `  (retried ${r.retries}x)` : ''}` +
-        `${r.killReason ? `  [${r.killReason}]` : ''}`,
+        `${r.status === INFRA_STATUS ? `  [${r.killReason}]` : r.killReason && r.status !== 'passed' ? `  [${r.killReason}]` : ''}` +
+        `${r.retries ? `  (retried ${r.retries}x)` : ''}`,
     );
   }
   console.log(
@@ -491,13 +648,13 @@ async function main() {
   if (summary.countMismatches.length) {
     console.error(`  count mismatch in: ${summary.countMismatches.join(', ')}`);
   }
+  if (harnessBroken) {
+    console.error(`  HARNESS BROKEN: ${harnessBroken} — files not run are marked "${INFRA_STATUS}", not failed`);
+  }
 
-  const summaryPath = path.join(root, '.cache', 'e2e-results', 'batched-summary.json');
-  mkdirSync(path.dirname(summaryPath), { recursive: true });
-  writeFileSync(summaryPath, `${JSON.stringify(summary, null, 2)}\n`, 'utf8');
-  console.log(`  summary: ${path.relative(root, summaryPath)}`);
+  writeSummary(summary, 'batched');
 
-  process.exit(summary.exitCode);
+  process.exit(summary.exitCode || (harnessBroken ? 1 : 0));
 }
 
 /**

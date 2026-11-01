@@ -9,10 +9,12 @@ import { describe, expect, it } from 'vitest';
 import {
   DEFAULT_FILE_TIMEOUT_MS,
   FILE_TIMEOUTS_MS,
+  INFRA_STATUS,
   WORKER_CRASH_EXIT,
   aggregate,
   buildSummary,
   fileTimeoutMs,
+  infraRows,
   pickPort,
   shouldRetry,
   validateKillTarget,
@@ -182,17 +184,64 @@ describe('fileTimeoutMs', () => {
     }
   });
 
-  it('gives look.spec.ts at least 1.5x its measured 10.0 min', () => {
-    // Measured: 320.4 s batched, 10.0 min raw. 1.5x of 10 min is 15 min.
-    expect(FILE_TIMEOUTS_MS['look.spec.ts']).toBeGreaterThanOrEqual(10 * 60_000 * 1.5);
+  /*
+   * Step 3B2-FIX1 A3: every budget is 2x its measured BATCHED wall from
+   * `.cache/full3b2/batched-summary-run3.json`, with a 120 s floor and boot at 900 s.
+   *
+   * The numbers are literals on purpose. Deriving them here from the same file the table was derived from
+   * would make this test restate the implementation instead of checking it; the measured walls are the
+   * oracle, so they are written out.
+   */
+  const MEASURED_WALL_S = {
+    'boot.spec.ts': 402.506,
+    'look.spec.ts': 317.732,
+    'focus-ux.spec.ts': 316.975,
+    'negative.spec.ts': 193.758,
+    'camera-golden.spec.ts': 147.894,
+    'frame.spec.ts': 120.743,
+    'harden.spec.ts': 109.504,
+    'globe.spec.ts': 53.367,
+    'gate-clock.spec.ts': 51.187,
+    'frame-director.spec.ts': 39.28,
+    'history-gate.spec.ts': 16.076,
+    'determinism.spec.ts': 15.998,
+    'limb.spec.ts': 15.502,
+    'ref.spec.ts': 13.09,
+    'scene-gate.spec.ts': 11.407,
+  };
+
+  it('covers exactly the files the measured run covers', () => {
+    expect(Object.keys(FILE_TIMEOUTS_MS).sort()).toEqual(Object.keys(MEASURED_WALL_S).sort());
   });
 
-  it('gives negative.spec.ts at least 1.5x its measured 4.7 min', () => {
-    expect(FILE_TIMEOUTS_MS['negative.spec.ts']).toBeGreaterThanOrEqual(4.7 * 60_000 * 1.5);
+  it('is 2x the measured batched wall, with a 120 s floor', () => {
+    for (const [file, wallS] of Object.entries(MEASURED_WALL_S)) {
+      if (file === 'boot.spec.ts') continue;
+      const expected = Math.max(120_000, Math.ceil((wallS * 1000) / 1000) * 1000 * 2);
+      expect(FILE_TIMEOUTS_MS[file], `${file}: 2x ${wallS}s`).toBe(expected);
+    }
   });
 
-  it('gives globe.spec.ts at least 1.5x its measured 60.8 s', () => {
-    expect(FILE_TIMEOUTS_MS['globe.spec.ts']).toBeGreaterThanOrEqual(60.8 * 1000 * 1.5);
+  it('gives boot.spec.ts 900 s, the file whose overrun poisoned run 1', () => {
+    // 402.5 s measured; 805 s is 2x; the prompt's 900 s is the budget. Below 2x would be a speed trap.
+    expect(FILE_TIMEOUTS_MS['boot.spec.ts']).toBe(900_000);
+    expect(FILE_TIMEOUTS_MS['boot.spec.ts']).toBeGreaterThan(2 * MEASURED_WALL_S['boot.spec.ts'] * 1000);
+  });
+
+  it('gives the previously under-budgeted files more room than the run they starved in', () => {
+    // look took 317.7 s of a 900 s budget and focus-ux 317.0 s of 780 s: both were one bad minute from
+    // a false TIMEOUT. The new floor is 2x, which is what the prompt requires and what run 1 lacked.
+    expect(FILE_TIMEOUTS_MS['look.spec.ts']).toBeGreaterThanOrEqual(2 * 317.732 * 1000);
+    expect(FILE_TIMEOUTS_MS['focus-ux.spec.ts']).toBeGreaterThanOrEqual(2 * 316.975 * 1000);
+    expect(FILE_TIMEOUTS_MS['negative.spec.ts']).toBeGreaterThanOrEqual(2 * 193.758 * 1000);
+  });
+
+  it('never lets a fast file get a backstop close enough to its own wall to fire spuriously', () => {
+    for (const [file, wallS] of Object.entries(MEASURED_WALL_S)) {
+      expect(FILE_TIMEOUTS_MS[file], `${file} budget vs ${wallS}s measured`).toBeGreaterThan(
+        wallS * 1000 * 2,
+      );
+    }
   });
 
   it('falls back to a generous default for an unknown spec', () => {
@@ -258,5 +307,62 @@ describe('buildSummary', () => {
     const s = buildSummary([row({ status: 'TIMEOUT', killReason: 'timeout', retries: 1, testsPassed: 1 })], {});
     expect(s.files[0].killReason).toBe('timeout');
     expect(s.retriedFiles).toEqual(['globe.spec.ts']);
+  });
+
+  /*
+   * Step 3B2-FIX1 A2: a file the runner DECLINED to run because the harness could not be restored.
+   *
+   * The rule that matters is that it must not be reported as a product failure and must not be counted as
+   * run. Run 1 lost 38 tests this way; the summary has to say "not run" in a way a reader can act on.
+   */
+  it('counts a not-run (infra) file as not-passed, with its reason', () => {
+    const s = buildSummary([row(), ...infraRows(['look.spec.ts'], 'port-4301-held-before-look.spec.ts')], {});
+    expect(s.passed).toBe(1);
+    expect(s.failed).toBe(1);
+    expect(s.files[1].status).toBe(INFRA_STATUS);
+    expect(s.files[1].killReason).toBe('infra: port-4301-held-before-look.spec.ts');
+    expect(s.files[1].infraReason).toBe('port-4301-held-before-look.spec.ts');
+    // Nothing ran, so nothing is claimed: zero passed, zero failed, zero skipped.
+    expect([s.files[1].testsPassed, s.files[1].testsFailed, s.files[1].testsSkipped]).toEqual([0, 0, 0]);
+  });
+
+  it('does not report an infra row as a COUNT MISMATCH', () => {
+    // A declined file has no run to compare against; calling it a mismatch would misdescribe the cause.
+    const s = buildSummary([infraRows(['look.spec.ts'], 'x')[0]], { expectedTotal: 9 });
+    expect(s.countMismatches).toEqual([]);
+    expect(s.tests.declined).toBe(1);
+    // The total check is skipped when something was declined, for the same reason.
+    expect(s.tests.mismatch).toBe(false);
+    // It still exits non-zero: the harness being broken is a failed run.
+    expect(s.exitCode).toBe(1);
+  });
+
+  it('does not report a TIMEOUT as a count mismatch either', () => {
+    /*
+     * A killed file cannot reach its own count. `boot.spec.ts` hit its 600 s backstop in run 1 and the
+     * summary said "count mismatch in: boot.spec.ts" beside the TIMEOUT — which reads as a bookkeeping
+     * problem when the only fact is that the backstop fired. The TIMEOUT row already fails the run.
+     */
+    const s = buildSummary([row({ status: 'TIMEOUT', testsPassed: 4, expected: 10, killReason: 'timeout' })], {
+      expectedTotal: 4,
+    });
+    expect(s.countMismatches).toEqual([]);
+    expect(s.exitCode).toBe(1);
+  });
+
+  it('states how many tests were declined, so the arithmetic stays checkable', () => {
+    const s = buildSummary([row({ testsPassed: 4, expected: 4 }), infraRows(['look.spec.ts'], 'x')[0]], {
+      expectedTotal: 13,
+    });
+    // 4 ran, 4 + 0 + 0 counted, 9 expected, 1 file declined.
+    expect(s.tests.actual).toBe(4);
+    expect(s.tests.declined).toBe(1);
+    expect(s.exitCode).toBe(1);
+  });
+
+  it('records portFree per file, so "the kill worked" is distinguishable from "nothing checked"', () => {
+    const s = buildSummary([row({ portFree: true }), row({ file: 'b.spec.ts', portFree: null })], { expectedTotal: 10 });
+    expect(s.files[0].portFree).toBe(true);
+    expect(s.files[1].portFree).toBeNull();
   });
 });

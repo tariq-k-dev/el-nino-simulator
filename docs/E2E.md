@@ -308,22 +308,78 @@ fetch genuinely pending and no progress events arrive — which is exactly what
 |---|---|---|
 | **C1** | The runner owns the server lifecycle | `startServer()` spawns `tests/e2e/brotli-server.mjs dist-e2e <port>` directly from the runner, so the server is a **sibling** of the Playwright process, never a descendant. Playwright is told to stand down via `E2E_EXTERNAL_SERVER=1` in `playwright.config.ts`. Each file's server is torn down in the same `close` handler that ends the file. |
 | **C2** | `killTree` targets only the spawned Playwright pid | `validateKillTarget()` in `scripts/lib/e2e-batch-core.mjs` refuses the runner's own pid, the server's pid, pid 0, non-integers, and any pid that is not the one this run spawned. A refusal is logged. Unit-tested. |
-| **C3** | Per-file timeouts are a backstop | `FILE_TIMEOUTS_MS` with >= 1.5x margin on measured durations, overridable by `E2E_FILE_TIMEOUT_MS_OVERRIDE` for testing. A timeout kills only that file's tree, marks it **TIMEOUT**, tears down its server, and the next file gets a fresh server on a fresh port. |
+| **C3** | Per-file timeouts are a backstop | `FILE_TIMEOUTS_MS` = **2x the measured batched wall**, floor 120 s (table below), overridable by `E2E_FILE_TIMEOUT_MS_OVERRIDE` for testing. |
 
-### Timeout table (measured -> budget)
+### Partial failure is contained (step 3B2-FIX1 A) — the run-1 defect and its four fixes
 
-| file | measured | budget |
-|---|---:|---:|
-| look.spec.ts | 10.0 min raw / 320-324 s batched | 15 min |
-| negative.spec.ts | 4.7 min raw / 192 s batched | 8 min |
-| boot.spec.ts | 403-406 s | 10 min |
-| camera-golden.spec.ts | 125.3-129.0 s | 6 min |
-| frame-director.spec.ts | 41.8 s | 6 min |
-| focus-ux.spec.ts | 5.9-6.3 min (22 cases) | 13 min |
-| harden.spec.ts | 110 s | 4 min |
-| globe.spec.ts | 54-61 s | 3 min |
-| gate-clock.spec.ts | 52 s | 2 min |
-| determinism, history-gate, limb, scene-gate | 12-17 s | 2 min each |
+Run 1 of the full suite hit `boot.spec.ts`'s backstop, the kill left the machine unable to serve, and **38
+tests across four later files failed with `net::ERR_CONNECTION_REFUSED`** — every one of them green when run
+in isolation. That is the failure mode these four changes exist to make impossible:
+
+| # | fix | where | what it prevents |
+|---|---|---|---|
+| **1** | A timeout kills the file's **whole process tree AND its server** | `runOnce`'s timer (`taskkill /PID <pid> /T /F`, both pids validated by `validateKillTarget`) | The server is a SIBLING (C1), so `taskkill /T` on Playwright never took it. It stayed bound to the port in a half-dead state and answered nothing. |
+| **2** | After a timeout the runner **waits for the port to be free** and records `portFree` | `waitForPortFree()` after teardown | `taskkill` returning is not the socket being released. "The kill worked" is now a measured fact in the summary, not an assumption. |
+| **3** | A **liveness check before every file** | `portIsFree()` at the top of the loop, then `waitForServer()` (an HTTP GET on `/`, not a bare `net.connect`) | A corpse holding the port, or a listener that accepts and never answers, used to be handed to Playwright and fail every test in the file on its first fetch. |
+| **4** | If the harness cannot be restored, the remaining files are marked **`not-run (infra)`** | `infraRows()` in `scripts/lib/e2e-batch-core.mjs`; sets `harnessBroken` | N honest infra lines instead of N false reds. The run still exits **non-zero** — the harness being broken is a failed run — but no test is reported as failed that never executed. |
+
+**The summaries are archived outside every `outputDir`.** Each run writes
+`.cache/e2e-archive/<UTC ISO>-batched-summary.json` and prints that path last (`summary: …`). Playwright
+deletes `outputDir` (`.cache/e2e-results`) on start, so a summary kept only there was measured gone after two
+later isolation runs. Nothing in this repo references `.cache/e2e-archive/`, so nothing deletes it.
+
+**The self-test proves the kill path without touching the real suite:**
+
+```bash
+node scripts/e2e-batched.mjs --self-test     # ~50 s, two synthetic specs
+```
+
+`tests/e2e-selftest/hangs.spec.ts` hangs forever and is killed by a 45 s backstop
+(`E2E_FILE_TIMEOUT_MS_OVERRIDE`); `tests/e2e-selftest/passes.spec.ts` then must go green **on a different
+port** with the server answering over HTTP. Both run through the same `runOnce` as the real table, under
+`playwright.selftest.config.ts` (the real config with `testDir` pointed at the sibling directory — which is
+what keeps the two files out of `pnpm e2e`, out of `pnpm test` and out of every inventory guard). Result of
+two consecutive runs at HEAD:
+
+| check | run A | run B |
+|---|---|---|
+| hang killed, reported **TIMEOUT** (not test failures) | yes | yes |
+| its port proved **free** after the kill (`portFree: true`) | yes | yes |
+| next file **passed** 1/1 on a different port | yes (4300 → 4301) | yes (4300 → 4301) |
+| summary landed in `.cache/e2e-archive/` | yes | yes |
+| no file declined as infra | yes | yes |
+| checks passed | **7/7** | **7/7** |
+
+### Timeout table (measured batched wall -> budget)
+
+Every budget is `2 x durationMs` from `.cache/full3b2/batched-summary-run3.json`, rounded up to the next
+second, floor 120 s; `boot.spec.ts` gets 900 s by decision rather than its own 805 s.
+
+| file | run3 wall | 2x | budget |
+|---|---:|---:|---:|
+| boot.spec.ts | 402.506 s | 805.0 s | **900 s** |
+| look.spec.ts | 317.732 s | 635.5 s | 636 s |
+| focus-ux.spec.ts | 316.975 s | 634.0 s | 634 s |
+| negative.spec.ts | 193.758 s | 387.5 s | 388 s |
+| camera-golden.spec.ts | 147.894 s | 295.8 s | 296 s |
+| frame.spec.ts | 120.743 s | 241.5 s | 242 s |
+| harden.spec.ts | 109.504 s | 219.0 s | 220 s |
+| globe.spec.ts | 53.367 s | 106.7 s | 120 s (floor) |
+| gate-clock.spec.ts | 51.187 s | 102.4 s | 120 s (floor) |
+| frame-director.spec.ts | 39.280 s | 78.6 s | 120 s (floor) |
+| history-gate.spec.ts | 16.076 s | 32.2 s | 120 s (floor) |
+| determinism.spec.ts | 15.998 s | 32.0 s | 120 s (floor) |
+| limb.spec.ts | 15.502 s | 31.0 s | 120 s (floor) |
+| ref.spec.ts | 13.090 s | 26.2 s | 120 s (floor) |
+| scene-gate.spec.ts | 11.407 s | 22.8 s | 120 s (floor) |
+
+The floor is not cosmetic: five files measured 11-16 s, and a 22-32 s backstop would fire on process
+start-up jitter — a false TIMEOUT is worse than a generous one.
+
+**A `TIMEOUT` is no longer reported as a count mismatch.** A killed file cannot reach its own count by
+construction, so the inventory check skips that status (the TIMEOUT row already fails the run). Run 1's
+summary said "count mismatch in: boot.spec.ts" beside the TIMEOUT, which reads as bookkeeping when the only
+fact is that the backstop fired.
 
 ### Expected counts
 
@@ -336,8 +392,8 @@ Full suite: boot 10, **camera-golden 9**, determinism 2, **focus-ux 22**, **fram
 tests from the sum while the runner itself reported 76, which is how the arithmetic drifted from the
 table it was describing.
 The runner's `expectedCounts()` holds these and the summary fails on any mismatch, so a file that
-exits 0 having run fewer tests still fails the run. `frame.spec.ts` also carries a 5 min per-file
-backstop (2x its measured 125 s, rounded up).
+exits 0 having run fewer tests still fails the run. `frame.spec.ts` carries a 242 s per-file backstop
+(2x its measured 120.7 s) like every other file; the whole table is above.
 
 ### Step 3B2: the live focus policy, the two waivers, and what they cost
 

@@ -125,51 +125,101 @@ export function aggregate(files) {
 // ------------------------------------------------------ per-file timeout table (C3)
 
 /**
- * Per-file wall-clock backstops, derived from MEASURED durations with >= 1.5x margin.
+ * Per-file wall-clock backstops: **2x the measured BATCHED wall**, floor 120 s.
  *
  * The runner had NO timeout at all, which is a real gap: a hung file hangs the suite forever and a
  * killed run looks like a product failure. These are backstops, not expectations — the only thing that
  * should ever hit one is a genuine hang.
  *
- * Measured values (docs/globe-look/E2E.md and this session's runs):
- *   look      320.4 s (batched, single file) and 10.0 min raw  -> 10.0 min measured, use 15 min
- *   negative  282 s (4.7 min raw)                              -> use 8 min
- *   globe      60.8 s                                          -> use 3 min
- *   boot      403.5 s                                          -> use 10 min
- *   harden    110.1 s                                          -> use 4 min
- *   gate-clock 52.1 s, determinism 16.1 s, history-gate 16.1 s, limb 15.7 s, scene-gate 12.5 s -> 2 min
- *   ref       17.1 s (B3.4, three separate processes)                        -> use 1 min (2x)
+ * ## Why the derivation changed (step 3B2-FIX1 A3)
+ *
+ * The previous table came from heterogeneous sources — isolated runs, raw runs, rounded-up minutes —
+ * and the one file that mattered was under-budgeted: `boot.spec.ts` took 402.5 s in the last full
+ * batched run against a 600 s backstop, and it hit that backstop once (`docs/E2E.md`, run 1), which is
+ * what turned a slow file into 38 false reds.
+ *
+ * Every value below is `2 x durationMs` from
+ * `.cache/full3b2/batched-summary-run3.json` (one quiet machine, one process per file), rounded UP to
+ * the next whole second, with a 120 s floor for the files whose 2x is below it. `boot.spec.ts` is given
+ * **900 s** by the prompt rather than its own 805 s, because its case d (400 kbps) dominates the file
+ * and it is the one file whose overrun poisons everything after it.
+ *
+ * The floor matters as much as the multiplier: three files measured 11-16 s and a 22-32 s backstop
+ * would fire on process start-up jitter, turning a slow start into a false TIMEOUT.
+ *
+ * | file | run3 wall | 2x | budget |
+ * |---|---|---:|---:|
+ * | boot.spec.ts | 402.506 s | 805.0 s | 900 s (prompt) |
+ * | look.spec.ts | 317.732 s | 635.5 s | 636 s |
+ * | focus-ux.spec.ts | 316.975 s | 634.0 s | 634 s |
+ * | negative.spec.ts | 193.758 s | 387.5 s | 388 s |
+ * | camera-golden.spec.ts | 147.894 s | 295.8 s | 296 s |
+ * | frame.spec.ts | 120.743 s | 241.5 s | 242 s |
+ * | harden.spec.ts | 109.504 s | 219.0 s | 220 s |
+ * | globe.spec.ts | 53.367 s | 106.7 s | 120 s (floor) |
+ * | gate-clock.spec.ts | 51.187 s | 102.4 s | 120 s (floor) |
+ * | frame-director.spec.ts | 39.280 s | 78.6 s | 120 s (floor) |
+ * | history-gate.spec.ts | 16.076 s | 32.2 s | 120 s (floor) |
+ * | determinism.spec.ts | 15.998 s | 32.0 s | 120 s (floor) |
+ * | limb.spec.ts | 15.502 s | 31.0 s | 120 s (floor) |
+ * | ref.spec.ts | 13.090 s | 26.2 s | 120 s (floor) |
+ * | scene-gate.spec.ts | 11.407 s | 22.8 s | 120 s (floor) |
  */
 export const FILE_TIMEOUTS_MS = {
-  'look.spec.ts': 15 * 60_000,
-  'negative.spec.ts': 8 * 60_000,
-  // ref.spec: measured 17.1 s per process (three separate runs, B3.4) -> 2x = 34.2 s, rounded to 1 min.
-  'ref.spec.ts': 1 * 60_000,
-  // frame.spec: measured 120-125 s for all 20 cases in one batched process -> 2x = 250 s, rounded
-  // up to 5 min (the rounding is upward on purpose: a backstop that fires one second late is a
-  // slow run, one that fires one second early is a false TIMEOUT).
-  'frame.spec.ts': 5 * 60_000,
-  // camera-golden.spec: 9 tests, each booting a page and waiting out a fly-to; the measured isolated
-  // time is recorded in docs/STEP3B-GOLDEN.md and this is 2x that, rounded up.
-  'camera-golden.spec.ts': 6 * 60_000,
-  // frame-director.spec: 5 cases, each booting a page; 2x the measured isolated time, rounded up.
-  'frame-director.spec.ts': 6 * 60_000,
-  // focus-ux.spec: measured 6.1 min for the 22 cases in one isolated process (first full pass) -> 2x is
-  // 12.2 min, rounded up to 13 min. It is the slowest non-pixel file: every case boots a page, waits out
-  // the insets transition and flies between two regions.
-  'focus-ux.spec.ts': 13 * 60_000,
-  'globe.spec.ts': 3 * 60_000,
-  'boot.spec.ts': 10 * 60_000,
-  'harden.spec.ts': 4 * 60_000,
-  'gate-clock.spec.ts': 2 * 60_000,
-  'determinism.spec.ts': 2 * 60_000,
-  'history-gate.spec.ts': 2 * 60_000,
-  'limb.spec.ts': 2 * 60_000,
-  'scene-gate.spec.ts': 2 * 60_000,
+  // The one file with an explicit budget rather than 2x: 402.5 s measured, 900 s allowed.
+  'boot.spec.ts': 900_000,
+  'look.spec.ts': 636_000,
+  'focus-ux.spec.ts': 634_000,
+  'negative.spec.ts': 388_000,
+  'camera-golden.spec.ts': 296_000,
+  'frame.spec.ts': 242_000,
+  'harden.spec.ts': 220_000,
+  'globe.spec.ts': 120_000,
+  'gate-clock.spec.ts': 120_000,
+  'frame-director.spec.ts': 120_000,
+  'history-gate.spec.ts': 120_000,
+  'determinism.spec.ts': 120_000,
+  'limb.spec.ts': 120_000,
+  'ref.spec.ts': 120_000,
+  'scene-gate.spec.ts': 120_000,
 };
 
 /** Default when a file is not in the table (a new spec gets a generous backstop, not none). */
 export const DEFAULT_FILE_TIMEOUT_MS = 10 * 60_000;
+
+/**
+ * The status the runner writes for a file it REFUSED to run because the harness could not be restored.
+ *
+ * Step 3B2-FIX1 A2 requires this: when a killed file leaves the machine unable to serve, running the
+ * remaining files anyway produces a wall of `ERR_CONNECTION_REFUSED` that reads as 38 product failures.
+ * "not-run (infra)" is a fourth outcome beside passed / failed / TIMEOUT, and it is deliberately NOT
+ * counted as a red test — the run still exits non-zero (the harness is broken), but the per-file rows
+ * say what actually happened.
+ */
+export const INFRA_STATUS = 'not-run (infra)';
+
+/**
+ * Rows for every file the runner declined to run, so the summary accounts for them.
+ *
+ * @param {readonly string[]} files   filenames that were never started
+ * @param {string} reason             why the harness was declared unusable
+ * @returns {Array<Record<string, unknown>>}
+ */
+export function infraRows(files, reason) {
+  return files.map((file) => ({
+    file,
+    port: null,
+    status: INFRA_STATUS,
+    testsPassed: 0,
+    testsFailed: 0,
+    testsSkipped: 0,
+    expected: null,
+    durationMs: 0,
+    retries: 0,
+    killReason: `infra: ${reason}`,
+    infraReason: reason,
+  }));
+}
 
 /**
  * The timeout for one file, honouring `E2E_FILE_TIMEOUT_MS_OVERRIDE` for testing.
@@ -237,7 +287,7 @@ export function validateKillTarget(pid, ctx = {}) {
 export function buildSummary(files, opts = {}) {
   const rows = files.map((f) => ({
     file: f.file,
-    port: f.port,
+    port: f.port ?? null,
     status: f.status ?? (f.ok ? 'passed' : 'failed'),
     testsPassed: f.testsPassed ?? null,
     testsFailed: f.testsFailed ?? null,
@@ -246,18 +296,43 @@ export function buildSummary(files, opts = {}) {
     durationMs: f.durationMs ?? 0,
     retries: f.retries ?? 0,
     killReason: f.killReason ?? null,
+    /*
+     * The two fields step 3B2-FIX1 A2/A5 need preserved in the ARCHIVE, not only in the log: whether the
+     * port this file used was proved free after its teardown, and why a file was declined. Without them a
+     * later reader cannot tell "the kill worked" from "the kill worked and nothing checked".
+     */
+    portFree: f.portFree ?? null,
+    infraReason: f.infraReason ?? null,
   }));
 
   const passed = rows.filter((r) => r.status === 'passed').length;
   const failed = rows.length - passed;
+  const infra = rows.filter((r) => r.status === INFRA_STATUS).length;
   const actualTotal = rows.reduce((s, r) => s + (r.testsPassed ?? 0) + (r.testsFailed ?? 0) + (r.testsSkipped ?? 0), 0);
   const expectedTotal = opts.expectedTotal ?? null;
 
-  /** A count mismatch is a failure: a file can exit 0 and still have run fewer tests than it owns. */
+  /**
+   * A count mismatch is a failure: a file can exit 0 and still have run fewer tests than it owns.
+   *
+   * Two statuses are excluded, for two different reasons. `not-run (infra)` has no run to compare. A
+   * `TIMEOUT` file was killed mid-file, so it cannot reach its own count by construction — reporting that
+   * as a count mismatch would restate "it timed out" as "the runner and the inventory disagree", and the
+   * TIMEOUT row already fails the run.
+   */
   const mismatches = rows.filter(
-    (r) => r.expected !== null && r.testsPassed !== null && r.testsPassed !== r.expected - (r.testsSkipped ?? 0),
+    (r) =>
+      r.status !== INFRA_STATUS &&
+      r.status !== 'TIMEOUT' &&
+      r.expected !== null &&
+      r.testsPassed !== null &&
+      r.testsPassed !== r.expected - (r.testsSkipped ?? 0),
   );
-  const totalMismatch = expectedTotal !== null && actualTotal !== expectedTotal;
+  /**
+   * The total check is skipped when anything was declined for infrastructure: `tests.actual` then cannot
+   * reach the expected total by construction, and the meaningful statement is the per-file one above.
+   * `tests.declined` counts what never ran, so the arithmetic stays explicit (e.g. 89 + 1 + 0 + 22 = 112).
+   */
+  const totalMismatch = infra === 0 && expectedTotal !== null && actualTotal !== expectedTotal;
 
   return {
     files: rows,
@@ -265,9 +340,11 @@ export function buildSummary(files, opts = {}) {
     passed,
     failed,
     retriedFiles: rows.filter((r) => r.retries > 0).map((r) => r.file),
-    totalMs: rows.reduce((s, r) => s + r.durationMs, 0),
-    tests: { actual: actualTotal, expected: expectedTotal, mismatch: totalMismatch },
+    totalMs: rows.reduce((s, r) => s + (r.durationMs ?? 0), 0),
+    tests: { actual: actualTotal, expected: expectedTotal, mismatch: totalMismatch, declined: infra },
     countMismatches: mismatches.map((r) => r.file),
     exitCode: failed === 0 && !totalMismatch && mismatches.length === 0 ? 0 : 1,
   };
 }
+
+
