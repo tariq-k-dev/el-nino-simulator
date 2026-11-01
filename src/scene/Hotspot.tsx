@@ -1,27 +1,38 @@
-import { useEffect, useMemo, useRef, useState, useSyncExternalStore, type MutableRefObject } from 'react';
-import { useFrame } from '@react-three/fiber';
-import { Html } from '@react-three/drei';
-import * as THREE from 'three';
-import type { RegionDefinition } from '@/types/enso';
-import { thermalColor, thermalVector } from '@/lib/model';
-import { latLonToVector3 } from '@/lib/regions';
-import { hotspotFragment, hotspotVertex } from '@/scene/shaders';
-import { GLOBE_LOOK, getLookFlags, subscribeLookFlags } from '@/scene/globeLook';
-import { lookTime } from '@/scene/lookTime';
+import {
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  useSyncExternalStore,
+  type MutableRefObject,
+} from "react"
+import { useFrame } from "@react-three/fiber"
+import { Html } from "@react-three/drei"
+import * as THREE from "three"
+import type { RegionDefinition } from "@/types/enso"
+import { thermalColor, thermalVector } from "@/lib/model"
+import { latLonToVector3 } from "@/lib/regions"
+import { hotspotFragment, hotspotVertex } from "@/scene/shaders"
+import {
+  GLOBE_LOOK,
+  getLookFlags,
+  subscribeLookFlags,
+} from "@/scene/globeLook"
+import { lookTime } from "@/scene/lookTime"
 import {
   HIT_PX,
   HIT_PX_COARSE,
   PIN_HIT_CLAMP_R,
   PIN_HIT_GATE,
   pinFacesCamera,
-} from '@/scene/pinVisibilityBands';
+} from "@/scene/pinVisibilityBands"
 
 interface HotspotProps {
-  region: RegionDefinition;
-  sst: number;
-  active: boolean;
-  headline: string;
-  onSelect: (id: RegionDefinition['id']) => void;
+  region: RegionDefinition
+  sst: number
+  active: boolean
+  headline: string
+  onSelect: (id: RegionDefinition["id"]) => void
   /**
    * The group that carries the planet's spin — i.e. the globe's WORLD centre holder.
    *
@@ -31,7 +42,7 @@ interface HotspotProps {
    * silently wrong the moment anything translates the earth, and the unit tests cover that case
    * explicitly. `matrixWorld` is read at raycast time, so a spin (or a future offset) is honoured.
    */
-  earthRef: MutableRefObject<THREE.Group | null>;
+  earthRef: MutableRefObject<THREE.Group | null>
 }
 
 /*
@@ -41,9 +52,9 @@ interface HotspotProps {
  * call would churn the heap for the whole life of the page. Hoisted to module scope: the override is
  * synchronous and never re-entrant, so one pair is enough.
  */
-const SCRATCH_NORMAL = new THREE.Vector3();
-const SCRATCH_CENTRE = new THREE.Vector3();
-const SCRATCH_PROXY = new THREE.Vector3();
+const SCRATCH_NORMAL = new THREE.Vector3()
+const SCRATCH_CENTRE = new THREE.Vector3()
+const SCRATCH_PROXY = new THREE.Vector3()
 
 /**
  * Does this browser report a coarse primary pointer (a thumb rather than a cursor tip)?
@@ -53,8 +64,9 @@ const SCRATCH_PROXY = new THREE.Vector3();
  * the render loop. `22 px` vs `14 px` is the whole difference.
  */
 function coarsePointer(): boolean {
-  if (typeof window === 'undefined' || typeof window.matchMedia !== 'function') return false;
-  return window.matchMedia('(pointer: coarse)').matches;
+  if (typeof window === "undefined" || typeof window.matchMedia !== "function")
+    return false
+  return window.matchMedia("(pointer: coarse)").matches
 }
 
 /**
@@ -62,38 +74,53 @@ function coarsePointer(): boolean {
  * a clickable label. Colour is driven by the global SST anomaly so the whole
  * constellation shifts from cyan to red as the slider moves.
  */
-export function Hotspot({ region, sst, active, headline, onSelect, earthRef }: HotspotProps) {
-  const [hovered, setHovered] = useState(false);
-  const ringRef = useRef<THREE.Mesh>(null);
-  const pinRef = useRef<THREE.Group>(null);
-  const proxyRef = useRef<THREE.Mesh>(null);
-  const labelWrapRef = useRef<HTMLDivElement>(null);
-  const facingRef = useRef(1);
+export function Hotspot({
+  region,
+  sst,
+  active,
+  headline,
+  onSelect,
+  earthRef,
+}: HotspotProps) {
+  const [hovered, setHovered] = useState(false)
+  const ringRef = useRef<THREE.Mesh>(null)
+  const pinRef = useRef<THREE.Group>(null)
+  const proxyRef = useRef<THREE.Mesh>(null)
+  const labelWrapRef = useRef<HTMLDivElement>(null)
+  const facingRef = useRef(1)
   /* Read once per mount: see `coarsePointer`. */
-  const hitPx = useMemo(() => (coarsePointer() ? HIT_PX_COARSE : HIT_PX), []);
+  const hitPx = useMemo(() => (coarsePointer() ? HIT_PX_COARSE : HIT_PX), [])
 
   const position = useMemo(
-    () => latLonToVector3(region.lat, region.lon, GLOBE_LOOK.pins.anchorRadius),
+    () =>
+      latLonToVector3(region.lat, region.lon, GLOBE_LOOK.pins.anchorRadius),
     [region],
-  );
+  )
   /*
    * The gate reads the pin's BASE normal: the core is offset along the same radial, so the direction is
    * identical and `position` (the anchor at `anchorRadius`) is the cheap source for it. Un-normalised —
    * the pure function normalises.
    */
-  const baseNormal = useMemo(() => new THREE.Vector3(...position), [position]);
+  const baseNormal = useMemo(() => new THREE.Vector3(...position), [position])
   const quaternion = useMemo(() => {
     // Orient the ring's +Z along the surface normal at this lat/lon.
-    const normal = new THREE.Vector3(...position).normalize();
-    return new THREE.Quaternion().setFromUnitVectors(new THREE.Vector3(0, 0, 1), normal);
-  }, [position]);
+    const normal = new THREE.Vector3(...position).normalize()
+    return new THREE.Quaternion().setFromUnitVectors(
+      new THREE.Vector3(0, 0, 1),
+      normal,
+    )
+  }, [position])
 
   // Stem geometry: a short dark collar from the surface up to the core, oriented
   // along the surface normal. It exists for CONTRAST, not decoration — an amber
   // core measured only ~1.2:1 luminance against a sunlit cloud deck, so the pin
   // needs something dark to sit on. A dark stem gets that without emitting light
   // onto the surface, which is exactly what the old <pointLight> got wrong.
-  const look = useSyncExternalStore(subscribeLookFlags, getLookFlags, getLookFlags);
+  const look = useSyncExternalStore(
+    subscribeLookFlags,
+    getLookFlags,
+    getLookFlags,
+  )
 
   const uniforms = useMemo(
     () => ({
@@ -102,7 +129,7 @@ export function Hotspot({ region, sst, active, headline, onSelect, earthRef }: H
       uPhase: { value: Math.random() },
     }),
     [region.accent],
-  );
+  )
 
   useFrame((state, delta) => {
     /*
@@ -110,21 +137,27 @@ export function Hotspot({ region, sst, active, headline, onSelect, earthRef }: H
      * frozen scene is only frozen if every time-driven term stops. `animate:true` (the live
      * product) leaves the value identical to the raw clock.
      */
-    uniforms.uTime.value = lookTime(look.animate, state.clock.elapsedTime);
-    const [r, g, b] = thermalVector(sst);
-    (uniforms.uColor.value as THREE.Color).setRGB(r, g, b);
+    uniforms.uTime.value = lookTime(look.animate, state.clock.elapsedTime)
+    const [r, g, b] = thermalVector(sst)
+    ;(uniforms.uColor.value as THREE.Color).setRGB(r, g, b)
 
     if (ringRef.current) {
-      const targetScale = active ? 1.55 : hovered ? 1.25 : 1;
+      const targetScale = active ? 1.55 : hovered ? 1.25 : 1
       ringRef.current.scale.lerp(
         new THREE.Vector3(targetScale, targetScale, targetScale),
         Math.min(1, delta * 6),
-      );
+      )
     }
     if (pinRef.current) {
       const lift =
-        active || hovered ? GLOBE_LOOK.pins.activeLift : GLOBE_LOOK.pins.idleLift;
-      pinRef.current.position.set(position[0] * lift, position[1] * lift, position[2] * lift);
+        active || hovered
+          ? GLOBE_LOOK.pins.activeLift
+          : GLOBE_LOOK.pins.idleLift
+      pinRef.current.position.set(
+        position[0] * lift,
+        position[1] * lift,
+        position[2] * lift,
+      )
     }
 
     /*
@@ -141,14 +174,15 @@ export function Hotspot({ region, sst, active, headline, onSelect, earthRef }: H
      * flickers the cursor. The active lift is 0.025 R (7.6 px at d_fit), well inside the 14 px radius, so
      * a click aimed at the projected head still lands after a selection.
      */
-    const proxy = proxyRef.current;
+    const proxy = proxyRef.current
     if (proxy) {
-      const cam = state.camera as THREE.PerspectiveCamera;
-      proxy.getWorldPosition(SCRATCH_PROXY);
-      const focalPx = state.size.height / 2 / Math.tan(((cam.fov ?? 42) * Math.PI) / 360);
-      const dist = cam.position.distanceTo(SCRATCH_PROXY);
-      const worldR = focalPx > 0 ? (hitPx * dist) / focalPx : PIN_HIT_CLAMP_R;
-      proxy.scale.setScalar(Math.min(worldR, PIN_HIT_CLAMP_R));
+      const cam = state.camera as THREE.PerspectiveCamera
+      proxy.getWorldPosition(SCRATCH_PROXY)
+      const focalPx =
+        state.size.height / 2 / Math.tan(((cam.fov ?? 42) * Math.PI) / 360)
+      const dist = cam.position.distanceTo(SCRATCH_PROXY)
+      const worldR = focalPx > 0 ? (hitPx * dist) / focalPx : PIN_HIT_CLAMP_R
+      proxy.scale.setScalar(Math.min(worldR, PIN_HIT_CLAMP_R))
     }
 
     // Fade labels that face away from the camera.
@@ -161,24 +195,31 @@ export function Hotspot({ region, sst, active, headline, onSelect, earthRef }: H
     // user just clicked never disappears.
     if (labelWrapRef.current) {
       // Marker normal in world space — the parent group carries the planet's spin.
-      const normal = new THREE.Vector3(position[0], position[1], position[2]).normalize();
-      const parent = pinRef.current?.parent;
+      const normal = new THREE.Vector3(
+        position[0],
+        position[1],
+        position[2],
+      ).normalize()
+      const parent = pinRef.current?.parent
       if (parent) {
-        parent.updateWorldMatrix(true, false);
-        normal.transformDirection(parent.matrixWorld);
+        parent.updateWorldMatrix(true, false)
+        normal.transformDirection(parent.matrixWorld)
       }
-      const facing = normal.dot(state.camera.position.clone().normalize());
+      const facing = normal.dot(state.camera.position.clone().normalize())
       // Smooth 0..1 across the limb rather than a hard pop. The active region is
       // always 1 so the label you just clicked never fades out.
-      const target = active ? 1 : THREE.MathUtils.smoothstep(facing, 0.02, 0.22);
-      facingRef.current += (target - facingRef.current) * Math.min(1, delta * 8);
+      const target = active
+        ? 1
+        : THREE.MathUtils.smoothstep(facing, 0.02, 0.22)
+      facingRef.current +=
+        (target - facingRef.current) * Math.min(1, delta * 8)
 
-      const el = labelWrapRef.current;
-      el.style.opacity = facingRef.current.toFixed(3);
-      el.style.pointerEvents = facingRef.current > 0.35 ? 'auto' : 'none';
-      el.style.visibility = facingRef.current < 0.03 ? 'hidden' : 'visible';
+      const el = labelWrapRef.current
+      el.style.opacity = facingRef.current.toFixed(3)
+      el.style.pointerEvents = facingRef.current > 0.35 ? "auto" : "none"
+      el.style.visibility = facingRef.current < 0.03 ? "hidden" : "visible"
     }
-  });
+  })
 
   /**
    * Forward wheel over the label to the canvas.
@@ -199,13 +240,14 @@ export function Hotspot({ region, sst, active, headline, onSelect, earthRef }: H
    * re-dispatched event from looping back into this handler.
    */
   useEffect(() => {
-    const el = labelWrapRef.current;
-    if (!el) return;
+    const el = labelWrapRef.current
+    if (!el) return
+
     const onWheel = (e: WheelEvent) => {
-      const canvas = document.querySelector('#globe-canvas canvas');
-      if (!canvas) return;
+      const canvas = document.querySelector("#globe-canvas canvas")
+      if (!canvas) return
       canvas.dispatchEvent(
-        new WheelEvent('wheel', {
+        new WheelEvent("wheel", {
           deltaY: e.deltaY,
           deltaMode: e.deltaMode,
           clientX: e.clientX,
@@ -213,26 +255,49 @@ export function Hotspot({ region, sst, active, headline, onSelect, earthRef }: H
           bubbles: false,
           cancelable: true,
         }),
-      );
-    };
-    el.addEventListener('wheel', onWheel, { passive: true });
-    return () => el.removeEventListener('wheel', onWheel);
-  }, []);
+      )
+    }
+
+    const btn = el.querySelector("button")
+    const onClick = (e: MouseEvent) => {
+      e.stopPropagation()
+      onSelect(region.id)
+    }
+    const onEnter = () => setHovered(true)
+    const onLeave = () => setHovered(false)
+
+    el.addEventListener("wheel", onWheel, { passive: true })
+    if (btn) {
+      btn.addEventListener("click", onClick)
+      btn.addEventListener("pointerenter", onEnter)
+      btn.addEventListener("pointerleave", onLeave)
+    }
+
+    return () => {
+      el.removeEventListener("wheel", onWheel)
+      if (btn) {
+        btn.removeEventListener("click", onClick)
+        btn.removeEventListener("pointerenter", onEnter)
+        btn.removeEventListener("pointerleave", onLeave)
+      }
+    }
+  }, [region.id, onSelect])
 
   // Two forms of the same ramp: a THREE.Color for materials/lights (three would
   // ignore an rgba alpha and warn), and a CSS rgba for the DOM label.
   const glowColor = useMemo(() => {
-    const [r, g, b] = thermalVector(sst);
-    return new THREE.Color(r, g, b);
-  }, [sst]);
-  const glowCss = thermalColor(sst, active ? 0.95 : 0.75);
+    const [r, g, b] = thermalVector(sst)
+    return new THREE.Color(r, g, b)
+  }, [sst])
+  const glowCss = thermalColor(sst, active ? 0.95 : 0.75)
 
   const headPosition = useMemo<[number, number, number]>(() => {
     /* The same point `__globe.pins()` reports and the specs project: anchor x idleLift + coreOffset. */
     const r =
-      GLOBE_LOOK.pins.anchorRadius * GLOBE_LOOK.pins.idleLift + GLOBE_LOOK.pins.coreOffset;
-    return latLonToVector3(region.lat, region.lon, r);
-  }, [region]);
+      GLOBE_LOOK.pins.anchorRadius * GLOBE_LOOK.pins.idleLift +
+      GLOBE_LOOK.pins.coreOffset
+    return latLonToVector3(region.lat, region.lon, r)
+  }, [region])
 
   /**
    * The proxy's raycast: the facing gate, then the ordinary sphere test.
@@ -249,25 +314,33 @@ export function Hotspot({ region, sst, active, headline, onSelect, earthRef }: H
    */
   const proxyRaycast = useMemo(
     () => (raycaster: THREE.Raycaster, intersects: THREE.Intersection[]) => {
-      const proxy = proxyRef.current;
-      if (!proxy) return;
-      const earth = earthRef.current;
+      const proxy = proxyRef.current
+      if (!proxy) return
+      const earth = earthRef.current
       /* Fresh world matrices: a raycast can land between two renders, after the spin moved the group. */
-      if (earth) earth.updateWorldMatrix(true, false);
+      if (earth) earth.updateWorldMatrix(true, false)
 
-      SCRATCH_NORMAL.copy(baseNormal);
-      const carrier = earth ?? proxy.parent;
-      if (carrier) SCRATCH_NORMAL.transformDirection(carrier.matrixWorld);
-      else SCRATCH_NORMAL.normalize();
+      SCRATCH_NORMAL.copy(baseNormal)
+      const carrier = earth ?? proxy.parent
+      if (carrier) SCRATCH_NORMAL.transformDirection(carrier.matrixWorld)
+      else SCRATCH_NORMAL.normalize()
 
-      if (earth) earth.getWorldPosition(SCRATCH_CENTRE);
-      else proxy.getWorldPosition(SCRATCH_CENTRE);
+      if (earth) earth.getWorldPosition(SCRATCH_CENTRE)
+      else proxy.getWorldPosition(SCRATCH_CENTRE)
 
-      if (!pinFacesCamera(SCRATCH_NORMAL, raycaster.ray.origin, SCRATCH_CENTRE, PIN_HIT_GATE)) return;
-      THREE.Mesh.prototype.raycast.call(proxy, raycaster, intersects);
+      if (
+        !pinFacesCamera(
+          SCRATCH_NORMAL,
+          raycaster.ray.origin,
+          SCRATCH_CENTRE,
+          PIN_HIT_GATE,
+        )
+      )
+        return
+      THREE.Mesh.prototype.raycast.call(proxy, raycaster, intersects)
     },
     [baseNormal, earthRef],
-  );
+  )
 
   return (
     <group>
@@ -276,22 +349,18 @@ export function Hotspot({ region, sst, active, headline, onSelect, earthRef }: H
           collapses exactly where the limb is — which is why clicking a pin was hit-or-miss. The ring is
           drawn only; the hit proxy below is the target. */}
       {look.hotspotRings && (
-      <mesh
-        ref={ringRef}
-        position={position}
-        quaternion={quaternion}
-      >
-        <planeGeometry args={[0.22, 0.22]} />
-        <shaderMaterial
-          vertexShader={hotspotVertex}
-          fragmentShader={hotspotFragment}
-          uniforms={uniforms}
-          transparent
-          depthWrite={false}
-          side={THREE.DoubleSide}
-          blending={THREE.AdditiveBlending}
-        />
-      </mesh>
+        <mesh ref={ringRef} position={position} quaternion={quaternion}>
+          <planeGeometry args={[0.22, 0.22]} />
+          <shaderMaterial
+            vertexShader={hotspotVertex}
+            fragmentShader={hotspotFragment}
+            uniforms={uniforms}
+            transparent
+            depthWrite={false}
+            side={THREE.DoubleSide}
+            blending={THREE.AdditiveBlending}
+          />
+        </mesh>
       )}
 
       {/*
@@ -320,17 +389,17 @@ export function Hotspot({ region, sst, active, headline, onSelect, earthRef }: H
         raycast={proxyRaycast}
         visible={false}
         onClick={(e) => {
-          e.stopPropagation();
-          onSelect(region.id);
+          e.stopPropagation()
+          onSelect(region.id)
         }}
         onPointerOver={(e) => {
-          e.stopPropagation();
-          setHovered(true);
-          document.body.style.cursor = 'pointer';
+          e.stopPropagation()
+          setHovered(true)
+          document.body.style.cursor = "pointer"
         }}
         onPointerOut={() => {
-          setHovered(false);
-          document.body.style.cursor = 'auto';
+          setHovered(false)
+          document.body.style.cursor = "auto"
         }}
       >
         <sphereGeometry args={[1, 12, 8]} />
@@ -359,7 +428,11 @@ export function Hotspot({ region, sst, active, headline, onSelect, earthRef }: H
               The cylinder is Y-up by default; rotate it so its axis is the
               group's +Z (the surface normal) and push it out by half its height
               so it stands on the surface. */}
-          <mesh position={[0, 0, 0.025]} rotation={[Math.PI / 2, 0, 0]} renderOrder={6}>
+          <mesh
+            position={[0, 0, 0.025]}
+            rotation={[Math.PI / 2, 0, 0]}
+            renderOrder={6}
+          >
             <cylinderGeometry args={[0.0055, 0.0075, 0.05, 10, 1, true]} />
             <meshBasicMaterial
               color={GLOBE_LOOK.pins.housingColor}
@@ -378,9 +451,15 @@ export function Hotspot({ region, sst, active, headline, onSelect, earthRef }: H
               amber should be. A circle facing outward, pushed back along the
               normal, leaves the core showing through the middle with a dark ring
               around it — which is the contrast this exists for. */}
-          <mesh position={[0, 0, GLOBE_LOOK.pins.coreOffset - 0.006]} renderOrder={7}>
+          <mesh
+            position={[0, 0, GLOBE_LOOK.pins.coreOffset - 0.006]}
+            renderOrder={7}
+          >
             <circleGeometry
-              args={[(active ? 0.016 : 0.011) * GLOBE_LOOK.pins.housingScale, 24]}
+              args={[
+                (active ? 0.016 : 0.011) * GLOBE_LOOK.pins.housingScale,
+                24,
+              ]}
             />
             <meshBasicMaterial
               color={GLOBE_LOOK.pins.housingColor}
@@ -416,46 +495,50 @@ export function Hotspot({ region, sst, active, headline, onSelect, earthRef }: H
           and vanished. Solid dark fill + a light border + a real text shadow
           keeps it legible against any backdrop, including the sun glint. */}
       <Html
-        position={[position[0] * 1.1, position[1] * 1.1 + 0.045, position[2] * 1.1]}
+        position={[
+          position[0] * 1.1,
+          position[1] * 1.1 + 0.045,
+          position[2] * 1.1,
+        ]}
         center
         distanceFactor={1.55}
         zIndexRange={[40, 30]}
-        style={{ pointerEvents: 'auto' }}
+        style={{ pointerEvents: "auto" }}
       >
-        <div ref={labelWrapRef} style={{ transition: 'opacity 120ms linear' }}>
-        <button
-          type="button"
-          onClick={() => onSelect(region.id)}
-          onPointerEnter={() => setHovered(true)}
-          onPointerLeave={() => setHovered(false)}
-          className={[
-            'group flex -translate-y-1 items-center gap-1.5 whitespace-nowrap rounded-full border px-2 py-[3px]',
-            'font-mono text-[9px] font-medium uppercase tracking-[0.14em] transition-all duration-200',
-            active
-              ? 'border-[rgba(255,255,255,0.38)] text-white'
-              : 'border-[rgba(255,255,255,0.15)] text-[rgba(226,238,255,0.92)] hover:border-[rgba(255,255,255,0.34)] hover:text-white',
-          ].join(' ')}
-          style={{
-            // Solid enough to guarantee contrast over white cloud or sun glint.
-            background: 'rgba(10, 15, 25, 0.85)',
-            backdropFilter: 'blur(8px)',
-            WebkitBackdropFilter: 'blur(8px)',
-            // Two-layer shadow: a dark halo for contrast, a warm bloom when active.
-            boxShadow: active
-              ? `0 1px 2px rgba(0,0,0,0.9), 0 4px 14px rgba(0,0,0,0.55), 0 0 18px -4px ${glowCss}`
-              : '0 1px 2px rgba(0,0,0,0.9), 0 4px 12px rgba(0,0,0,0.45)',
-            textShadow: '0 1px 2px rgba(0,0,0,0.95)',
-          }}
-          title={`${region.name} — ${headline}`}
-        >
-          <span
-            className="h-1.5 w-1.5 shrink-0 rounded-full transition-colors"
-            style={{ background: glowCss, boxShadow: `0 0 8px ${glowCss}` }}
-          />
-          {region.shortName}
-        </button>
+        <div ref={labelWrapRef} style={{ transition: "opacity 120ms linear" }}>
+          <button
+            type="button"
+            onClick={() => onSelect(region.id)}
+            onPointerEnter={() => setHovered(true)}
+            onPointerLeave={() => setHovered(false)}
+            className={[
+              "group flex -translate-y-1 items-center gap-1.5 whitespace-nowrap rounded-full border px-2 py-[3px]",
+              "font-mono text-[9px] font-medium uppercase tracking-[0.14em] transition-all duration-200",
+              active
+                ? "border-[rgba(255,255,255,0.38)] text-white"
+                : "border-[rgba(255,255,255,0.15)] text-[rgba(226,238,255,0.92)] hover:border-[rgba(255,255,255,0.34)] hover:text-white",
+            ].join(" ")}
+            style={{
+              // Solid enough to guarantee contrast over white cloud or sun glint.
+              background: "rgba(10, 15, 25, 0.85)",
+              backdropFilter: "blur(8px)",
+              WebkitBackdropFilter: "blur(8px)",
+              // Two-layer shadow: a dark halo for contrast, a warm bloom when active.
+              boxShadow: active
+                ? `0 1px 2px rgba(0,0,0,0.9), 0 4px 14px rgba(0,0,0,0.55), 0 0 18px -4px ${glowCss}`
+                : "0 1px 2px rgba(0,0,0,0.9), 0 4px 12px rgba(0,0,0,0.45)",
+              textShadow: "0 1px 2px rgba(0,0,0,0.95)",
+            }}
+            title={`${region.name} — ${headline}`}
+          >
+            <span
+              className="h-1.5 w-1.5 shrink-0 rounded-full transition-colors"
+              style={{ background: glowCss, boxShadow: `0 0 8px ${glowCss}` }}
+            />
+            {region.shortName}
+          </button>
         </div>
       </Html>
     </group>
-  );
+  )
 }
