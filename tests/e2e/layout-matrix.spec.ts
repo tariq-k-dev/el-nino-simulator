@@ -15,6 +15,14 @@
  * plus the shape-specific cases: the dock (LM6), a rotation round-trip (LM7), desktop's unchanged controls (LM8)
  * and the chip's popover semantics (LM9).
  *
+ * ## Step 2B-STEP3-MOBILE2-FIX tightened LM2 and added LM10
+ *
+ * MOBILE2-R measured the phoneLandscape header GROWING after load — 113.50 px at 265 ms and 194.75 px at
+ * 2326 ms at 667x375 — because the `h1` wrapped inside a `flex-1` slot squeezed by a data-dependent chip.
+ * LM2 now asserts the single-line property (F1) and the boundary F4 bound in landscape, and LM10 is the
+ * F5 three-moment stability case: the header's bottom is sampled at the first frame, after the data is
+ * ready and after 2 s, and must be the same number at all three.
+ *
  * ## Why every geometric claim is read from the probe, not from the DOM
  *
  * The globe is WebGL. Its disc has no element to measure, so "the disc fits" can only be answered by projecting
@@ -50,8 +58,47 @@ const MATRIX = [
   { w: 932, h: 430, mode: 'phoneLandscape' },
 ] as const;
 
+/**
+ * The landscape rows F1-F5 name, including the two extra shapes the fix's prompt adds (568x320 and 640x360).
+ *
+ * Kept separate from `MATRIX` because LM1's table is the LAYOUT LAW's matrix and this one is the HEADER
+ * suite's: the prompt asks for six landscape rows here and the law's matrix has four.
+ */
+const LANDSCAPE_ROWS = [
+  { w: 667, h: 375 },
+  { w: 844, h: 390 },
+  { w: 924, h: 412 },
+  { w: 932, h: 430 },
+  { w: 568, h: 320 },
+  { w: 640, h: 360 },
+] as const;
+
 /** The margin the disc must keep inside the free rect, CSS px. */
 const MARGIN_PX = 8;
+
+/** F1's allowance: the h1's box height may exceed one line-height by at most this factor. */
+const H1_LINE_FACTOR = 1.4;
+
+/**
+ * The landscape header's expected height per row, px — LITERALS, not an import of `headerMath`.
+ *
+ * Two reasons. (1) `tsconfig.node.json` has no `@/*` path alias, so a spec cannot import from `src/`.
+ * (2) More importantly, importing the function that PRODUCED the layout and comparing the DOM against it
+ * is a tautology: it would pass for any value the function returned, including a wrong one. These are the
+ * numbers the fix's prompt requires, written down independently, so a change to `headerMath` that moves
+ * the header fails HERE.
+ *
+ * 54 = 2 + 50 + 2 (one row: padding + the 50 px controls cluster).
+ * 76 = 2 + 20 + 2 + 50 + 2 (two rows: padding + identity row + gap + controls).
+ */
+const LANDSCAPE_HEADER_H: Record<string, number> = {
+  '667x375': 76,
+  '844x390': 54,
+  '924x412': 54,
+  '932x430': 54,
+  '568x320': 76,
+  '640x360': 76,
+};
 
 /* ---------------------------------------------------------------------------- helpers */
 
@@ -195,7 +242,19 @@ test.describe('layout matrix', () => {
   test('LM2: the header shows one of each control, an unclipped h1, and no overlaps', async ({ page }) => {
     await open(page, MATRIX[0]);
 
-    for (const vp of MATRIX) {
+    /*
+     * The law's thirteen rows PLUS the two extra landscape shapes the fix's prompt names (568x320 and
+     * 640x360). They are not in `MATRIX` because that table is `resolveLayoutMode`'s own, and adding rows
+     * to it would make LM1 assert a law it does not have — but the HEADER claims F1/F4 make must hold at
+     * every landscape shape, including the two smallest.
+     */
+    const rows = [
+      ...MATRIX,
+      { w: 568, h: 320, mode: 'phoneLandscape' as const },
+      { w: 640, h: 360, mode: 'phoneLandscape' as const },
+    ];
+
+    for (const vp of rows) {
       await page.setViewportSize({ width: vp.w, height: vp.h });
       await settleFit(page);
 
@@ -227,6 +286,8 @@ test.describe('layout matrix', () => {
                 clientW: h1.clientWidth,
                 textOverflow: style?.textOverflow ?? '',
                 whiteSpace: style?.whiteSpace ?? '',
+                /* F1: the line count, from the box height over the computed line-height. */
+                lineHeight: style ? parseFloat(style.lineHeight) : 0,
               }
             : null,
           resets: reset.length,
@@ -309,7 +370,179 @@ test.describe('layout matrix', () => {
         Math.abs(header.header!.b - header.publishedHeaderBottom),
         `${at} published headerBottom ${header.publishedHeaderBottom} vs measured bottom ${header.header!.b}`,
       ).toBeLessThanOrEqual(1);
+
+      /*
+       * ---------------------------------------------------------------- F1 + F4, landscape only
+       *
+       * F1: the h1 renders on ONE line with its full text. Two independent readings, because either
+       * alone can be fooled — a box height of one line-height with a clipped overflow would pass the
+       * first, and a `scrollWidth <= clientWidth` on a box that wrapped would pass the second.
+       *
+       * F4: the header's bottom is at most a quarter of the viewport height.
+       *
+       * Portrait is deliberately NOT asserted here: its header is a fixed 158 px two-row layout whose
+       * h1 is allowed to wrap, and its DOM, classes and tests are out of this step's scope.
+       */
+      if (vp.mode === 'phoneLandscape') {
+        const lines = h1.h! / h1.lineHeight;
+        expect(
+          h1.h!,
+          `${at} h1 box ${h1.h} px is ${lines.toFixed(2)} line-heights (${h1.lineHeight} px) — must be one line`,
+        ).toBeLessThanOrEqual(h1.lineHeight * H1_LINE_FACTOR);
+        expect(h1.whiteSpace, `${at} h1 must be nowrap in landscape`).toBe('nowrap');
+        expect(h1.scrollW, `${at} h1 scrollWidth ${h1.scrollW} > clientWidth ${h1.clientW}`).toBeLessThanOrEqual(
+          h1.clientW,
+        );
+        /*
+         * The full text, not a truncation: the heading is the page's subject is `Super El Niño Global
+         * Impact Simulator`. Compared with whitespace NORMALISED, because the markup deliberately uses a
+         * non-breaking space in `El&nbsp;Niño` — the assertion is about content, not about which space
+         * character carries it.
+         */
+        expect(h1.text.replace(/\s+/g, ' '), `${at} h1 must carry its whole text`).toBe(
+          'Super El Niño Global Impact Simulator',
+        );
+
+        /* F4: headerBottom <= 0.25 * H. */
+        expect(
+          header.header!.b,
+          `${at} header bottom ${header.header!.b} vs 0.25 * ${header.viewport.h} = ${0.25 * header.viewport.h}`,
+        ).toBeLessThanOrEqual(0.25 * header.viewport.h);
+
+        /* And the height is the law's own number, so a silent retune of the constants fails here. */
+        expect(header.header!.b, `${at} landscape header height`).toBeCloseTo(LANDSCAPE_HEADER_H[at], 1);
+      }
     }
+  });
+
+  /* ------------------------------------------------------------------------------ LM10 */
+
+  test('LM10: the landscape header is the same height at the first frame, after data, and after 2 s', async ({
+    page,
+  }) => {
+    /*
+     * F5 — the defect MOBILE2-R measured, asserted as a property.
+     *
+     * At 667x375 the old header was **113.50 px at 265 ms and 194.75 px at 2326 ms**: the `h1` wrapped
+     * LATE, when the ENSO chip's text arrived and widened it. A Playwright read is a CDP round trip of
+     * 100-300 ms, far coarser than the 81.25 px change it has to catch, so the sampling happens IN PAGE
+     * with `requestAnimationFrame` from an `addInitScript` — it runs before any app JS, so "the first
+     * frame" is genuinely the first frame and not the first frame Playwright could observe.
+     *
+     * Three moments per row:
+     *   (1) the FIRST sample the sampler took,
+     *   (2) the first sample at or after `document.fonts.ready`,
+     *   (3) the last sample, which is at +2.4 s.
+     *
+     * All three DOM bottoms must agree within 0.5 px, and the PUBLISHED `headerBottom` at (3) must
+     * equal the DOM's within 0.5 px. The published value is null at (1)/(2) by design — the observer
+     * publishes after the first commit — so the published claim is made at the moment it exists.
+     */
+    test.setTimeout(300_000);
+
+    const rows = [];
+    for (const vp of LANDSCAPE_ROWS) {
+      await page.setViewportSize({ width: vp.w, height: vp.h });
+      /* The sampler, registered before the app so the first frame is measured. */
+      await page.addInitScript(() => {
+        const w = window as unknown as Record<string, unknown>;
+        const state = { samples: [] as Array<{ t: number; bottom: number; height: number; h1h: number | null; published: number | null }>, fontsReadyAt: null as number | null, startedAt: performance.now() };
+        w.__hdr = state;
+        document.fonts.ready.then(() => {
+          state.fontsReadyAt = performance.now() - state.startedAt;
+        });
+        const read = (): void => {
+          const el = document.querySelector('[data-occluder="compact-header"]');
+          if (el) {
+            const r = el.getBoundingClientRect();
+            const h1 = document.querySelector('h1');
+            const frame = (w as { __frame?: { headerBottom: number } }).__frame;
+            state.samples.push({
+              t: performance.now() - state.startedAt,
+              bottom: r.bottom,
+              height: r.height,
+              h1h: h1 ? h1.getBoundingClientRect().height : null,
+              published: frame ? frame.headerBottom : null,
+            });
+          }
+          if (performance.now() - state.startedAt < 2400) requestAnimationFrame(read);
+        };
+        requestAnimationFrame(read);
+      });
+      await page.addInitScript(
+        connectionInit({ saveData: false, effectiveType: '4g', downlink: 10 }),
+      );
+      await page.goto(LIVE);
+      await expect
+        .poll(() => page.evaluate(() => (window.__frame ? window.__frame.mode : null)), {
+          timeout: 90_000,
+          intervals: [250],
+        })
+        .toBe('live');
+      /* Outlast the sampler's own 2.4 s window so its last sample is the +2 s one. */
+      await page.waitForTimeout(2600);
+
+      const s = await page.evaluate(() => {
+        const h = (window as unknown as { __hdr: { samples: Array<{ t: number; bottom: number; height: number; h1h: number | null; published: number | null }>; fontsReadyAt: number | null } }).__hdr;
+        const first = h.samples[0] ?? null;
+        const afterFonts = h.samples.find((x) => h.fontsReadyAt !== null && x.t >= h.fontsReadyAt) ?? null;
+        const last = h.samples[h.samples.length - 1] ?? null;
+        return {
+          n: h.samples.length,
+          fontsReadyAt: h.fontsReadyAt,
+          first,
+          afterFonts,
+          last,
+          domAtLast: (document.querySelector('[data-occluder="compact-header"]') as HTMLElement).getBoundingClientRect()
+            .bottom,
+          publishedAtLast: window.__frame!.headerBottom,
+        };
+      });
+
+      const at = `${vp.w}x${vp.h}`;
+      rows.push({
+        at,
+        expected: LANDSCAPE_HEADER_H[at],
+        n: s.n,
+        first: s.first?.bottom ?? null,
+        afterFonts: s.afterFonts?.bottom ?? null,
+        last: s.last?.bottom ?? null,
+        published: s.publishedAtLast,
+        h1h: [s.first?.h1h, s.afterFonts?.h1h, s.last?.h1h],
+      });
+
+      /* A sampler that recorded nothing would pass every comparison below vacuously. */
+      expect(s.first, `${at} sampler recorded no samples`).not.toBeNull();
+      expect(s.n, `${at} sampler took ${s.n} samples`).toBeGreaterThan(10);
+
+      for (const [label, sample] of [
+        ['first frame', s.first],
+        ['after data ready', s.afterFonts],
+        ['after 2 s', s.last],
+      ] as const) {
+        expect(sample, `${at} ${label}: no sample`).not.toBeNull();
+        /* The three moments agree with EACH OTHER, within 0.5 px. */
+        expect(
+          Math.abs(sample!.bottom - s.last!.bottom),
+          `${at} ${label} bottom ${sample!.bottom} vs after-2s ${s.last!.bottom}`,
+        ).toBeLessThanOrEqual(0.5);
+        /* And each equals the height the law says, so the agreement is not three equal WRONG values. */
+        expect(sample!.bottom, `${at} ${label} bottom`).toBeCloseTo(LANDSCAPE_HEADER_H[at], 1);
+      }
+
+      /* The published value equals the DOM at the same moment, within 0.5 px. */
+      expect(
+        Math.abs(s.publishedAtLast - s.domAtLast),
+        `${at} published ${s.publishedAtLast} vs DOM ${s.domAtLast}`,
+      ).toBeLessThanOrEqual(0.5);
+
+      /* The h1 does not change line count either — the late-wrap mechanism itself. */
+      for (const h1h of rows[rows.length - 1].h1h) {
+        expect(h1h, `${at} h1 height must be one line throughout`).toBeCloseTo(16.25, 1);
+      }
+    }
+
+    console.log(`[LM10] ${JSON.stringify(rows)}`);
   });
 
   /* ------------------------------------------------------------------------------ LM3 */

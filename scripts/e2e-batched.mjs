@@ -699,7 +699,8 @@ function expectedCounts() {
     // M6, M7, M8, M9 x2, M10 = 15. Counted from `playwright --list`, not by hand.
     'mobile-sheet.spec.ts': 15,
     // Step MOBILE2 E: LM1-LM9 plus the sheet-typography case = 10. Counted from `playwright --list`.
-    'layout-matrix.spec.ts': 10,
+    // Step MOBILE2-FIX: + LM10, the F5 three-moment stability case = 11.
+    'layout-matrix.spec.ts': 11,
   };
   return {
     perFile,
