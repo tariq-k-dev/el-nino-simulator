@@ -90,6 +90,7 @@ export function MobileShell({
     <>
       <HeaderCompact
         mode={mode}
+        viewportW={viewportW}
         anomalyC={scenario.sstAnomaly}
         units={units}
         onToggleUnits={onToggleUnits}

@@ -32,6 +32,7 @@
  */
 
 import { useCallback, useEffect, useId, useRef, useState } from 'react';
+import type { CSSProperties } from 'react';
 import { Download, Gauge, Globe2 } from 'lucide-react';
 import type { UnitSystem } from '@/types/enso';
 import { REGIONS } from '@/lib/regions';
@@ -41,11 +42,27 @@ import { ResetViewButton } from '@/components/ResetViewButton';
 import { ensoCategory, ensoLabel, formatIsland } from '@/mobile/ensoHud';
 import { anomalyDeltaUnit } from '@/mobile/layoutMath';
 import type { LayoutMode2 } from '@/mobile/layoutMath';
+import {
+  LANDSCAPE_CHIP_W,
+  LANDSCAPE_CONTROL_H,
+  LANDSCAPE_IDENTITY_H,
+  LANDSCAPE_ROW_GAP_PX,
+  landscapeHeaderHeight,
+  landscapeHeaderRows,
+} from '@/mobile/headerMath';
 import { publishHeaderBottom } from '@/scene/viewStore';
 
 /** Where the anomaly is right now, with its own scrollbar-free slider. */
 interface HeaderCompactProps {
   mode: LayoutMode2;
+  /**
+   * The layout viewport width, px.
+   *
+   * Used ONLY to choose the landscape row count (`landscapeHeaderRows`). It is a viewport number, not
+   * a measurement of any header element, so the header's geometry stays a pure function of the
+   * viewport: no chip text, no font load and no `h1` wrap can reach it.
+   */
+  viewportW: number;
   /** The live global anomaly, °C. The chip, the popover and the slider all read THIS. */
   anomalyC: number;
   units: UnitSystem;
@@ -68,6 +85,7 @@ const TOUCH = 'flex h-11 min-w-[44px] items-center justify-center rounded-full';
 
 export function HeaderCompact({
   mode,
+  viewportW,
   anomalyC,
   units,
   onToggleUnits,
@@ -78,6 +96,43 @@ export function HeaderCompact({
 }: HeaderCompactProps) {
   const headerRef = useRef<HTMLElement>(null);
   const landscape = mode === 'phoneLandscape';
+  /**
+   * The landscape header's layout, chosen by viewport WIDTH and nothing else.
+   *
+   * `rows` comes from `landscapeHeaderRows` — a pure function of the width — so the row COUNT cannot
+   * change when the ENSO chip's text changes. The inline style below then pins every row to a fixed
+   * height, which is what makes the header's bottom a constant: with `gridTemplateRows: '20px 50px'`
+   * a wrapped child cannot add a row, and `flex-nowrap` on the one-row branch cannot either.
+   *
+   * This is measurement-free CSS. There is no post-load JS that reads a rect and re-lays-out — the
+   * only reader of the header's rect is the `publishHeaderBottom` observer, which is a REPORT of what
+   * CSS decided, not an input to it.
+   */
+  const rows = landscapeHeaderRows(landscape ? viewportW : 0);
+  const landscapeStyle: CSSProperties | undefined = landscape
+    ? rows === 1
+      ? {
+          display: 'flex',
+          flexDirection: 'row',
+          flexWrap: 'nowrap',
+          alignItems: 'center',
+          columnGap: 12,
+          rowGap: 0,
+          paddingTop: 2,
+          paddingBottom: 2,
+          height: landscapeHeaderHeight(viewportW),
+        }
+      : {
+          display: 'grid',
+          gridTemplateColumns: 'auto auto',
+          gridTemplateRows: `${LANDSCAPE_IDENTITY_H}px ${LANDSCAPE_CONTROL_H}px`,
+          columnGap: 12,
+          rowGap: LANDSCAPE_ROW_GAP_PX,
+          paddingTop: 2,
+          paddingBottom: 2,
+          height: landscapeHeaderHeight(viewportW),
+        }
+    : undefined;
 
   /* ------------------------------------------------------------------ the headerBottom publisher */
 
@@ -112,36 +167,94 @@ export function HeaderCompact({
       ref={headerRef}
       data-occluder="compact-header"
       data-layout-header={mode}
-      className={[
-        'pointer-events-none absolute inset-x-0 top-0 z-40 flex flex-wrap gap-x-3 gap-y-1.5 px-3 pb-2',
-        landscape ? 'flex-row items-center' : 'flex-col',
-      ].join(' ')}
-      style={{ paddingTop: 'calc(env(safe-area-inset-top) + 8px)' }}
+      data-layout-rows={landscape ? rows : undefined}
+      className={
+        landscape
+          ? 'pointer-events-none absolute inset-x-0 top-0 z-40 px-3'
+          : 'pointer-events-none absolute inset-x-0 top-0 z-40 flex flex-wrap gap-x-3 gap-y-1.5 px-3 pb-2 flex-col'
+      }
+      style={landscape ? landscapeStyle : { paddingTop: 'calc(env(safe-area-inset-top) + 8px)' }}
     >
       {/* ------------------------------------------------------------------ row 1: identity */}
-      <div className={['pointer-events-auto flex min-w-0 items-center gap-2', landscape ? 'flex-1' : ''].join(' ')}>
-        <div className="relative flex h-9 w-9 shrink-0 items-center justify-center rounded-xl border border-sky-300/25 bg-sky-400/10">
-          <Globe2 className="text-sky-300" size={16} />
+      <div
+        className={['pointer-events-auto flex min-w-0 items-center gap-2', landscape ? 'flex-none' : ''].join(' ')}
+        style={
+          landscape
+            ? rows === 1
+              ? { flex: '0 0 auto' }
+              : { gridColumn: '1 / -1', gridRow: 1, minWidth: 0 }
+            : undefined
+        }
+      >
+        <div
+          className={
+            landscape
+              ? 'relative flex h-5 w-5 shrink-0 items-center justify-center rounded-md border border-sky-300/25 bg-sky-400/10'
+              : 'relative flex h-9 w-9 shrink-0 items-center justify-center rounded-xl border border-sky-300/25 bg-sky-400/10'
+          }
+        >
+          <Globe2 className="text-sky-300" size={landscape ? 12 : 16} />
           <span className="absolute -right-0.5 -top-0.5 h-1.5 w-1.5 rounded-full bg-emerald-400 shadow-[0_0_8px_rgba(52,211,153,0.9)]" />
         </div>
         {/*
-          The page's only h1. `break-words` plus no `truncate` and no `text-overflow`: a two-line wrap is allowed,
-          an ellipsis is not. `min-w-0` on the parent is what lets `break-words` actually break a long word in a
-          flex item — without it the item can only shrink to its longest token.
+          The page's only h1.
+          Portrait: `break-words` plus no `truncate` and no `text-overflow` — a two-line wrap is allowed,
+          an ellipsis is not. `min-w-0` on the parent is what lets `break-words` actually break a long
+          word in a flex item.
+          Landscape: ONE line, always. `whitespace-nowrap` and `flex-none` (or the fixed grid row) mean
+          the h1 reserves its measured 229.06 px natural width and can neither wrap nor be squeezed —
+          which is the defect this replaced, where a `flex-1` slot collapsed to 26.5 px and the heading
+          wrapped to eleven 16.25 px line boxes, growing the header from 113.50 to 194.75 px after load.
+          Still no ellipsis and no clipping: it does not need to shrink, because the row was sized for it.
         */}
-        <h1 className="min-w-0 break-words text-[13px] font-semibold leading-tight tracking-[-0.01em] text-slate-50">
+        <h1
+          className={[
+            landscape
+              ? 'flex-none whitespace-nowrap text-[13px] font-semibold leading-tight tracking-[-0.01em] text-slate-50'
+              : 'min-w-0 break-words text-[13px] font-semibold leading-tight tracking-[-0.01em] text-slate-50',
+          ].join(' ')}
+        >
           Super El&nbsp;Niño <span className="font-normal text-slate-400">Global Impact Simulator</span>
         </h1>
         <span className="sr-only">Interactive teleconnection model · R3F + DuckDB-WASM</span>
       </div>
 
       {/* ------------------------------------------------------------------ the chip */}
-      <div className={['pointer-events-auto', landscape ? 'shrink-0' : 'order-last w-full'].join(' ')}>
+      <div
+        /*
+         * In landscape the chip's box is a FIXED width from `headerMath`, so its text cannot move a
+         * single pixel of layout: `formatIsland` spans 128.53 px (NEUTRAL) to 208.09 px (VERY STRONG
+         * EL NIÑO), and `LANDSCAPE_CHIP_W` reserves 218 px of text box inside 34 px of chrome.
+         * The `[&>button]:w-full` is the same wrapper technique the Reset control uses: it stretches
+         * the shared chip component from OUTSIDE so `EnsoChip`'s own class string stays untouched.
+         */
+        className={[
+          'pointer-events-auto',
+          landscape ? 'flex-none [&>button]:w-full' : 'order-last w-full',
+        ].join(' ')}
+        style={
+          landscape
+            ? { width: LANDSCAPE_CHIP_W, ...(rows === 1 ? {} : { gridColumn: 1, gridRow: 2 }) }
+            : undefined
+        }
+      >
         <EnsoChip anomalyC={anomalyC} units={units} onSstChange={onSstChange} wide={!landscape} />
       </div>
 
       {/* ------------------------------------------------------------------ row 1: controls */}
-      <div className="pointer-events-auto flex shrink-0 items-center gap-1.5">
+      <div
+        className={[
+          'pointer-events-auto flex shrink-0 items-center gap-1.5',
+          landscape ? 'flex-none [&_button_span]:hidden' : '',
+        ].join(' ')}
+        style={
+          landscape
+            ? rows === 1
+              ? { flex: '0 0 auto' }
+              : { gridColumn: 2, gridRow: 2, justifySelf: 'end' }
+            : undefined
+        }
+      >
         <div className="flex items-center overflow-hidden rounded-full border border-white/[0.08] bg-black/40 p-0.5 backdrop-blur-md">
           {(['metric', 'imperial'] as const).map((system) => (
             <button
