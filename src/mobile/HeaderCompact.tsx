@@ -225,12 +225,16 @@ export function HeaderCompact({
          * In landscape the chip's box is a FIXED width from `headerMath`, so its text cannot move a
          * single pixel of layout: `formatIsland` spans 128.53 px (NEUTRAL) to 208.09 px (VERY STRONG
          * EL NIÑO), and `LANDSCAPE_CHIP_W` reserves 218 px of text box inside 34 px of chrome.
-         * The `[&>button]:w-full` is the same wrapper technique the Reset control uses: it stretches
-         * the shared chip component from OUTSIDE so `EnsoChip`'s own class string stays untouched.
+         *
+         * The stretching selectors are `[&>div]` and `[&_button]`, not `[&>button]`: `EnsoChip`'s root
+         * is a `<div>` and its button is a GRANDCHILD, so a `[&>button]:w-full` rule matched nothing and
+         * the button kept its natural 217.48 px (measured — the wrapper was 252 and the button was not).
+         * `_button` is safe here because the chip subtree holds exactly one button; the popover is
+         * `position: absolute`, so widening the button cannot move it.
          */
         className={[
           'pointer-events-auto',
-          landscape ? 'flex-none [&>button]:w-full' : 'order-last w-full',
+          landscape ? 'flex-none [&>div]:w-full [&_button]:w-full' : 'order-last w-full',
         ].join(' ')}
         style={
           landscape
