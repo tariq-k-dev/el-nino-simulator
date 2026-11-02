@@ -335,4 +335,15 @@ skipped), so the 0 is read from the absence of skips rather than from a printed 
 
 ## 10. Gate
 
-Run as four separate calls after the worktrees were removed — see the commit that adds this file.
+Run as four separate calls on a clean tree at the commit that adds this document, after the seven
+worktrees were removed with `git worktree remove --force` and `git worktree prune`:
+
+| command | exit | tail |
+|---|---|---|
+| `pnpm tsc -b` | 0 | no output |
+| `pnpm lint` | 0 | `$ eslint . --max-warnings 0` |
+| `pnpm test` | 0 | `Test Files 49 passed (49)` / `Tests 1097 passed (1097)` |
+| `pnpm build` | 0 | `OK no test hooks in 3 production JS assets` / `OK all 17 assets within Cloudflare Pages limits` |
+
+`git status --porcelain` is empty at that commit.
+
