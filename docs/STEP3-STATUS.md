@@ -1199,3 +1199,70 @@ The `zoom still works after a region fly-to` case: failed once in the full batch
 wheel ignored), then PASSED in the isolated rerun, PASSED in a second isolated run, and a direct probe of that
 exact sequence (`.cache/mob/probe-flywheel.spec.ts`) measured `3.3708 -> 4.1637`, i.e. the wheel worked. So it
 is the load flake the file has always had and not a regression.
+
+
+---
+
+## 2B-STEP3-MOBILE2 — the layout law, the free rect, the unclamped ceiling, the dock
+
+Head before the step: `f7a8332` (MOBILE1 closed, 1020 unit tests, mobile-sheet 15/15).
+**CLOSED.** Six commits: P0 `cf8b0a6`, P1 `f84a3a4`, A `337f536`, B+C `270ab35`, E `bbb1005`,
+F `7d7db34` + `bbe7fb4`.
+
+Both STOP conditions in P1 were cleared from the repo's own record: the desktop Header file is not touched at all
+(the compact header is a separate tree reusing only `ResetViewButton`, already shared), and the desktop half of the
+director's frame body is unchanged (the new free rect is computed only inside the mobile branch).
+
+### The full batched run
+
+`20 files, 163/163 tests accounted for, 15 files passed, 5 files with 1-2 failing cases, 0 retries, 56.7 min`.
+Summary archived as `.cache/mob2-archive/2026-11-02T00-42-13-469Z-batched-summary.json`, log beside it.
+
+`layout-matrix.spec.ts` is **10/10 green** in the batch (238.5 s) and in isolation.
+
+Every red file was rerun in isolation, because a batched red is not a product defect until it reproduces:
+
+| file | batched | isolated rerun | verdict |
+|---|---|---|---|
+| `focus-ux.spec.ts` | 21/22 (U4 no dip) | **22/22** | load: U4's rAF sampler collected a trace of a page whose renderer was starved. Not the product. |
+| `mobile-sheet.spec.ts` | 14/15 (M5 renders) | **15/15** | load: the render counter is read against a rest baseline, and a starved browser re-renders after the snapshot. |
+| `switcher-ux.spec.ts` | 6/8 (S2 x2) | 7/8, then **2/2 on the S2 cases alone** | the KNOWN sampler race already recorded for this file: S2's positive control saw **0.000 deg** in the batch and **131.944 deg** on the clean rerun. Pre-existing, file unedited since `5e7c826`. |
+| `negative.spec.ts` | 13/14 | 13/14 | **N10**, the documented known-red. Unchanged signature. |
+| `globe.spec.ts` | 3/5 | **4/5** — pinch only | one load flake (`zoom still works after a region fly-to`, passes in isolation) and one real red, below. |
+
+### The globe.spec pinch red, reported and not edited
+
+`globe.spec.ts:175` "pinch at 375x667 changes the distance" fails in the batch and in isolation, exactly as it did
+at MOBILE1 (`docs/STEP3-STATUS.md`, the MOBILE1 section: "fails deterministically, twice in isolation"). **The
+compact header did not turn it green, and it is not the blocker.** Measured at 375x667 on this build
+(`.cache/mob2-pinch.log`):
+
+    open canvas cells        358
+    topmost open row         y = 10
+    chosen origin            (10, 10)
+    element at origin        CANVAS
+    touch-action at origin   none
+    compact header           bottom 158 px, mode portrait
+    pinch there              3.353356527421443 -> 3.353356527421443  (delta 0)
+
+So the origin the heuristic picks IS the canvas, with the right `touch-action`, and the synthesised pinch still
+moves nothing. The earlier MOBILE1 measurement showed a pinch at `(187, 300)` — open canvas below the header, above
+the sheet — working (`3.3534 -> 2.7035`), which is why this is the heuristic's 20 px corner sliver rather than the
+gesture path. Fixing it means editing a locked spec, which this prompt forbids, so it is reported.
+
+### What changed in the product, measured
+
+The layout law replaces MOBILE1's width query; the free rect replaces the fixed 55 % band; `dMaxMode =
+max(5, 1.25*dContain)` replaces the ceiling that was squashing the disc. The headline consequence, from the P1
+baseline against the same eight viewports:
+
+| viewport | disc r before | disc overflow/side before | disc r after | margin after (tightest side) |
+|---|---:|---:|---:|---:|
+| 390x844 | 224.4 | **+29.4** (clipped) | 165.6 | 29.4 |
+| 412x924 | 245.7 | **+39.7** (clipped) | 175.6 | 30.4 |
+| 320x568 | 151.0 | −9.0 | 88.2 | 21.2 |
+| 924x412 | 167.7 (desktop, degenerate rect) | **+294.3** | 144.9 | 28.1 |
+
+Two product defects found by the new acceptance suite and fixed in `HeaderCompact` — `ResetViewButton`'s 26 px
+height, and the chip popover closing itself when the unit toggle was pressed. Both are described in
+`docs/E2E.md` and in the `bbb1005` commit body.
