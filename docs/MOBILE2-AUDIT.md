@@ -156,7 +156,9 @@ Three facts follow from the table, and step C is what fixes them:
 
 Planned (not measured) values for the new free rect at an assumed compact-header height of 104 px portrait /
 60 px phoneLandscape — these are the numbers step E measures, listed here so a later reader can see whether the
-implementation matched the intent:
+implementation matched the intent. **The 104 px figure was a planning assumption, superseded by the measured
+158.00 px in `docs/MOBILE2-RECON.md` §R2; the table below is retained as the record of what was planned, not as a
+description of the shipped header.**
 
 | viewport | mode | free rect | cx, cy | Rb | dFit | dMaxMode |
 |---|---|---|---:|---:|---:|---:|

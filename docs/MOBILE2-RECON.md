@@ -423,3 +423,64 @@ measured law with no run behind them. They are marked as projections, not measur
 | 104 vs 158 | **Reporting bug.** 158 is the real header bottom (0.00 px from the DOM, steady over three sample times, identical across nine widths). 104 is a `docs/MOBILE2-AUDIT.md:157` *assumption* from before the component existed, carried into a table labelled "planned (not measured)" and later read as a measurement. The published free rect equals the real header everywhere — no product bug. |
 | 667x375 disc r = 70.7 | **Real rendered size — not a typo, not a measurement artefact.** Direct projection 69.977, closed form 70.707, committed spec printed 70.7. Not a disc defect: `r/Rb = 0.905`, margins >= 20.15 px. The defect at that row is the header's **late wrap** 113.5 → 194.75 px, which halves the disc. |
 | all rows disc inside rect with >= 8 px real margins | **Yes.** Minimum **20.15 px** (667x375, top and bottom); tightest portrait **21.80 px** (320x568, top). 14/14 mobile rows pass; 3 desktop rows have no mobile budget to test. |
+
+---
+
+## FIX — the phoneLandscape header, measured after the fix
+
+Step 2B-STEP3-MOBILE2-FIX changed the landscape header only. The defect R2/R7 recorded — a header that grew
+from **113.50 px at 265 ms to 194.75 px at 2326 ms** at 667x375 because the `h1` wrapped inside a `flex-1` slot
+squeezed by a data-dependent chip — is gone, and the numbers below are the measurement that says so.
+
+**The mechanism.** `src/mobile/headerMath.ts` makes the header's geometry a pure function of viewport WIDTH:
+`landscapeHeaderRows(w)` returns 1 at `w >= 800` and 2 below it, and `landscapeHeaderHeight(w)` returns 54 or 76.
+The chip's box is a fixed `LANDSCAPE_CHIP_W = 252` px, so `formatIsland`'s measured 128.53–208.09 px text span
+cannot move anything. The `h1` is `whitespace-nowrap` + `flex-none` and reserves its measured 229.06 px natural
+width. No post-load JS measures and re-lays-out: the `ResizeObserver` only REPORTS what CSS decided.
+
+**F6 — the landscape matrix, real measured numbers.** Disc measured by projecting four limb points through the
+scene's own camera matrix (the R3 construction). Bundle `srcHash 772c9b21`, `gitHead 133a9a7`.
+
+| viewport | free rect x, top, w, bottom | Rb | dFit | dMax | dMax/dFit | disc r | r/Rb | L | R | T | B |
+|---|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|
+| 667x375 | 0.00, 76.00, 347.00, 375.00 | 137.50 | 4.0684 | 5.0855 | 1.250 | 120.06 | 0.873 | 53.44 | 53.44 | 29.44 | 29.44 |
+| 844x390 | 0.00, 54.00, 523.28, 390.00 | 156.00 | 3.7553 | 5.0000 | 1.331 | 135.27 | 0.867 | 126.37 | 126.37 | 32.73 | 32.73 |
+| 924x412 | 0.00, 54.00, 572.88, 412.00 | 167.00 | 3.7102 | 5.0000 | 1.348 | 144.64 | 0.866 | 141.80 | 141.80 | 34.36 | 34.36 |
+| 932x430 | 0.00, 54.00, 577.84, 430.00 | 176.00 | 3.6774 | 5.0000 | 1.360 | 152.31 | 0.865 | 136.61 | 136.61 | 35.69 | 35.69 |
+| 568x320 | 0.00, 76.00, 284.00, 320.00 | 110.00 | 4.3203 | 5.4004 | 1.250 | 96.48 | 0.877 | 45.52 | 45.52 | 25.52 | 25.52 |
+| 640x360 | 0.00, 76.00, 320.00, 360.00 | 130.00 | 4.1265 | 5.1581 | 1.250 | 113.64 | 0.874 | 46.36 | 46.36 | 28.36 | 28.36 |
+
+Every margin is at least 8 px (tightest **25.52**), `r/Rb` is at least 0.85 (0.865–0.877), and
+`maxDistance >= 1.2 * dFit` holds on all six rows (1.250–1.360). The 667x375 disc went from **70.71 to 120.06 px**
+(+69.8 %) because `Rb` went from 78.125 to 137.50 — the header term that bound it is now 76 px instead of 194.75.
+
+**The 120 px bound at 667x375 has 0.06 px of slack.** It passes, and it is the tightest number in the matrix: the
+76 px header is the only thing holding it, and `LANDSCAPE_CONTROL_H` is 50 (measured: two 44 px buttons in a
+`p-0.5` pill with 1 px borders), not the 46 an earlier draft assumed. A header one pixel taller would fail it.
+
+**F5 — three moments, per row.** Sampled in page with `requestAnimationFrame` from an `addInitScript`, so the
+first sample is the first frame rather than the first frame Playwright could observe.
+
+| viewport | first frame | after data ready | after 2 s | published | h1 height at all three |
+|---|---:|---:|---:|---:|---|
+| 667x375 | 76 | 76 | 76 | 76 | 16.25 / 16.25 / 16.25 |
+| 844x390 | 54 | 54 | 54 | 54 | 16.25 / 16.25 / 16.25 |
+| 924x412 | 54 | 54 | 54 | 54 | 16.25 / 16.25 / 16.25 |
+| 932x430 | 54 | 54 | 54 | 54 | 16.25 / 16.25 / 16.25 |
+| 568x320 | 76 | 76 | 76 | 76 | 16.25 / 16.25 / 16.25 |
+| 640x360 | 76 | 76 | 76 | 76 | 16.25 / 16.25 / 16.25 |
+
+**F2 — the chip cannot move the header.** Driving the store's anomaly through the popover's own range input at
+0, 0.1, 0.5, 1.0, 1.5, 2.0, 2.4, 2.7 and 3.0 at every row: the chip's text spanned **128.53 → 208.09 px** while
+its box stayed **252.00 px** and the header's bottom stayed a single distinct value per row. The `h1` was one line
+at every value.
+
+**Portrait is unchanged: 158.00 px at all ten viewports** (390x844, 412x924, 360x640, 375x667, 430x932, 320x568,
+768x1024, 820x1180, 960x1440, 600x600), DOM and published. Its class strings were dumped before and after the
+change and diffed; the landscape overrides are inline styles and landscape-only class branches, so the portrait
+path renders the same tree.
+
+**One correction to R2's framing.** R2 called the 667x375 disc "not a product defect" and attributed the small
+radius to the header. That was right about the CAUSE and wrong about the SEVERITY: at 70.71 px the globe was
+**41 % smaller than the 120 px the fix's acceptance bound requires**, so the header's late wrap was a disc defect
+by consequence. The fix is in the header, as R7's Option 1 predicted, and the disc followed.
