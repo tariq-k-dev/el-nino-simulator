@@ -453,6 +453,73 @@ test.describe('globe zoom', () => {
     await context.close();
   });
 
+  /**
+   * Wait until `__globe.distance()` has stopped moving, and return the settled value.
+   *
+   * WHY THIS EXISTS (WAIVER-GLOBE305). The fly-to's distance lerp has a tail: measured tau is 0.1586 s
+   * against the module's `FRAME_TIME_CONSTANT_S` of 0.18, and reaching genuine rest after the drawer closes
+   * takes 1841 to 1905 ms. This test used to wait a fixed 900 ms and then read its baseline, which put the
+   * baseline inside the tail. Two things went wrong with that:
+   *
+   *   - C2 settle drift: the baseline was itself a point on a decaying curve, so it varied run to run
+   *     (3.37795 or 3.38319) and the no-wheel control alone moved 0.021 to 0.026 — the same magnitude as the
+   *     assertion's 0.02 threshold.
+   *   - C4 fight: `CameraDirector.tsx:941` keeps writing the fit's distance while `userZoomed` is false, so
+   *     during the tail the fit competed with the wheel. Measured: the series climbed to 3.50870 and then
+   *     gave back 0.1515 to finish BELOW where it started.
+   *
+   * Polling `__frame.settled` instead was tried and is WRONG: it requires `distanceArrived` only when
+   * `rigOwnsDistance` is true (`CameraDirector.tsx:822-826`), so it reports settled with a 0.24 gap after a
+   * fly-to. It produced 10/10 green runs whose baseline sat 0.78 BELOW `dTarget`, where the "gain" being
+   * measured was the fit pulling the camera up to its floor rather than the wheel. That is a silent false
+   * pass, so this helper polls the quantity the assertion actually measures.
+   *
+   * Settled means: over a continuous 200 ms window, every sample lies within 0.0005 of every other.
+   */
+  async function settleDistance(page: import('@playwright/test').Page): Promise<number> {
+    const SAMPLE_MS = 50;
+    const WINDOW_MS = 200;
+    const QUIET = 0.0005;
+    const TIMEOUT_MS = 6000;
+
+    const samples: Array<{ t: number; d: number }> = [];
+    const started = Date.now();
+
+    while (Date.now() - started < TIMEOUT_MS) {
+      samples.push({ t: Date.now() - started, d: await distance(page) });
+      const last = samples[samples.length - 1];
+
+      /* The window must actually be 200 ms wide: find the latest sample at or before `last.t - WINDOW_MS`
+         and require everything from there to now to be flat. Without this a fast pair of samples could
+         satisfy a 200 ms window that never elapsed. */
+      if (last.t >= WINDOW_MS) {
+        let startIdx = -1;
+        for (let i = 0; i < samples.length; i += 1) {
+          if (samples[i].t <= last.t - WINDOW_MS) startIdx = i;
+        }
+        if (startIdx >= 0) {
+          let lo = Infinity;
+          let hi = -Infinity;
+          for (let i = startIdx; i < samples.length; i += 1) {
+            if (samples[i].d < lo) lo = samples[i].d;
+            if (samples[i].d > hi) hi = samples[i].d;
+          }
+          if (hi - lo <= QUIET) return last.d;
+        }
+      }
+      await page.waitForTimeout(SAMPLE_MS);
+    }
+
+    const tail = samples
+      .slice(-5)
+      .map((s) => `${s.t.toFixed(0)} ms: ${s.d.toFixed(5)}`)
+      .join(', ');
+    throw new Error(
+      `settleDistance: __globe.distance() did not settle within ${TIMEOUT_MS} ms ` +
+        `(no 200 ms window stayed within ${QUIET}). Last 5 samples: ${tail}`,
+    );
+  }
+
   test('zoom still works after a region fly-to', async ({ page }) => {
     await page.addInitScript(
       connectionInit({ saveData: false, effectiveType: '4g', downlink: 10 }),
@@ -473,15 +540,38 @@ test.describe('globe zoom', () => {
     });
     expect(clicked, 'a region pin must exist to fly to').toBe(true);
 
-    // Let the fly-to settle, then close the drawer so the canvas is uncovered.
+    // Let the fly-to flight finish, then close the drawer so the canvas is uncovered.
     await page.waitForTimeout(1800);
     await page.keyboard.press('Escape');
-    await page.waitForTimeout(900);
+
+    /*
+     * WAIVER-GLOBE305. The old fixed `waitForTimeout(900)` here read the baseline from inside the fly-to's
+     * distance lerp tail, which is still running at 900 ms and only reaches rest at 1841 to 1905 ms. Poll the
+     * measured quantity instead of sleeping a guessed interval.
+     *
+     * The `1800` above is left as it is: it lets the FLIGHT finish, which is a different quantity from the
+     * residual distance tail, and WAIVER-GLOBE305 keeps the existing wheel timing unchanged so the validated
+     * delta still holds.
+     */
+    const before = await settleDistance(page);
+
+    /* AT-REST: a settled reading must also be sitting at the fit's own target, not merely be quiet somewhere
+       else on the curve. `settleDistance` guarantees flatness; this guarantees position. Both are needed —
+       polling `__frame.settled` alone was withdrawn precisely because it gave flat-but-wrong readings. */
+    const targetD = await page.evaluate(() => {
+      if (!window.__frame) throw new Error('__frame is not installed; this test needs /?debug');
+      return window.__frame.target.d;
+    });
+    const atRestGap = Math.abs(before - targetD);
+    expect(
+      atRestGap,
+      `the baseline must be at rest against the fit's target before the wheel is measured: ` +
+        `distance ${before.toFixed(5)} vs __frame.target.d ${targetD.toFixed(5)}, gap ${atRestGap.toFixed(5)} ` +
+        `(must be <= 0.005). A larger gap means the fly-to tail is still running.`,
+    ).toBeLessThanOrEqual(0.005);
 
     const rect = await canvasRect(page);
     await page.mouse.move(rect.cx, rect.cy);
-
-    const before = await distance(page);
     for (let i = 0; i < 6; i += 1) {
       await page.mouse.wheel(0, 120);
       await page.waitForTimeout(80);
