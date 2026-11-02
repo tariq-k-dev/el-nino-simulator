@@ -18,7 +18,7 @@
  * ## The order, and why each clause is first
  *
  *     1. phoneLandscape  if w < 1024 AND h < 600 AND w > h
- *     2. portrait        if w < 768  OR (w < 1024 AND h > w)
+ *     2. portrait        if w < 768  OR (w < 1280 AND h > w)
  *     3. desktop         otherwise
  *
  * `phoneLandscape` is tested FIRST because it is the narrowest condition and its members would otherwise be
@@ -27,26 +27,56 @@
  * pass it, the smallest landscape tablet that reaches this branch (600x1024 is portrait by clause 2 anyway)
  * does not.
  *
- * Clause 2's `w < 768` is the ONLY clause of the old breakpoint that survives verbatim — deliberately, because
- * it is the one the 767/768 boundary spec (M1) compares against. The `(w < 1024 AND h > w)` half is what makes
- * 768x1024 and 960x1440 portrait: both are wider than the old breakpoint and both are unmistakably a tablet
- * held upright.
+ * ## The two width thresholds, and why there are two
+ *
+ * `DESKTOP_MIN_W` (1024) bounds clause 1 only. `TABLET_PORTRAIT_MAX_W` (1280) bounds clause 2's aspect half.
+ * They are deliberately different numbers because they answer different questions: 1024 is the narrowest width
+ * at which a landscape viewport has room for the desktop overlays, while 1280 is the width below which a
+ * PORTRAIT viewport of any height is squeezed by those same overlays.
+ *
+ * The second threshold is the fix for the 13-inch tablet: at 1032x1376 the old law reported desktop because
+ * `w < 1024` was false for a 1032 px width, so an iPad Pro held upright got the full desktop shell — a 361 px
+ * control panel on the left, 316 px of cards on the right, and a 355 px band left for the globe inside a
+ * 1032 px canvas. Aspect, not width, is what makes that viewport unusable with the desktop shell.
+ *
+ * Clause 2's `w < 768` survives verbatim from MOBILE1's breakpoint — deliberately, because it is the one the
+ * 767/768 boundary spec (M1) compares against, and because it is the clause that catches narrow phones without
+ * consulting height at all. The `(w < 1280 AND h > w)` half is what makes 768x1024, 960x1440 and 1032x1376
+ * portrait: every one is a tablet held upright, and the last is wider than `DESKTOP_MIN_W`, which is exactly the
+ * case the width-only clause could not see.
+ *
+ * Strict comparisons throughout: 1280 wide is DESKTOP (`w < 1280` is false), and a square viewport is DESKTOP
+ * (`h > w` is false). Both are asserted in `layoutMath.test.ts` rather than left to the reader.
  *
  * ## Accepted gaps (documented in `docs/MOBILE2-AUDIT.md` §11, not fixed)
  *
  *   - a 768..1023 wide LANDSCAPE window with `h >= 600` is portrait (1023x601 -> portrait, 1024x600 -> desktop);
- *   - a square 768x768 or 900x900 is desktop (`h > w` false, `w < 768` false);
- *   - 1024x1366 is desktop although it is a portrait tablet.
+ *   - a square 768x768, 900x900 or 1032x1032 is desktop (`h > w` false, `w < 768` false);
+ *   - a PORTRAIT viewport 1280 wide or wider (1280x1400) is desktop: clause 2's aspect half stops at
+ *     `TABLET_PORTRAIT_MAX_W`, so a tall enough window at 1280 keeps the desktop shell. Raising the threshold
+ *     to cover it would move a boundary the landscape band depends on.
  *
  * Each of those is a real viewport nobody in this step's matrix uses, and every "fix" for one of them moves a
  * boundary the acceptance suite bands. They are recorded rather than patched.
+ *
+ * ## Vestigial, flagged for cleanup (not touched here)
+ *
+ * `mobile/snapMath.ts` still exports `BREAKPOINT_MAX` (767.98) and `MOBILE_QUERY` (the
+ * `(max-width: 767.98px)` string). Nothing reads either one in `src`; the comment on `MOBILE_QUERY` names a
+ * listener in a `layoutMode.ts` that no longer exists. Only `snapMath.test.ts` asserts the string. They are a
+ * leftover of the MOBILE1 media-query law this function replaced, and they are now actively misleading: 767.98
+ * is no rule this product follows.
  */
 
 /** Which layout the page runs. `mobile` in MOBILE1 is now two modes; `desktop` is unchanged. */
 export type LayoutMode2 = 'desktop' | 'portrait' | 'phoneLandscape';
 
 /**
- * Narrowest desktop WIDTH. The phoneLandscape clause and clause 2's second half both use it.
+ * Narrowest width at which a LANDSCAPE viewport keeps the desktop shell. Bounds clause 1 only.
+ *
+ * Since TABLET-PORTRAIT it no longer appears in clause 2 — the aspect half of that clause is bounded by
+ * `TABLET_PORTRAIT_MAX_W` instead. Reusing this constant there is precisely the defect that made 1032x1376
+ * desktop, so the two must not be collapsed back into one number.
  *
  * 1024, not 1023.98: the mode is computed from `innerWidth` as an INTEGER (browsers report integer layout
  * viewports), so there is no fractional-edge case to defend against here — unlike `snapMath.BREAKPOINT_MAX`,
@@ -57,6 +87,24 @@ export const DESKTOP_MIN_W = 1024;
 /** Old breakpoint, kept as the portrait clause's width test. Same value the M1 spec compares against. */
 export const PORTRAIT_MAX_W = 768;
 
+/**
+ * Widest PORTRAIT viewport that still gets the mobile shell — clause 2's aspect bound.
+ *
+ * 1280, and it must stay a DIFFERENT constant from `DESKTOP_MIN_W` rather than sharing it. The two answer
+ * different questions: `DESKTOP_MIN_W` asks "is this landscape viewport wide enough for the desktop overlays",
+ * while this one asks "is this upright viewport about to be squeezed by them". Sharing the value 1024 is what
+ * put a 1032x1376 iPad Pro on the desktop shell.
+ *
+ * 1280 rather than some larger number because the desktop shell's own furniture is what sets the requirement:
+ * a 361 px control panel plus a 316 px card column plus padding leaves a portrait viewport under 1280 with
+ * well under half its width for the globe. 1280 is also Tailwind's `xl`, so the number a reader can check
+ * against the stylesheet is the same number.
+ *
+ * Strict: `w < TABLET_PORTRAIT_MAX_W`. A 1280-wide viewport is DESKTOP even when it is upright; the accepted
+ * gap (1280x1400 is desktop) is documented in the header comment and asserted in `layoutMath.test.ts`.
+ */
+export const TABLET_PORTRAIT_MAX_W = 1280;
+
 /** Tallest viewport that may still be a landscape phone. */
 export const LANDSCAPE_MAX_H = 600;
 
@@ -65,7 +113,7 @@ export function resolveLayoutMode(w: number, h: number): LayoutMode2 {
   const W = Number.isFinite(w) && w > 0 ? w : 0;
   const H = Number.isFinite(h) && h > 0 ? h : 0;
   if (W < DESKTOP_MIN_W && H < LANDSCAPE_MAX_H && W > H) return 'phoneLandscape';
-  if (W < PORTRAIT_MAX_W || (W < DESKTOP_MIN_W && H > W)) return 'portrait';
+  if (W < PORTRAIT_MAX_W || (W < TABLET_PORTRAIT_MAX_W && H > W)) return 'portrait';
   return 'desktop';
 }
 

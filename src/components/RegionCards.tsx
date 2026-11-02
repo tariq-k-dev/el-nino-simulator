@@ -19,12 +19,16 @@ interface RegionCardsProps {
 }
 
 /**
- * Right-hand region stack. Hidden on small screens (the drawer and the in-scene
- * hotspot labels carry navigation there) so the globe keeps its screen budget.
+ * Right-hand region stack. Rendered only in desktop mode — `App` mounts it inside `{!isMobile ? …}` — so the
+ * column's own display no longer needs a breakpoint. The old `hidden … lg:flex` pair was a second, independent
+ * copy of the mode decision, keyed on Tailwind's 1024; TABLET-PORTRAIT decoupled the mode law from that number,
+ * and a responsive display utility beats an unconditional `hidden`, so keeping both would let a stylesheet
+ * outvote the JS gate. The globe keeps its screen budget by the mount condition, which is the honest place for
+ * the decision: an unmounted panel cannot be measured by the insets registry either.
  */
 export function RegionCards({ metrics, activeRegion, onSelect }: RegionCardsProps) {
   return (
-    <div className="pointer-events-auto hidden w-[268px] flex-col gap-2 lg:flex">
+    <div className="pointer-events-auto flex w-[268px] flex-col gap-2">
       <div className="mb-0.5 flex items-center justify-between px-1">
         <span className="text-[8.5px] uppercase tracking-[0.2em] text-slate-500">Impact Zones</span>
         <span className="num text-[8.5px] text-slate-600">{ORDER.length} active</span>

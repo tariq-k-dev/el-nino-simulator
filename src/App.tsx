@@ -180,13 +180,29 @@ export default function App() {
       <div
         data-occluder="left-panel"
         className={[
-          'pointer-events-none absolute bottom-0 left-0 z-20 flex w-full flex-col gap-3 p-4 sm:p-6 lg:w-auto',
-          /* Desktop only: on a phone the sheet's half and full tiers carry these controls. */
-          isMobile ? 'hidden' : '',
+          /*
+           * The `lg:` width utility is gone from this element, and the width is chosen by the JS mode instead.
+           *
+           * Why: `lg:` is Tailwind's 1024 and `DESKTOP_MIN_W` was 1024 too, so the two agreed by coincidence, not
+           * by construction. TABLET-PORTRAIT makes the mode aspect-aware, so agreement has to be enforced rather
+           * than assumed — a `lg:` utility keeps asserting "1024 and up" no matter what the law says.
+           *
+           * This element is the benign case: its only `lg:` utility was `lg:w-auto`, a WIDTH utility that does
+           * not touch display, so it was the one of the five sites where `hidden` still won (measured). The other
+           * four carried `lg:flex` / `lg:block`, and there a responsive display utility beat the unconditional
+           * `hidden` outright — which is the mechanism this rule exists to remove. Folding the width into the
+           * mode keeps this element consistent with that fix rather than half-converted.
+           *
+           * `sm:p-6` stays: it is inside-component spacing and does not choose the shell.
+           */
+          'pointer-events-none absolute bottom-0 left-0 z-20 flex flex-col gap-3 p-4 sm:p-6',
+          /* Desktop sizes to its content; mobile is hidden, so the width never renders. */
+          isMobile ? 'hidden w-full' : 'w-auto',
         ].join(' ')}
       >
         <div className="pointer-events-auto flex flex-col gap-2">
-          <div className="hidden items-center gap-2 pl-1 lg:flex">
+          {/* `lg:flex` removed: this row's whole existence is desktop-only, and the parent already gates on isMobile. */}
+          <div className="flex items-center gap-2 pl-1">
             <span className="h-px w-6 bg-gradient-to-r from-sky-400/60 to-transparent" />
             <span className="text-[8px] uppercase tracking-[0.24em] text-slate-500">
               Live Scenario Controls
@@ -215,7 +231,11 @@ export default function App() {
       {!isMobile ? (
         <div
           data-occluder="right-panel"
-          className="pointer-events-none absolute right-0 top-1/2 z-20 hidden -translate-y-1/2 p-4 lg:flex lg:p-6"
+          /* `lg:flex` removed — `{!isMobile ? …}` above already decides existence, so the class only added a
+             second, disagreeable copy of the same decision. `p-6` is now unconditional where `lg:p-6` was: in
+             mobile mode this element does not render at all, and the baseline this must reproduce was measured
+             at >= 1024, where `lg:p-6` was the padding in force. */
+          className="pointer-events-none absolute right-0 top-1/2 z-20 flex -translate-y-1/2 p-6"
         >
           <RegionCards metrics={analytics.metrics} activeRegion={activeRegion} onSelect={selectRegion} />
         </div>
@@ -268,8 +288,13 @@ export default function App() {
         />
       ) : null}
 
-      {/* Bottom-centre hint (desktop only — it names a mouse). */}
-      <div className="pointer-events-none absolute bottom-3 left-1/2 z-20 hidden -translate-x-1/2 lg:block">
+      {/*
+        Bottom-centre hint — desktop only, because it names a mouse. The condition is `!isMobile`, the same one
+        the desktop header and panels use: the old `hidden lg:block` pair let Tailwind's 1024 decide, which is
+        the breakpoint TABLET-PORTRAIT deliberately decoupled from the mode law.
+      */}
+      {!isMobile ? (
+      <div className="pointer-events-none absolute bottom-3 left-1/2 z-20 -translate-x-1/2 block">
         <div className="flex items-center gap-3 rounded-full border border-white/[0.06] bg-black/30 px-3 py-1 backdrop-blur-sm">
           {[
             ['Drag', 'orbit'],
@@ -285,6 +310,7 @@ export default function App() {
           ))}
         </div>
       </div>
+      ) : null}
     </div>
   );
 }

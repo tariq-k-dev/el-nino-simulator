@@ -17,6 +17,7 @@ import {
   PEEK_MIN_PX,
   PORTRAIT_MAX_W,
   RADIUS_MARGIN_PX,
+  TABLET_PORTRAIT_MAX_W,
   anomalyDeltaUnit,
   computeFreeRect,
   dockWidth,
@@ -50,9 +51,75 @@ const TABLE: Array<[number, number, LayoutMode2]> = [
   [1024, 768, 'desktop'],
   [1280, 800, 'desktop'],
   [1440, 960, 'desktop'],
-  [1024, 1366, 'desktop'],
   [1280, 500, 'desktop'],
+  /*
+   * WAS `desktop` BEFORE TABLET-PORTRAIT, and the change is the point of the rule: an iPad Pro 11 held upright
+   * is 1024 wide, which used to clear the width-only clause at exactly `DESKTOP_MIN_W`. It is portrait now, by
+   * the aspect clause, because 1024 < `TABLET_PORTRAIT_MAX_W`.
+   */
+  [1024, 1366, 'portrait'],
 ];
+
+/**
+ * The TABLET-PORTRAIT table: the rows the rule was written FOR, plus the four edges it must not move.
+ *
+ * Kept separate from `TABLE` above so the diff records which expectations changed because of this rule rather
+ * than because someone retyped the matrix. Each entry names its own reason, because a bare expected mode is
+ * indistinguishable from a typo.
+ */
+const TABLET_PORTRAIT: Array<[number, number, LayoutMode2, string]> = [
+  /* --- the target: portrait viewports from 1024 to 1279 wide, which the old law sent to desktop --- */
+  [1032, 1376, 'portrait', 'iPad Pro 13 upright: the viewport this rule exists for'],
+  [1024, 1366, 'portrait', 'iPad Pro 11 upright: exactly DESKTOP_MIN_W, now caught by the aspect clause'],
+  [1279, 1400, 'portrait', 'one px under TABLET_PORTRAIT_MAX_W is still portrait'],
+  /* --- the upper edge: 1280 is desktop, strictly --- */
+  [1280, 1400, 'desktop', '1280 wide upright is DESKTOP: the comparison is strict'],
+  /* --- squares are desktop, at three sizes --- */
+  [1032, 1032, 'desktop', 'square: h > w is false, and 1032 is not < 768'],
+  [1376, 1032, 'desktop', 'the same viewport rotated: landscape, unaffected'],
+  [1194, 834, 'desktop', 'iPad Pro 13 landscape: must NOT move, this is the row that was fine'],
+  [1024, 768, 'desktop', 'iPad Pro 11 landscape: must NOT move'],
+  /* --- landscape below the landscape-phone height bound is desktop, not mobile --- */
+  [1100, 500, 'desktop', 'landscape 1100 wide fails the w < 1024 clause, so it stays desktop'],
+  [1023, 500, 'phoneLandscape', 'one px narrower and under 600 tall: the landscape clause takes it'],
+  /* --- the rows that were already portrait must stay portrait --- */
+  [834, 1194, 'portrait', 'iPad Pro 11 upright at its other reported size'],
+  [820, 1180, 'portrait', 'iPad Air upright'],
+  [768, 1024, 'portrait', 'aspect clause, unchanged'],
+  [767, 700, 'portrait', 'width clause, unchanged'],
+  [375, 667, 'portrait', 'phone, unchanged'],
+  [667, 375, 'phoneLandscape', 'landscape phone, unchanged'],
+];
+
+describe('resolveLayoutMode — TABLET-PORTRAIT: portrait under 1280 wide', () => {
+  for (const [w, h, expected, why] of TABLET_PORTRAIT) {
+    it(`${w}x${h} is ${expected} — ${why}`, () => {
+      expect(resolveLayoutMode(w, h)).toBe(expected);
+    });
+  }
+
+  /*
+   * The two thresholds are asserted DISTINCT, because the defect this rule fixes was one number doing both
+   * jobs. A future edit that sets TABLET_PORTRAIT_MAX_W = DESKTOP_MIN_W would put the 13-inch tablet back on the
+   * desktop shell and every row above would fail — but this states the invariant directly rather than leaving it
+   * as a consequence.
+   */
+  it('the aspect bound is NOT DESKTOP_MIN_W', () => {
+    expect(TABLET_PORTRAIT_MAX_W).not.toBe(DESKTOP_MIN_W);
+    expect(TABLET_PORTRAIT_MAX_W).toBe(1280);
+  });
+
+  /*
+   * Monotonicity, so the rule cannot be satisfied at one width by breaking another: for a fixed upright height,
+   * once a width is desktop it stays desktop as the width grows (until the mode is desktop for good).
+   */
+  it('is monotonic in width for an upright viewport: portrait holds right up to 1279', () => {
+    for (let w = 768; w < TABLET_PORTRAIT_MAX_W; w += 1) {
+      expect(resolveLayoutMode(w, 1400), `${w}x1400`).toBe('portrait');
+    }
+    expect(resolveLayoutMode(TABLET_PORTRAIT_MAX_W, 1400)).toBe('desktop');
+  });
+});
 
 describe('resolveLayoutMode — the step’s viewport table', () => {
   for (const [w, h, expected] of TABLE) {
@@ -70,8 +137,10 @@ describe('resolveLayoutMode — boundaries', () => {
   const BOUNDARY: Array<[number, number, LayoutMode2, string]> = [
     [767, 1024, 'portrait', 'one px under PORTRAIT_MAX_W is portrait by the width clause'],
     [768, 1024, 'portrait', '768 itself is portrait by the ASPECT clause, not the width one'],
-    [1023, 1024, 'portrait', 'still portrait: w < 1024 and h > w'],
-    [1024, 768, 'desktop', '1024 wide landscape is desktop'],
+    [1023, 1024, 'portrait', 'still portrait: w < TABLET_PORTRAIT_MAX_W and h > w'],
+    [1024, 768, 'desktop', '1024 wide LANDSCAPE is desktop: the aspect clause needs h > w'],
+    [1279, 768, 'desktop', 'the aspect clause stops at 1280, but landscape is desktop at any of these widths'],
+    [1280, 1366, 'desktop', 'exactly TABLET_PORTRAIT_MAX_W and upright: strict, so desktop'],
     [1023, 599, 'phoneLandscape', 'both bounds satisfied and w > h'],
     /* The documented accepted gap: a 768..1023 wide LANDSCAPE window with h >= 600 is desktop. */
     [1023, 600, 'desktop', 'h = 600 fails the landscape clause and nothing else catches a wide short viewport'],
@@ -105,6 +174,8 @@ describe('resolveLayoutMode — boundaries', () => {
     expect(PORTRAIT_MAX_W).toBe(768);
     expect(DESKTOP_MIN_W).toBe(1024);
     expect(LANDSCAPE_MAX_H).toBe(600);
+    /* TABLET-PORTRAIT's threshold, asserted here with the others so all four live in one place. */
+    expect(TABLET_PORTRAIT_MAX_W).toBe(1280);
   });
 });
 
