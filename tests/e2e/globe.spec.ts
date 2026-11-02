@@ -196,95 +196,246 @@ test.describe('globe zoom', () => {
     await waitForGlobe(page);
 
     /*
-     * Pinch in the UNOBSCURED part of the canvas.
+     * WAIVER GLOBE175 — the touch points are DERIVED from the rendered globe.
      *
-     * At 375x667 the control deck covers x 16-359 / y 131-651 (MOBILE_AUDIT §4),
-     * so the canvas centre is BEHIND the panel: a gesture there goes to the panel,
-     * the canvas receives no pointerdown at all, and the test measures nothing.
-     * Verified — instrumenting the canvas showed zero pointerdown/touchstart
-     * events for a centre pinch.
+     * The previous version scanned for the topmost row of canvas pixels and took its
+     * midpoint, then dispatched at `cx ± 20`. That is a layout heuristic, and it broke
+     * silently when the floating HUD island arrived (f5b9a48): the open row collapsed
+     * from 18 cells to 2, then to 1 at HEAD, so `cx - 20` fell off-screen and `cx + 20`
+     * landed on the compact header's icon button. The pinch never reached the canvas and
+     * the test reported a product defect that did not exist.
      *
-     * The top band under the header is `pointer-events-none`, so it passes through
-     * to the canvas. Find the largest open rectangle empirically rather than
-     * hardcoding a coordinate that a layout tweak would invalidate.
+     * This version starts at the globe's PROJECTED CENTRE and, if that point's ±20 px
+     * pair does not reach the canvas, walks outward to the nearest point whose pair does.
+     * Be exact about what that bound buys: at 375x667 the disc radius is 271 px against a
+     * half-width of 187.5 px, so the disc bound excludes little — it is not a guarantee
+     * the pair is over the globe. The only guarantee is the one asserted below: both points
+     * are on the canvas and unoccluded, and when that fails the test FAILS naming the
+     * occluder at each point and the element at the projected centre. It never skips and
+     * never silently measures nothing.
      */
-    const open = await page.evaluate(() => {
+    const aim = await page.evaluate(() => {
       const c = document.querySelector('#globe-canvas canvas') as HTMLCanvasElement;
+      const w = document.querySelector('#globe-canvas') as HTMLElement;
       const r = c.getBoundingClientRect();
-      const hits: Array<{ x: number; y: number }> = [];
-      for (let y = Math.round(r.y) + 10; y < r.y + r.height - 10; y += 20) {
-        for (let x = Math.round(r.x) + 10; x < r.x + r.width - 10; x += 20) {
-          const el = document.elementFromPoint(x, y);
-          if (el === c) hits.push({ x, y });
+      const p = window.__globe!.project([0, 0, 0]);
+      const radius = window.__globe!.discRadiusPx();
+      const reaches = (x: number, y: number): boolean => {
+        if (x < r.x || x > r.x + r.width || y < r.y || y > r.y + r.height) return false;
+        const el = document.elementFromPoint(x, y);
+        return !!el && (el === c || w.contains(el));
+      };
+      /* Geometry only: every candidate is inside the canvas with 21 px of margin. */
+      const candidates: Array<{ x: number; y: number; dist: number }> = [];
+      const step = 4;
+      for (let y = Math.round(r.y) + 21; y <= r.y + r.height - 21; y += step) {
+        for (let x = Math.round(r.x) + 21; x <= r.x + r.width - 21; x += step) {
+          const dist = Math.hypot(x - p.x, y - p.y);
+          if (dist <= radius) candidates.push({ x, y, dist });
         }
       }
-      if (hits.length === 0) return null;
-      // The point furthest from the panel is the safest pinch origin; use the
-      // topmost such row's horizontal midpoint.
-      const minY = Math.min(...hits.map((h) => h.y));
-      const row = hits.filter((h) => h.y === minY);
-      const mid = row[Math.floor(row.length / 2)];
-      return { x: mid.x, y: mid.y, openCells: hits.length };
-    });
-
-    expect(
-      open,
-      'no uncovered canvas pixel at 375x667 — a pinch cannot reach the globe at all',
-    ).not.toBeNull();
-
-    const rect = { cx: open!.x, cy: open!.y };
-    const cdp = await page.context().newCDPSession(page);
-
-    const before = await distance(page);
-
-    // Primary path: Chromium's synthesised pinch, which is the closest thing to a
-    // real two-finger gesture available without a device farm.
-    await cdp.send('Input.synthesizePinchGesture', {
-      x: Math.round(rect.cx),
-      y: Math.round(rect.cy),
-      scaleFactor: 2.2,
-      relativeSpeed: 800,
-      gestureSourceType: 'touch',
-    });
-    await page.waitForTimeout(700);
-
-    let after = await distance(page);
-
-    // Fallback: a manual two-point touch sequence. `synthesizePinchGesture` is not
-    // available on every Chromium build, and a silent no-op there would look like a
-    // product bug.
-    if (Math.abs(after - before) < 0.02) {
-      const spread = async (gap: number) => {
-        await cdp.send('Input.dispatchTouchEvent', {
-          type: 'touchStart',
-          touchPoints: [
-            { x: Math.round(rect.cx - 20), y: Math.round(rect.cy) },
-            { x: Math.round(rect.cx + 20), y: Math.round(rect.cy) },
-          ],
-        });
-        for (let step = 1; step <= 6; step += 1) {
-          const g = 20 + (gap - 20) * (step / 6);
-          await cdp.send('Input.dispatchTouchEvent', {
-            type: 'touchMove',
-            touchPoints: [
-              { x: Math.round(rect.cx - g), y: Math.round(rect.cy) },
-              { x: Math.round(rect.cx + g), y: Math.round(rect.cy) },
-            ],
-          });
-          await page.waitForTimeout(40);
-        }
-        await cdp.send('Input.dispatchTouchEvent', { type: 'touchEnd', touchPoints: [] });
+      candidates.sort((a, b) => a.dist - b.dist);
+      const open = candidates.find((q) => reaches(q.x - 20, q.y) && reaches(q.x + 20, q.y));
+      const centre = {
+        x: Math.min(Math.max(Math.round(p.x), Math.round(r.x) + 21), Math.round(r.x + r.width) - 21),
+        y: Math.min(Math.max(Math.round(p.y), Math.round(r.y) + 21), Math.round(r.y + r.height) - 21),
       };
-      await spread(90);
-      await page.waitForTimeout(700);
-      after = await distance(page);
+      const chosen = open ?? { x: centre.x, y: centre.y, dist: 0 };
+      /*
+       * What is AT the projected centre, in words. `centreOpen` alone answers a yes/no the
+       * next reader cannot act on; the point of pinning it to an element description is
+       * that a red then says "the projected centre was covered by div#… .glass inside
+       * [data-occluder="globe-controls"]" instead of only that the pair missed.
+       */
+      const describe = (x: number, y: number): string => {
+        const el = document.elementFromPoint(x, y);
+        if (!el) return 'nothing (outside the viewport)';
+        const oc = el.closest('[data-occluder]');
+        const cls = String(el.className || '')
+          .split(/\s+/)
+          .filter(Boolean)
+          .slice(0, 3)
+          .join('.');
+        return (
+          `${el.tagName.toLowerCase()}${el.id ? `#${el.id}` : ''}${cls ? `.${cls}` : ''}` +
+          (oc ? ` inside [data-occluder="${oc.getAttribute('data-occluder')}"]` : '')
+        );
+      };
+      return {
+        cx: chosen.x,
+        cy: chosen.y,
+        distFromCentre: Math.round(chosen.dist),
+        overDisc: chosen.dist <= radius,
+        centreOpen: reaches(centre.x, centre.y),
+        centreWho: describe(centre.x, centre.y),
+        candidates: candidates.length,
+        foundOpenPair: open !== undefined,
+        discRadiusPx: radius,
+      };
+    });
+
+    /*
+     * THE HIT TEST. Both touch points must reach the canvas (or its wrapper, which is
+     * where R3F attaches its listeners). A failure names what is actually there, so the
+     * next reader sees "the compact header covers the pinch" instead of "the pinch did
+     * not change the distance".
+     */
+    const hits = await page.evaluate(({ cx, cy }) => {
+      const c = document.querySelector('#globe-canvas canvas') as HTMLCanvasElement;
+      const w = document.querySelector('#globe-canvas') as HTMLElement;
+      const at = (x: number, y: number) => {
+        const el = document.elementFromPoint(x, y);
+        if (!el) {
+          return { x, y, ok: false, who: 'nothing (outside the viewport)', occluder: null as string | null };
+        }
+        const oc = el.closest('[data-occluder]');
+        const cls = String(el.className || '')
+          .split(/\s+/)
+          .filter(Boolean)
+          .slice(0, 3)
+          .join('.');
+        return {
+          x,
+          y,
+          ok: el === c || w.contains(el),
+          who: `${el.tagName.toLowerCase()}${el.id ? `#${el.id}` : ''}${cls ? `.${cls}` : ''}`,
+          occluder: oc ? oc.getAttribute('data-occluder') : null,
+        };
+      };
+      return { left: at(cx - 20, cy), right: at(cx + 20, cy) };
+    }, aim);
+
+    for (const [side, h] of [
+      ['left', hits.left],
+      ['right', hits.right],
+    ] as const) {
+      expect(
+        h.ok,
+        `the ${side} touch point (${h.x}, ${h.y}) does not reach the canvas: ` +
+          `it lands on ${h.who}` +
+          (h.occluder ? ` inside [data-occluder="${h.occluder}"]` : '') +
+          `. ` +
+          `The pair is aimed at (${aim.cx}, ${aim.cy}), ${aim.distFromCentre} px from the projected centre, ` +
+          `and the search found ${aim.foundOpenPair ? 'an open pair' : 'NO open pair'} ` +
+          `among ${aim.candidates} candidates. ` +
+          `At the projected centre itself elementFromPoint returns ${aim.centreWho} ` +
+          `(centreOpen=${aim.centreOpen}).`,
+      ).toBe(true);
     }
 
+    /*
+     * The aim, on the record. `test.info().annotations` survives into the report and the
+     * JSON reporter, so the chosen pair and the centre reading are visible for a GREEN run
+     * too — a passing pinch test otherwise leaves no trace of where it pointed.
+     */
+    test.info().annotations.push({
+      type: 'globe175-aim',
+      description: JSON.stringify({
+        cx: aim.cx,
+        cy: aim.cy,
+        distFromCentre: aim.distFromCentre,
+        centreOpen: aim.centreOpen,
+        foundOpenPair: aim.foundOpenPair,
+        candidates: aim.candidates,
+      }),
+    });
+
+    /*
+     * CLAMP AWARENESS. A spread must be able to DECREASE d, so d has to start strictly
+     * inside (minDistance, maxDistance) with real headroom. Without this, a camera
+     * already parked at minDistance produces zero motion — indistinguishable from a
+     * broken gesture. If d is at or near the floor, wheel out to mid-range first and
+     * assert the recovery, so the only way this test reports zero motion is a real
+     * failure.
+     *
+     * The two clamps are the JSX literals: `<OrbitControls minDistance={EARTH_RADIUS *
+     * 1.25} maxDistance={EARTH_RADIUS * 5}>` (GlobeScene.tsx:726-727, EARTH_RADIUS = 1).
+     * `__frame.snapshot().dMax` is read when the probe publishes it (MOBILE2 onwards) and
+     * falls back to the literal, because the field does not exist at 90b7932.
+     */
+    const MIN_D = 1.25;
+    const MAX_D = 5;
+    const readD = () =>
+      page.evaluate(() => {
+        /* `dMax` is published from MOBILE2 onwards and absent at 90b7932, so the snapshot is
+         * read through an optional-field cast rather than the ambient type. */
+        const snap = window.__frame!.snapshot() as unknown as { dMax?: number };
+        return { d: window.__globe!.distance(), dMax: snap.dMax };
+      });
+
+    let start = await readD();
+    let ceiling = typeof start.dMax === 'number' ? start.dMax : MAX_D;
+    if (start.d <= MIN_D + 0.05) {
+      await page.mouse.move(aim.cx, aim.cy);
+      for (let i = 0; i < 8 && start.d <= MIN_D + 0.5; i += 1) {
+        await page.mouse.wheel(0, 120);
+        await page.waitForTimeout(80);
+        start = await readD();
+        ceiling = typeof start.dMax === 'number' ? start.dMax : MAX_D;
+      }
+      expect(
+        start.d,
+        `d started at the ${MIN_D} floor and the wheel guard could not move it off it ` +
+          `(still ${start.d.toFixed(4)}) — the pinch would measure a clamp, not a gesture`,
+      ).toBeGreaterThan(MIN_D + 0.5);
+    }
+    expect(
+      start.d,
+      `d must start strictly inside (${MIN_D}, ${ceiling}) for a spread to be measurable; ` +
+        `it was ${start.d.toFixed(4)}`,
+    ).toBeGreaterThan(MIN_D + 0.05);
+    expect(
+      start.d,
+      `d must start strictly inside (${MIN_D}, ${ceiling}) for a spread to be measurable; ` +
+        `it was ${start.d.toFixed(4)}`,
+    ).toBeLessThan(ceiling - 0.05);
+
+    /*
+     * THE GESTURE: a real two-finger spread, dispatched as CDP touch events.
+     *
+     * The manual CDP two-finger events are the single gesture path because they land
+     * deterministically at the chosen point. From the default start the 20 to 90 px spread
+     * overshoots the 1.25 floor (3.3534 to 1.25, delta minus 2.1034 at HEAD, measured in
+     * GLOBE175-DIFF), so the assertion below checks direction and reach, not gain.
+     */
+    const cdp = await page.context().newCDPSession(page);
+    const before = await page.evaluate(() => window.__globe!.distance());
+
+    await cdp.send('Input.dispatchTouchEvent', {
+      type: 'touchStart',
+      touchPoints: [
+        { x: aim.cx - 20, y: aim.cy },
+        { x: aim.cx + 20, y: aim.cy },
+      ],
+    });
+    for (let step = 1; step <= 6; step += 1) {
+      const g = 20 + (90 - 20) * (step / 6);
+      await cdp.send('Input.dispatchTouchEvent', {
+        type: 'touchMove',
+        touchPoints: [
+          { x: Math.round(aim.cx - g), y: aim.cy },
+          { x: Math.round(aim.cx + g), y: aim.cy },
+        ],
+      });
+      await page.waitForTimeout(40);
+    }
+    await cdp.send('Input.dispatchTouchEvent', { type: 'touchEnd', touchPoints: [] });
+    await page.waitForTimeout(700);
+
+    const after = await page.evaluate(() => window.__globe!.distance());
+
+    /*
+     * SIGNED, and stricter than the old assertion. The old form was
+     * `not.toBeCloseTo(before, 2)`, i.e. |delta| > ~0.005 in EITHER direction. A spread
+     * must move the camera CLOSER, so this asserts a decrease of at least 0.02 — four
+     * times the old magnitude and with the sign pinned.
+     */
     expect(
       after,
-      `pinch did not change the distance (${before.toFixed(4)} -> ${after.toFixed(4)}). ` +
-        'touch-action on the canvas must be none, or the browser eats the gesture.',
-    ).not.toBeCloseTo(before, 2);
+      `a two-finger spread at (${aim.cx}, ${aim.cy}) did not zoom in ` +
+        `(${before.toFixed(4)} -> ${after.toFixed(4)}). touch-action on the canvas must be ` +
+        'none, or the browser eats the gesture.',
+    ).toBeLessThan(before - 0.02);
 
     // touch-action is the mechanism; assert it directly so a regression names
     // itself instead of showing up as a mysterious gesture failure.
