@@ -78,7 +78,7 @@
  * the free-rect centre" — would measure that residual as a defect. The snap is the same device the fit
  * already uses for the distance (`|wanted - eased| < 1e-5` -> `wanted`).
  */
-import { useEffect, useRef, type MutableRefObject } from 'react';
+import { useCallback, useEffect, useRef, type MutableRefObject } from 'react';
 import { useFrame, useThree } from '@react-three/fiber';
 import type { OrbitControls as OrbitControlsImpl } from 'three-stdlib';
 import * as THREE from 'three';
@@ -148,6 +148,111 @@ function regionDirection(id: RegionId, spinY: number): THREE.Vector3 {
   const region = REGION_MAP[id];
   const [x, y, z] = latLonToVector3(region.lat, region.lon, 1);
   return new THREE.Vector3(x, y, z).applyAxisAngle(SPIN_AXIS_Y, spinY);
+}
+
+/**
+ * Resolve a Niño box into a flight target: a WORLD-space aim direction and a fitted distance.
+ *
+ * Extracted in NINO-HARDEN B7 so the two places that need it cannot disagree:
+ *
+ *   - the button press (`focusNinoBox`);
+ *   - the layout/viewport change that arrives while a box is still selected (B7's re-flight).
+ *
+ * Before the extraction the resolution lived inline in `focusNinoBox`, so the resize path had no way
+ * to re-derive the distance for the NEW free rect and the rig's own fit took the radius instead
+ * (A4 measured the box flight at 2.44644 jumping to 5.39548 on a 1280x720 -> 390x844 resize, and
+ * 5.39548 is exactly `dFit`, not the box's distance).
+ *
+ * `freePx` lets the caller pass the free rect's SIZE the frame rig JUST computed, in viewport pixels,
+ * rather than re-reading `getInsets()`. On the frame a mode change is first observed that matters: the
+ * registry may still be publishing the previous mode's rect, and the rig's own `frame.free` is by
+ * definition the rect this frame's offset came from. Omitted (the press path), it reads `getInsets()`
+ * as before, so press-time behaviour is unchanged.
+ *
+ * Only `widthFrac`/`heightFrac` reach the fit (`FreeRectFrac`, `ninoFraming.ts:178`) — the rect's
+ * POSITION is not a fit input, because the frame rig is what parks the aimed point at the free rect's
+ * centre. So only `w`/`h` are needed here, not `x`/`y`.
+ *
+ * `spinY` is the earth group's Y rotation. The spin is paused while a box is selected (B4), so this
+ * angle is stable for the life of the selection and the outline does not turn away from the camera.
+ */
+function ninoFlightTarget(
+  box: (typeof NINO_BOXES)[number],
+  camera: THREE.PerspectiveCamera,
+  spinY: number,
+  freePx?: { w: number; h: number },
+  viewport?: { w: number; h: number },
+): { direction: THREE.Vector3; distance: number } {
+  const aspect = camera.aspect > 0 ? camera.aspect : 16 / 9;
+  const freeRect =
+    freePx && viewport && viewport.w > 0 && viewport.h > 0
+      ? { widthFrac: freePx.w / viewport.w, heightFrac: freePx.h / viewport.h }
+      : freeRectFraction(getInsets().free, window.innerWidth || 0, window.innerHeight || 0);
+  const distance = ninoFlyToDistance(box, { fovDeg: camera.fov, aspect, freeRect });
+  const [x, y, z] = latLonToVector3(box.anchorLat, boxCentreLon360(box), GLOBE_LOOK.pins.anchorRadius);
+  return { direction: new THREE.Vector3(x, y, z).applyAxisAngle(SPIN_AXIS_Y, spinY), distance };
+}
+
+/**
+ * Re-resolve a Niño flight when the FREE RECT it was framed for has changed.
+ *
+ * NINO-HARDEN-ADDENDUM (3) + B7. One mechanism serves two symptoms that turned out to be the same
+ * defect: the box's distance is resolved ONCE, from whatever free rect exists at that moment, and
+ * nothing revisits it when the rect moves.
+ *
+ *   - A2d (addendum 3). Region Pacific focused, then Niño 1+2 pressed while the region drawer is still
+ *     open. The instrument added to `focusNinoBox` caught the press-time rect at
+ *     `{x 360.84, w 501.16}` -> `widthFrac 0.39153` -> distance 1.45330. By settle the drawer had
+ *     closed and the rect was `{x 360.84, w 603.16}` -> `widthFrac 0.47120` -> 1.39460. Measured settle
+ *     1.45649, i.e. the flight landed exactly where it was told, for a rect that no longer existed.
+ *     The distance was not wrong: it was STALE.
+ *   - B7 (desktop). A mode or viewport change while a box is selected. The mobile branch had a re-fit
+ *     gated on `reFit`; the desktop branch had none at all, so a desktop resize left the box at
+ *     whatever distance the previous viewport wanted (A4: 2.44644 -> 5.39548 = `dFit`).
+ *
+ * Keying on the RECT rather than on "a layout change happened" is what makes both cases one code path:
+ * the drawer closing is not a layout-mode change, and a mode change is just a very large rect change.
+ *
+ * The addendum's rule that a cancel must NOT block this is satisfied by keying on the SELECTION
+ * (`activeNinoBoxId`), which survives a user drag or wheel; gating on `ninoFlight` would have made a
+ * cancelled flight immune.
+ *
+ * Re-arming `ninoFlight` rather than writing the distance directly means the direction is re-derived
+ * too and the same tween carries the camera, instead of the camera teleporting.
+ *
+ * Returns `true` when this frame re-armed the flight, so the caller's distance channel knows to stand
+ * down and not fight the tween for the radius.
+ */
+function refitNinoForRect(args: {
+  activeNinoBoxId: MutableRefObject<string | null>;
+  ninoFlight: MutableRefObject<{ direction: THREE.Vector3; distance: number } | null>;
+  ninoRect: MutableRefObject<{ wf: number; hf: number } | null>;
+  camera: THREE.PerspectiveCamera;
+  spinY: number;
+  free: { x: number; y: number; w: number; h: number };
+  viewport: { w: number; h: number };
+}): boolean {
+  const { activeNinoBoxId, ninoFlight, ninoRect, camera, spinY, free, viewport } = args;
+  const boxId = activeNinoBoxId.current;
+  if (!boxId) return false;
+  const box = NINO_BOXES.find((b) => b.id === boxId);
+  if (!box) return false;
+  if (viewport.w <= 0 || viewport.h <= 0) return false;
+
+  const wf = free.w / viewport.w;
+  const hf = free.h / viewport.h;
+  const was = ninoRect.current;
+  /*
+   * A pixel-scale epsilon, not an exact compare: the rect is recomputed from layout numbers every frame
+   * and float noise would otherwise re-arm the flight continuously. 1e-4 of the viewport is 0.13 px at
+   * 1280 wide — far below anything that changes the fit (the A2d difference is 0.0797).
+   */
+  const changed = !was || Math.abs(was.wf - wf) > 1e-4 || Math.abs(was.hf - hf) > 1e-4;
+  if (!changed) return false;
+
+  ninoRect.current = { wf, hf };
+  ninoFlight.current = ninoFlightTarget(box, camera, spinY, free, viewport);
+  return true;
 }
 
 /**
@@ -633,6 +738,51 @@ export function CameraDirector({
    * change cannot retarget an in-progress tween.
    */
   const ninoFlight = useRef<{ direction: THREE.Vector3; distance: number } | null>(null);
+  /**
+   * The box the user has SELECTED, or `null`.
+   *
+   * NINO-HARDEN B7, and NINO-HARDEN-ADDENDUM (1): this is "a box is active", NOT "a flight is framed".
+   * The two are different lifetimes and conflating them was a defect in the first B7 attempt:
+   *
+   *   - `ninoFlight.current` is cleared on ARRIVAL (that is what stops the per-frame writer) and on a
+   *     user cancel (B3b) — it answers "is a tween running";
+   *   - this ref is cleared only when the SELECTION goes away: toggle-off, Reset, or a region select.
+   *
+   * B7 must gate on the second. The addendum is explicit: "A user drag or wheel that cancelled the
+   * flight must not block the re-fit to the new free rect." A cancel clears the first ref by design,
+   * so gating on it would have made a cancelled flight immune to the resize re-fit — the opposite of
+   * the requirement.
+   *
+   * It is also what makes B7 inert flag-off: `focusNinoBox` is the only writer, and App.tsx calls
+   * `submitNinoFocus` only inside `if (NINO_UI)`, so with the flag off this is `null` on every frame.
+   */
+  const activeNinoBoxId = useRef<string | null>(null);
+  /**
+   * The free rect (as viewport FRACTIONS) the current box flight was resolved against.
+   *
+   * NINO-HARDEN-ADDENDUM (3): seeded at press time from the same `getInsets()` the distance used, then
+   * compared every frame by `refitNinoForRect`. A2d's drawer was still open at the press, so this is
+   * the only record of which rect the 1.45330 was computed for — without it the re-fit cannot tell a
+   * stale flight from a current one and would re-arm on the first frame or never.
+   */
+  const ninoRect = useRef<{ wf: number; hf: number } | null>(null);
+
+  /**
+   * Push the spin pause state from the two things that own it, instead of setting it ad hoc.
+   *
+   * NINO-HARDEN-ADDENDUM (2): the pause condition is `region active OR box active`, derived from
+   * STATE, not from `ninoFlight`. The first B4 attempt guarded the resume site with
+   * `else if (!ninoFlight.current)`, which was ref-shaped and wrong in a way the new acceptance
+   * exposes directly: `ninoFlight` is cleared on arrival, so once the box flight landed the guard went
+   * false and the spin could resume while the box was still selected and highlighted — the outline
+   * would start turning away from a camera aimed at where it had been.
+   *
+   * `targetRegion` is the director's own record of the active region (set in the `activeRegion`
+   * effect, cleared on deselect and Reset), so this needs no new state.
+   */
+  const syncSpinPause = useCallback((): void => {
+    spin.current.paused = targetRegion.current !== null || activeNinoBoxId.current !== null;
+  }, [spin]);
   const hasApplied = useRef(false);
   const rigOwnsDistance = useRef(true);
   const recentDistances = useRef<number[]>([]);
@@ -715,23 +865,28 @@ export function CameraDirector({
        */
       focusNinoBox: (boxId: string | null) => {
         /*
-         * NINO-HARDEN B4: clearing the box RESUMES the spin.
+         * NINO-HARDEN B4 + ADDENDUM (2): clearing the box RESUMES the spin — via the DERIVED pause.
          *
          * The brief's rule: "Clearing the box (toggle off, Reset, region select) must resume spin."
-         * This arm is the toggle-off and Reset path; region select goes through `selectRegion`'s
-         * `submitNinoFocus(null)` and lands here too, and RESET additionally unpauses at :825. All
-         * three routes therefore end at the same mechanism region deselect uses, rather than each
-         * needing to remember to unpause.
+         * All three routes land here (`selectRegion` calls `submitNinoFocus(null)`, and Reset does too),
+         * so this is the single place that has to know. `syncSpinPause()` reads the two SELECTION refs
+         * and is the only writer of `paused` on this path — `spin.current.paused = false` would be wrong
+         * when a region happens to be selected at the same time, since the region still owns the pause.
          */
         if (boxId === null) {
           ninoFlight.current = null;
-          spin.current.paused = false;
+          activeNinoBoxId.current = null;
+          /* B7: forget the rect too, so the next box press seeds a fresh one instead of re-arming. */
+          ninoRect.current = null;
+          syncSpinPause();
           return;
         }
         const box = NINO_BOXES.find((b) => b.id === boxId);
         if (!box) {
           ninoFlight.current = null;
-          spin.current.paused = false;
+          activeNinoBoxId.current = null;
+          ninoRect.current = null;
+          syncSpinPause();
           return;
         }
         /*
@@ -779,55 +934,67 @@ export function CameraDirector({
          * the second half of A1: with the planet still turning, the arrived camera watched the box
          * drift away (bbox centre +284.1 -> +343.9 -> +387.1 px over 10 s).
          *
-         * `paused` is the SAME mechanism region selection uses (`:794`), and the resume sites are the
-         * same shape as a region deselect (`:799`, `:825`): clearing the box below, or RESET, unpauses.
+         * `paused` is the SAME mechanism region selection uses, and the resume route is the same one
+         * region deselect takes: `syncSpinPause()` derives it from the selection refs, so clearing the
+         * box below (or Reset) unpauses by removing the box from that expression rather than by
+         * writing `false` at each site.
          *
          * On `matrixWorld` versus `spinY`: the brief prefers the earth group's matrix so any tilt is
          * included. The group's ONLY transform is `rotation.y`, assigned every frame in
-         * `EarthSystem.tsx:84` from this very ref — no tilt, no scale, no translation — so applying
+         * `EarthSystem.tsx:84` from this very ref, and `<EarthSystem>` is mounted with no transform
+         * prop (`GlobeScene.tsx:680-687`) — no tilt, no scale, no translation — so applying
          * `spin.current.y` about Y is the matrix transform, exactly, and not an approximation of it.
-         * If a tilt is ever added to that group this line must become a real `matrixWorld` apply; the
-         * comment is the tripwire, and `ninoFraming`'s tests would not catch it.
+         * `earthGroupTransform.test.ts` now fails if that ever stops being true.
          */
-        spin.current.paused = true;
+        activeNinoBoxId.current = boxId;
         /*
-         * `camera.aspect` is maintained by R3F on resize, so this is the same aspect the projection
-         * uses. Guarding against 0 keeps a degenerate pre-layout size from producing Infinity.
+         * Addendum (2): the pause is DERIVED. Set the selection first, then sync — a bare
+         * `paused = true` here would be a SECOND writer of the same boolean, and it re-paused after a
+         * clear whenever no region happened to be selected.
          */
-        const aspect = camera.aspect > 0 ? camera.aspect : 16 / 9;
+        syncSpinPause();
         /*
-         * Fit to the FREE RECT, not the raw viewport. The frame rig parks the aimed point at the free
-         * rect's centre, so the free rect is the window the outline has to fit inside — fitting to the
-         * viewport let a wide box slide under the 316 px right panel (measured: the Nino 4 outline ran
-         * 209 px beneath it at 1280x720). `getInsets()` is the same registry the frame rig reads, and
-         * an unmeasured/zero rect degrades to full-viewport framing rather than NaN.
+         * The resolution is shared with the resize path (B7) — see `ninoFlightTarget`. Called with no
+         * free-rect override, so it reads `getInsets()` exactly as the inline code here did before:
+         * press-time behaviour is unchanged.
          */
-        const insetsNow = getInsets();
-        const freeRect = freeRectFraction(
-          insetsNow.free,
-          window.innerWidth || 0,
-          window.innerHeight || 0,
-        );
-        const distance = ninoFlyToDistance(box, { fovDeg: camera.fov, aspect, freeRect });
+        ninoFlight.current = ninoFlightTarget(box, camera, spin.current.y);
         /*
-         * Aim at the box centre in 360 space, then convert to a direction. `latLonToVector3` takes a
-         * longitude in degrees and is periodic in 360, so lon 185 and lon -175 give the SAME vector:
-         * there is no wrap step because the wrap is already implicit in sin/cos.
+         * ADDENDUM (3) + B7. One `getInsets()` read serves two jobs:
          *
-         * NINO-HARDEN B4: the aim point must be in WORLD space, so the earth group's rotation is
-         * applied here — the same `applyAxisAngle(Y, spinY)` the region fly-to uses at :136-140. The
-         * pins and the outline are children of that group, so their world position is the local vector
-         * rotated by the group; aiming at the unrotated vector is what produced the A1 miss. The spin
-         * was paused immediately above, so the angle read here is the angle the outline will hold for
-         * the whole flight and after it.
+         *   1. Seed `ninoRect` with the rect this flight was resolved against, from the SAME snapshot
+         *      `ninoFlightTarget` used, so "the rect changed" is measured against where the distance
+         *      actually came from rather than against a later re-read.
+         *   2. Record the press-time inputs for A2d. That measurement is what proved the distance was
+         *      STALE rather than wrong: rect w 501.16 (widthFrac 0.39153) at the press, 603.16
+         *      (0.47120) at settle, 1.45330 vs 1.39460.
+         *
+         * Debug-only instrumentation, but the rect SEED is not — it runs unconditionally and is what the
+         * per-frame re-fit compares against. Only the `__ninoPress` record is gated, on the same
+         * `has('debug')` check `main.tsx:23` uses to install the e2e hooks.
          */
-        const [x, y, z] = latLonToVector3(
-          box.anchorLat,
-          boxCentreLon360(box),
-          GLOBE_LOOK.pins.anchorRadius,
-        );
-        const aim = new THREE.Vector3(x, y, z).applyAxisAngle(SPIN_AXIS_Y, spin.current.y);
-        ninoFlight.current = { direction: aim, distance };
+        {
+          const pressInsets = getInsets();
+          const vw = window.innerWidth || 0;
+          const vh = window.innerHeight || 0;
+          ninoRect.current =
+            vw > 0 && vh > 0
+              ? { wf: pressInsets.free.w / vw, hf: pressInsets.free.h / vh }
+              : null;
+          if (import.meta.env.VITE_E2E === '1' && new URLSearchParams(window.location.search).has('debug')) {
+            (window as unknown as Record<string, unknown>).__ninoPress = {
+              boxId,
+              t: performance.now(),
+              innerW: vw,
+              innerH: vh,
+              insets: pressInsets,
+              freeRectFrac: freeRectFraction(pressInsets.free, vw, vh),
+              aspect: camera.aspect,
+              fov: camera.fov,
+              distance: ninoFlight.current.distance,
+            };
+          }
+        }
       },
     });
     /*
@@ -837,7 +1004,7 @@ export function CameraDirector({
      * entry is correctness for the linter and documentation for a reader, not a re-run.
      */
     return () => registerCameraIntents(null);
-  }, [camera, controlsRef, spin]);
+  }, [camera, controlsRef, spin, syncSpinPause]);
 
   /* -------------------------------------------------- OrbitControls as an input device */
 
@@ -867,6 +1034,15 @@ export function CameraDirector({
        */
       if (ninoFlight.current) {
         ninoFlight.current = null;
+        /*
+         * NINO-HARDEN B7 + ADDENDUM (1): the SELECTION is deliberately NOT cleared here.
+         *
+         * A user cancel stops the tween and hands the camera to the user; the box stays selected and
+         * highlighted, and the spin stays paused. Clearing `activeNinoBoxId` here — which the first B7
+         * attempt did — would make a cancelled flight immune to the resize re-fit, which the addendum
+         * forbids: "A user drag or wheel that cancelled the flight must not block the re-fit to the
+         * new free rect."
+         */
         /*
          * Mark the camera user-controlled, exactly as a user zoom does.
          *
@@ -914,34 +1090,32 @@ export function CameraDirector({
   useEffect(() => {
     if (activeRegion) {
       dispatch({ type: 'SELECT', regionId: activeRegion });
-      spin.current.paused = true;
       targetRegion.current = activeRegion;
     } else if (machine.current.state !== 'idle') {
       /* Deselecting is the CLOSE rule; `SELECT(null)` is routed there by the machine itself. */
       dispatch({ type: 'SELECT', regionId: null });
-      spin.current.paused = false;
       targetRegion.current = null;
-    } else if (!ninoFlight.current) {
-      /*
-       * Never selected: nothing to close, and the spin keeps running.
-       *
-       * NINO-HARDEN B4: NOT while a Niño box flight owns the camera. This effect runs on the render
-       * AFTER `showNinoOnGlobe`, which calls `selectRegion(null)` — so by the time it runs, the box
-       * press has already paused the spin and set `ninoFlight`. Without this guard the effect
-       * immediately un-paused it again, and the measured effect was A2d's camera-vs-centre angle
-       * sitting at 9.128 deg while every fresh-boot A1 row read 0.000-0.008: the outline kept turning
-       * away from a camera aimed at where it had been.
-       *
-       * `ninoFlight.current` and not a new ref: while the flight is in progress the box owns the
-       * camera, and after it arrives the box is still the active selection (`activeNinoBox`), whose
-       * aim was frozen at press time. Resuming on arrival would reintroduce exactly the drift A1d
-       * measures. The unpause happens in `focusNinoBox(null)` instead — the one place that knows the
-       * box is gone.
-       */
-      spin.current.paused = false;
     }
+    /*
+     * NINO-HARDEN-ADDENDUM (2): the pause is DERIVED, not written per branch.
+     *
+     * This effect runs on the render AFTER `showNinoOnGlobe`, which calls `selectRegion(null)` — so by
+     * the time it runs, a box press has already paused the spin and set `activeNinoBoxId`. The previous
+     * shape set `paused = false` here unconditionally (and then, in B4, behind an
+     * `else if (!ninoFlight.current)` guard). Both were wrong for the addendum's acceptance:
+     *
+     *   - unconditional: measured as A2d's camera-vs-centre angle at 9.128 deg while fresh-boot A1 rows
+     *     read 0.000-0.008 — the effect un-paused what the press had just paused;
+     *   - the ref guard: `ninoFlight` is cleared on ARRIVAL, so once the box flight landed the guard
+     *     went false and the spin resumed with the box still selected — the outline then turns away from
+     *     a camera aimed at where it had been, which is the A1d drift this whole item exists to remove.
+     *
+     * `syncSpinPause` reads the two SELECTION refs (`targetRegion`, `activeNinoBoxId`), so the pause
+     * lasts exactly as long as a region OR a box is selected, whatever the flight happens to be doing.
+     */
+    syncSpinPause();
     travelling.current = true;
-  }, [activeRegion, focusNonce, spin]);
+  }, [activeRegion, focusNonce, spin, syncSpinPause]);
 
   /* --------------------------------------------------- the Reset View button's channel */
 
@@ -959,10 +1133,22 @@ export function CameraDirector({
       if (now === seen) return;
       seen = now;
       dispatch({ type: 'RESET' });
-      /* RESET is the "back to the default view" intent, which is a running-planet intent. */
-      spin.current.paused = false;
+      /*
+       * RESET is the "back to the default view" intent, which is a running-planet intent — and it also
+       * ENDS any Niño selection, so the derived pause must see that.
+       *
+       * NINO-HARDEN-ADDENDUM (2): `activeNinoBoxId` is cleared here because Reset is one of the three
+       * documented ways to clear the box, and leaving it set would (a) keep the spin paused forever and
+       * (b) let B7 re-fly to a box the user just reset away from on the next resize. `targetRegion` is
+       * cleared by the `activeRegion` effect that follows this dispatch, so `syncSpinPause` is called
+       * AFTER that clear is visible — which it is not on this line. Hence the explicit both-clears here
+       * rather than a bare `syncSpinPause()` that would still read the stale region.
+       */
+      targetRegion.current = null;
+      activeNinoBoxId.current = null;
+      syncSpinPause();
     });
-  }, [spin]);
+  }, [spin, syncSpinPause]);
 
   /* ------------------------------------------------------------------------ the frame */
 
@@ -1091,7 +1277,45 @@ export function CameraDirector({
        * 390x844 portrait band is meaningless at 844x390.
        */
       const reFit = mobile !== null;
-      const frameWantsDistance = !userZoomedMobile || reFit;
+      /*
+       * NINO-HARDEN B7: a mode/size change while a Niño box is framed RE-FLIES to the new free rect.
+       *
+       * A4 measured the defect: Nino 4 flown at 1280x720 then resized to 390x844 settled at 5.39548,
+       * which is exactly `dFit` — the rig's own fit took the radius because the box flight had already
+       * cleared itself on arrival, and nothing re-derived the box's distance for the new rect. 390x844
+       * then 844x390 did the same (3.6211 -> 3.75534, again `dFit`).
+       *
+       * The flight is re-armed rather than the distance forced, so the DIRECTION is re-derived too
+       * (same world aim, spin paused) and the same tween carries the camera to the new pose instead of
+       * teleporting it. `activeNinoBoxId` is what makes this inert with no box framed: it is only
+       * non-null between a box press and a box clear, so flag-off — where `focusNinoBox` is never
+       * called — it is null on every frame and this branch cannot run.
+       *
+       * Placed BEFORE the distance channel below so `frameWantsDistance` sees the re-fit's own
+       * `USER_ZOOM_RESET` semantics: the box distance is written by `runNinoFlyTo`, not by the fit, and
+       * `reFit` still clears `userZoomed` exactly as it did before.
+       */
+      /*
+       * NINO-HARDEN B7 + ADDENDUM (1) + (3): re-resolve the box flight when the free rect moves.
+       *
+       * Previously this branch re-fitted only on `reFit` (a mode or size change), which left two holes:
+       * a drawer closing after the press never re-fitted (A2d: stale 1.45330 for a rect 102 pt narrower
+       * than the settled one), and the desktop branch had no re-fit at all. `refitNinoForRect` keys on
+       * the RECT, so a mode change and a drawer closing are the same event to it.
+       *
+       * Returns true when it re-armed the flight, and `frameWantsDistance` stands down for that frame so
+       * the fit does not fight the tween for the radius.
+       */
+      const ninoRefit = refitNinoForRect({
+        activeNinoBoxId,
+        ninoFlight,
+        ninoRect,
+        camera,
+        spinY: spin.current.y,
+        free: frame.free,
+        viewport: { w, h },
+      });
+      const frameWantsDistance = (!userZoomedMobile || reFit) && !ninoRefit;
       if (frameWantsDistance && Math.abs(frame.dTarget - currentDistance) > 1e-6) {
         const k = reFit || prefersReducedMotion() ? 1 : 1 - Math.exp(-stepDt / FRAME_TIME_CONSTANT_S);
         const wanted = THREE.MathUtils.clamp(frame.dTarget, controls.minDistance, controls.maxDistance);
@@ -1252,7 +1476,26 @@ export function CameraDirector({
 
       const userZoomed = machine.current.context.userZoomed;
       rigOwnsDistance.current = !userZoomed;
-      if (!userZoomed && Math.abs(frame.dTarget - currentDistance) > 1e-6) {
+      /*
+       * NINO-HARDEN B7 on DESKTOP. The mobile branch had a re-fit and this one had none, so a desktop
+       * resize while a box was framed left the box at the previous viewport's distance (A4 measured
+       * 2.44644 -> 5.39548, exactly `dFit`, because the fit took the radius unopposed).
+       *
+       * Same helper as mobile: it keys on the free RECT, so it fires for a viewport change, a drawer
+       * closing or a mode change, and it is inert when no box is selected (`activeNinoBoxId` is null on
+       * every frame flag-off). While it holds a re-armed flight this frame, the fit's distance channel
+       * below must not also write the radius.
+       */
+      const ninoRefitDesktop = refitNinoForRect({
+        activeNinoBoxId,
+        ninoFlight,
+        ninoRect,
+        camera,
+        spinY: spin.current.y,
+        free: frame.free,
+        viewport: { w, h },
+      });
+      if (!userZoomed && !ninoRefitDesktop && Math.abs(frame.dTarget - currentDistance) > 1e-6) {
         const k = first || reduced ? 1 : 1 - Math.exp(-stepDt / FRAME_TIME_CONSTANT_S);
         const wanted = THREE.MathUtils.clamp(frame.dTarget, controls.minDistance, controls.maxDistance);
         const eased = THREE.MathUtils.lerp(currentDistance, wanted, k);
