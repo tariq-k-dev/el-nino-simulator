@@ -32,6 +32,17 @@ import { LandscapeDock } from '@/mobile/LandscapeDock';
 import { SnapSheet, type SnapSheetHandle } from '@/mobile/SnapSheet';
 import type { LayoutMode2 } from '@/mobile/layoutMath';
 import { NINO_BOXES } from '@/lib/regions';
+import { isNinoUiEnabled } from '@/lib/ninoFlag';
+
+/**
+ * The `?nino=1` flag, read once at module load.
+ *
+ * The same expression `App.tsx:27` uses, and deliberately duplicated rather than shared: `App`'s
+ * `NINO_UI` is a module-local const, not an export, and lifting it into the lib would edit a shared
+ * file for a boolean. The value cannot change without a reload, so a second module-scope read is the
+ * same fact, and it keeps `MobileShell`'s hook list identical whichever way the flag points.
+ */
+const NINO_UI = isNinoUiEnabled(typeof location === 'undefined' ? '' : location.search);
 
 interface MobileShellProps {
   /** The three-way mode, from the store. `desktop` is never passed: `App` does not mount this shell there. */
@@ -149,8 +160,8 @@ export function MobileShell({
    * so the announcement cannot drift from the card.
    *
    * The node is `aria-live="polite"` and visually hidden rather than `display:none` or `aria-hidden`:
-   * a hidden node is not announced. Flag-on only — `activeNinoBox` is `null` under the flag, so the
-   * element renders with empty text and no announcement.
+   * a hidden node is not announced. Flag-ON only — the JSX below does not render the node at all when
+   * `NINO_UI` is false, because M1 caught it adding one element to the flag-off DOM.
    */
   const announcedBox = activeNinoBox ? NINO_BOXES.find((b) => b.id === activeNinoBox) : undefined;
   const ninoAnnouncement = announcedBox ? `Showing ${announcedBox.label} on the globe` : '';
@@ -158,35 +169,43 @@ export function MobileShell({
   return (
     <>
       {/*
-        NINO-HARDEN B6(a): the persistent announcement node.
+        NINO-HARDEN B6(a): the persistent announcement node. FLAG-ON ONLY.
 
-        Mounted FIRST in the shell and OUTSIDE every conditional, so it exists in every mode, every
-        sheet tier and every unmount — the property the brief asks for ("mounted persistently at shell
-        level, flag-on only, NOT inside the sheet body"). The text changes when a box is shown; an empty
-        string announces nothing, which is the flag-off and no-selection case.
+        Mounted FIRST in the shell and OUTSIDE every tier conditional, so it exists in every mode,
+        every sheet tier and every sheet-body unmount — the property the brief asks for ("mounted
+        persistently at shell level, flag-on only, NOT inside the sheet body").
+
+        The `NINO_UI` gate is not decoration. The first version rendered this unconditionally and M1
+        caught it: the flag-off fingerprint at 390x844 and 1032x1376 read 200/199 elements with
+        firstDiff `DIV|status|nino-live|` against `HEADER|...|` — one extra node in the flag-on tree. A
+        `role="status"` region is part of the accessibility tree whether or not it has text, so it is a
+        real DOM difference, not a cosmetic one. Flag off must be byte-identical, so the node does not
+        exist there at all.
 
         `sr-only`-style clipping rather than `hidden`/`display:none`: those remove the node from the
         accessibility tree and it would never be spoken.
       */}
-      <div
-        role="status"
-        aria-live="polite"
-        aria-atomic="true"
-        data-testid="nino-live"
-        style={{
-          position: 'absolute',
-          width: 1,
-          height: 1,
-          padding: 0,
-          margin: -1,
-          overflow: 'hidden',
-          clip: 'rect(0, 0, 0, 0)',
-          whiteSpace: 'nowrap',
-          border: 0,
-        }}
-      >
-        {ninoAnnouncement}
-      </div>
+      {NINO_UI ? (
+        <div
+          role="status"
+          aria-live="polite"
+          aria-atomic="true"
+          data-testid="nino-live"
+          style={{
+            position: 'absolute',
+            width: 1,
+            height: 1,
+            padding: 0,
+            margin: -1,
+            overflow: 'hidden',
+            clip: 'rect(0, 0, 0, 0)',
+            whiteSpace: 'nowrap',
+            border: 0,
+          }}
+        >
+          {ninoAnnouncement}
+        </div>
+      ) : null}
 
       <HeaderCompact
         mode={mode}
