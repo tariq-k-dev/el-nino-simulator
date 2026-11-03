@@ -133,10 +133,21 @@ const DEFAULT_POSITION = new THREE.Vector3(0, 1.15, 3.15);
 const DEFAULT_TARGET = new THREE.Vector3(0, 0, 0);
 
 /** World-space direction of a lat/lon after the earth group's Y rotation. */
+/**
+ * The earth group's spin axis.
+ *
+ * Module scope and shared with the Niño box aim below, because the two must rotate about exactly the
+ * same axis: the box outline is a child of that group, and `EarthSystem.tsx:84` assigns only
+ * `rotation.y`, so Y is the whole of the group's transform. One constant also stops the region path
+ * allocating a `Vector3` per call, which it did before this (a fresh `new THREE.Vector3(0, 1, 0)` for
+ * every fly-to).
+ */
+const SPIN_AXIS_Y = new THREE.Vector3(0, 1, 0);
+
 function regionDirection(id: RegionId, spinY: number): THREE.Vector3 {
   const region = REGION_MAP[id];
   const [x, y, z] = latLonToVector3(region.lat, region.lon, 1);
-  return new THREE.Vector3(x, y, z).applyAxisAngle(new THREE.Vector3(0, 1, 0), spinY);
+  return new THREE.Vector3(x, y, z).applyAxisAngle(SPIN_AXIS_Y, spinY);
 }
 
 /**
@@ -703,13 +714,24 @@ export function CameraDirector({
        * decision is `ninoFlyToDistance` — pure, unit-tested, no three.js.
        */
       focusNinoBox: (boxId: string | null) => {
+        /*
+         * NINO-HARDEN B4: clearing the box RESUMES the spin.
+         *
+         * The brief's rule: "Clearing the box (toggle off, Reset, region select) must resume spin."
+         * This arm is the toggle-off and Reset path; region select goes through `selectRegion`'s
+         * `submitNinoFocus(null)` and lands here too, and RESET additionally unpauses at :825. All
+         * three routes therefore end at the same mechanism region deselect uses, rather than each
+         * needing to remember to unpause.
+         */
         if (boxId === null) {
           ninoFlight.current = null;
+          spin.current.paused = false;
           return;
         }
         const box = NINO_BOXES.find((b) => b.id === boxId);
         if (!box) {
           ninoFlight.current = null;
+          spin.current.paused = false;
           return;
         }
         /*
@@ -739,8 +761,35 @@ export function CameraDirector({
          */
         machine.current = initialFocus(machine.current.context.poseRef);
         targetRegion.current = null;
-        /* The region effect paused this; a box focus is not a region focus, so it runs again. */
-        spin.current.paused = false;
+        /*
+         * NINO-HARDEN B4: PAUSE THE SPIN, then aim — in that order.
+         *
+         * This is the fix for A1, the headline defect: the outline is drawn as a child of the earth
+         * group and therefore rotates with it, but `focusNinoBox` built its aim point from LOCAL
+         * lat/lon only (no rotation), while the region fly-to applies `spinY` (`regionDirection`, :136).
+         * Measured at 1280x720, the resulting miss angle equalled the spin to 3 decimal places — set
+         * spin 0 -> 17.329 deg, 1.0 rad -> 57.296 deg, 4.6251 rad -> 95.001 deg — and predicted
+         * distance matched settled distance in every row, so the framing maths was right and only the
+         * direction was wrong.
+         *
+         * Approach (i) from the brief, and why: pause first, then resolve the world direction ONCE.
+         * The alternative (recomputing every frame during the flight) was rejected because the
+         * acceptance bound is "camera-vs-centre angle <= 0.5 deg" — a moving target would make that
+         * number measure the frame rate and the tween's phase rather than the fix. Pausing also fixes
+         * the second half of A1: with the planet still turning, the arrived camera watched the box
+         * drift away (bbox centre +284.1 -> +343.9 -> +387.1 px over 10 s).
+         *
+         * `paused` is the SAME mechanism region selection uses (`:794`), and the resume sites are the
+         * same shape as a region deselect (`:799`, `:825`): clearing the box below, or RESET, unpauses.
+         *
+         * On `matrixWorld` versus `spinY`: the brief prefers the earth group's matrix so any tilt is
+         * included. The group's ONLY transform is `rotation.y`, assigned every frame in
+         * `EarthSystem.tsx:84` from this very ref — no tilt, no scale, no translation — so applying
+         * `spin.current.y` about Y is the matrix transform, exactly, and not an approximation of it.
+         * If a tilt is ever added to that group this line must become a real `matrixWorld` apply; the
+         * comment is the tripwire, and `ninoFraming`'s tests would not catch it.
+         */
+        spin.current.paused = true;
         /*
          * `camera.aspect` is maintained by R3F on resize, so this is the same aspect the projection
          * uses. Guarding against 0 keeps a degenerate pre-layout size from producing Infinity.
@@ -764,13 +813,21 @@ export function CameraDirector({
          * Aim at the box centre in 360 space, then convert to a direction. `latLonToVector3` takes a
          * longitude in degrees and is periodic in 360, so lon 185 and lon -175 give the SAME vector:
          * there is no wrap step because the wrap is already implicit in sin/cos.
+         *
+         * NINO-HARDEN B4: the aim point must be in WORLD space, so the earth group's rotation is
+         * applied here — the same `applyAxisAngle(Y, spinY)` the region fly-to uses at :136-140. The
+         * pins and the outline are children of that group, so their world position is the local vector
+         * rotated by the group; aiming at the unrotated vector is what produced the A1 miss. The spin
+         * was paused immediately above, so the angle read here is the angle the outline will hold for
+         * the whole flight and after it.
          */
         const [x, y, z] = latLonToVector3(
           box.anchorLat,
           boxCentreLon360(box),
           GLOBE_LOOK.pins.anchorRadius,
         );
-        ninoFlight.current = { direction: new THREE.Vector3(x, y, z), distance };
+        const aim = new THREE.Vector3(x, y, z).applyAxisAngle(SPIN_AXIS_Y, spin.current.y);
+        ninoFlight.current = { direction: aim, distance };
       },
     });
     /*
@@ -790,6 +847,37 @@ export function CameraDirector({
 
     const onStart = (): void => {
       /* A drag the user started during a fly-to cancels it; the machine knows the rule. */
+      /*
+       * NINO-HARDEN B3b (A2b and A2c): user input CANCELS a Niño box flight.
+       *
+       * The machine's `USER_ORBIT_START` only knows about REGION flights; a box flight does not run
+       * through the machine at all, so nothing was cancelling it. The measured effect at 1280x720:
+       * a drag during the box tween traced 2.4881 -> 2.4426 and a wheel-out through it traced
+       * 2.6996 -> 2.446, i.e. in both cases `runNinoFlyTo` kept writing the camera every frame and
+       * pulled it back to the box's fitted distance. The user's input was overwritten in flight.
+       *
+       * `'start'` rather than the two gesture listeners the brief names: OrbitControls raises `start`
+       * for rotate, dolly AND pan alike (it brackets every gesture it handles), so one site covers
+       * the drag and the wheel instead of two sites that could drift apart. Guarded on
+       * `ninoFlight.current !== null`, so with the flag off — where the ref is never assigned — this
+       * is a single null check that cannot change any behaviour.
+       *
+       * `activeNinoBox` is deliberately NOT cleared: the brief's rule is that the box stays
+       * highlighted, because the user interrupted the CAMERA, not the selection.
+       */
+      if (ninoFlight.current) {
+        ninoFlight.current = null;
+        /*
+         * Mark the camera user-controlled, exactly as a user zoom does.
+         *
+         * Cancelling the flight hands the radius back to the frame rig's fit channel, which would
+         * ease it to `dFit` on the very next frame — so a cancelled flight would still end at the
+         * fit distance rather than where the user left it. `USER_ZOOM` is the machine's own word for
+         * "the user owns the distance", and it is the same event the wheel path dispatches, so this
+         * does not invent a second meaning for `userZoomed`.
+         */
+        dispatch({ type: 'USER_ZOOM' });
+      }
       dispatch({ type: 'USER_ORBIT_START' });
     };
 
@@ -833,8 +921,23 @@ export function CameraDirector({
       dispatch({ type: 'SELECT', regionId: null });
       spin.current.paused = false;
       targetRegion.current = null;
-    } else {
-      /* Never selected: nothing to close, and the spin keeps running. */
+    } else if (!ninoFlight.current) {
+      /*
+       * Never selected: nothing to close, and the spin keeps running.
+       *
+       * NINO-HARDEN B4: NOT while a Niño box flight owns the camera. This effect runs on the render
+       * AFTER `showNinoOnGlobe`, which calls `selectRegion(null)` — so by the time it runs, the box
+       * press has already paused the spin and set `ninoFlight`. Without this guard the effect
+       * immediately un-paused it again, and the measured effect was A2d's camera-vs-centre angle
+       * sitting at 9.128 deg while every fresh-boot A1 row read 0.000-0.008: the outline kept turning
+       * away from a camera aimed at where it had been.
+       *
+       * `ninoFlight.current` and not a new ref: while the flight is in progress the box owns the
+       * camera, and after it arrives the box is still the active selection (`activeNinoBox`), whose
+       * aim was frozen at press time. Resuming on arrival would reintroduce exactly the drift A1d
+       * measures. The unpause happens in `focusNinoBox(null)` instead — the one place that knows the
+       * box is gone.
+       */
       spin.current.paused = false;
     }
     travelling.current = true;
