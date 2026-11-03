@@ -7,11 +7,25 @@ import { Header } from '@/components/Header';
 import { ControlDeck } from '@/components/ControlDeck';
 import { RegionDrawer } from '@/components/RegionDrawer';
 import { RegionCards } from '@/components/RegionCards';
+import { NinoCards } from '@/components/NinoCards';
 import { useScenario } from '@/state/useScenario';
 import { REGION_MAP } from '@/lib/regions';
 import { buildReportHtml, captureCanvas, downloadPng, openReport } from '@/lib/report';
+import { isNinoUiEnabled } from '@/lib/ninoFlag';
 import type { RegionId } from '@/types/enso';
 import { fixed } from '@/lib/format';
+
+/**
+ * The `?nino=1` flag, read exactly once at module load.
+ *
+ * Module scope rather than `useMemo`/`useState` in the component for two reasons: the value cannot change
+ * without a reload, and a hook here would have to sit before the existing `useScenario` call or after it —
+ * either way it changes nothing about order today but adds a hook for a boolean that never moves. A const
+ * keeps the component's hook list byte-identical whether the flag is on or off.
+ */
+const NINO_UI = isNinoUiEnabled(
+  typeof location === 'undefined' ? '' : location.search,
+);
 
 export default function App() {
   const {
@@ -237,7 +251,28 @@ export default function App() {
              at >= 1024, where `lg:p-6` was the padding in force. */
           className="pointer-events-none absolute right-0 top-1/2 z-20 flex -translate-y-1/2 p-6"
         >
-          <RegionCards metrics={analytics.metrics} activeRegion={activeRegion} onSelect={selectRegion} />
+          {/*
+            Niño 1+2 / Niño 4 empirical cards — default OFF, behind `?nino=1`.
+
+            The ON branch introduces ONE wrapper (`flex w-[268px] flex-col gap-2`) for a measured reason: this
+            element is a flex ROW (`className` above), so a bare second child would sit BESIDE the region cards
+            and — with no width of its own — shrink-wrap to its longest caption. The first M2 run measured
+            exactly that: the section stretched to 614 px and the cards landed at x=642, to the right of the
+            panel instead of under it. The wrapper pins both stacks to the same 268 px column.
+
+            The OFF branch is the ORIGINAL single child, unwrapped, so the flag-OFF DOM is identical to the
+            commit before this one — proven by the M1 fingerprint, not asserted. `max-h` + `overflow-y-auto`
+            sit on the WRAPPER, so the panel scrolls when two more cards outgrow a 720 px viewport; adding them
+            to the panel itself would have changed the OFF branch.
+          */}
+          {NINO_UI ? (
+            <div className="flex max-h-[calc(100vh-3rem)] w-[268px] shrink-0 flex-col gap-2 overflow-y-auto">
+              <RegionCards metrics={analytics.metrics} activeRegion={activeRegion} onSelect={selectRegion} />
+              <NinoCards nino34Anomaly={scenario.sstAnomaly} unit={units === 'imperial' ? 'F' : 'C'} layout="desktop" />
+            </div>
+          ) : (
+            <RegionCards metrics={analytics.metrics} activeRegion={activeRegion} onSelect={selectRegion} />
+          )}
         </div>
       ) : null}
 

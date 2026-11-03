@@ -32,6 +32,8 @@ import { Sparkline } from '@/components/ui/Sparkline';
 import { REGIONS, formatDelta } from '@/lib/regions';
 import { SST_MAX, SST_MIN, thermalColor } from '@/lib/model';
 import { fixed } from '@/lib/format';
+import { isNinoUiEnabled } from '@/lib/ninoFlag';
+import { NinoCards } from '@/components/NinoCards';
 import { ensoCategory, ensoLabel } from '@/mobile/ensoHud';
 
 /** Which surface is rendering the body. `dock` shows every section and has no tier concept. */
@@ -179,6 +181,22 @@ export function SheetBody({
               );
             })}
           </div>
+
+          {/*
+            Niño 1+2 / Niño 4 empirical cards — the SAME component and the same numbers as the desktop panel,
+            appended after the region switcher so the sheet gains one block and no structural change.
+
+            Mobile reads the flag through the same `isNinoUiEnabled` helper. It is imported rather than passed
+            as a prop because the alternative is a new prop threaded through `MobileShell` → `SnapSheet` /
+            `LandscapeDock` → here, which would touch three files to deliver a constant.
+          */}
+          {isNinoUiEnabled(typeof location === 'undefined' ? '' : location.search) ? (
+            <NinoCards
+              nino34Anomaly={scenarioSst}
+              unit={units === 'imperial' ? 'F' : 'C'}
+              layout="mobile"
+            />
+          ) : null}
         </div>
       ) : null}
 
