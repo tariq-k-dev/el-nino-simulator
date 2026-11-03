@@ -43,6 +43,19 @@ interface HotspotProps {
    * explicitly. `matrixWorld` is read at raycast time, so a spin (or a future offset) is honoured.
    */
   earthRef: MutableRefObject<THREE.Group | null>
+  /**
+   * Render the pin as a DOT ONLY: no DOM label, and no hit proxy.
+   *
+   * Added for the Niño box pins (step 2.3c-1), which are visual markers whose only trigger is a card
+   * button. Defaults to `false`, and the two branches it adds are `? <label> : null` and
+   * `? <proxy> : null`, so for every existing region the rendered tree is unchanged — the prop is
+   * absent, both conditions are true, and every element and its props are identical.
+   *
+   * With `true` the pin keeps the mesh, the ring, the glow and the same limb-fade rule (the fade is
+   * driven by `labelWrapRef`, which simply does not exist, and the guard is already `if
+   * (labelWrapRef.current)`), so a dot hides at the limb exactly like a labelled pin.
+   */
+  dotOnly?: boolean
 }
 
 /*
@@ -81,6 +94,7 @@ export function Hotspot({
   headline,
   onSelect,
   earthRef,
+  dotOnly = false,
 }: HotspotProps) {
   const [hovered, setHovered] = useState(false)
   const ringRef = useRef<THREE.Mesh>(null)
@@ -388,19 +402,38 @@ export function Hotspot({
         position={headPosition}
         raycast={proxyRaycast}
         visible={false}
-        onClick={(e) => {
-          e.stopPropagation()
-          onSelect(region.id)
-        }}
-        onPointerOver={(e) => {
-          e.stopPropagation()
-          setHovered(true)
-          document.body.style.cursor = "pointer"
-        }}
-        onPointerOut={() => {
-          setHovered(false)
-          document.body.style.cursor = "auto"
-        }}
+        /*
+         * `dotOnly` pins get NO hit proxy: they are visual markers with no click handler, so there is
+         * nothing to raycast against. The handlers below are the whole of what makes a pin
+         * interactive — R3F only pushes an object onto its interaction list when it has BOTH a
+         * `raycast` and handlers (events-*.esm.js:308-311), so handing `undefined` for all three
+         * removes the pin from that list entirely and it cannot intercept a pointer event anywhere.
+         */
+        onClick={
+          dotOnly
+            ? undefined
+            : (e) => {
+                e.stopPropagation()
+                onSelect(region.id)
+              }
+        }
+        onPointerOver={
+          dotOnly
+            ? undefined
+            : (e) => {
+                e.stopPropagation()
+                setHovered(true)
+                document.body.style.cursor = "pointer"
+              }
+        }
+        onPointerOut={
+          dotOnly
+            ? undefined
+            : () => {
+                setHovered(false)
+                document.body.style.cursor = "auto"
+              }
+        }
       >
         <sphereGeometry args={[1, 12, 8]} />
         <meshBasicMaterial />
@@ -493,7 +526,10 @@ export function Hotspot({
           none of the scene's colour management. Over a bright atmosphere the
           old translucent-white pill (bg-white/15) had roughly 1.2:1 contrast
           and vanished. Solid dark fill + a light border + a real text shadow
-          keeps it legible against any backdrop, including the sun glint. */}
+          keeps it legible against any backdrop, including the sun glint.
+
+          `dotOnly` pins render no label at all — they are dots. */}
+      {dotOnly ? null : (
       <Html
         position={[
           position[0] * 1.1,
@@ -539,6 +575,7 @@ export function Hotspot({
           </button>
         </div>
       </Html>
+      )}
     </group>
   )
 }

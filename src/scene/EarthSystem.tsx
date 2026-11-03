@@ -4,11 +4,25 @@ import * as THREE from 'three';
 import type { RegionId } from '@/types/enso';
 import type { ScenarioMetrics } from '@/types/enso';
 import { REGIONS } from '@/lib/regions';
+import { isNinoUiEnabled } from '@/lib/ninoFlag';
 import { regionHeadline } from '@/lib/model';
 import { Globe } from '@/scene/Globe';
 import { SUN_DIRECTION } from '@/scene/constants';
 import { Hotspot } from '@/scene/Hotspot';
+import { NinoOverlay } from '@/scene/NinoOverlay';
 import { getLookFlags, subscribeLookFlags } from '@/scene/globeLook';
+
+/**
+ * `?nino=1`, read ONCE at module load.
+ *
+ * Same mechanism and the same reasoning as `App.tsx:26`: a module const keeps this component's hook
+ * list byte-identical whether the flag is on or off, so toggling it cannot reorder hooks. Read here
+ * rather than threaded from `GlobeScene` because `NinoOverlay` is the only consumer and threading a
+ * prop would touch two more files for a boolean that never changes at runtime.
+ */
+const NINO_UI = isNinoUiEnabled(
+  typeof location === 'undefined' ? '' : location.search,
+);
 
 export interface SpinState {
   /** Current Y rotation of the earth group, in radians. */
@@ -70,6 +84,14 @@ export function EarthSystem({ sst, metrics, activeRegion, onSelect, spin }: Eart
           earthRef={groupRef}
         />
       ))}
+      {/*
+        Niño box pins and outlines — `?nino=1` only.
+
+        This is the ONLY change to this file: one conditional mount. Everything the flag adds lives
+        in `NinoOverlay.tsx`, so with the flag off nothing here is constructed at all — no pins, no
+        geometry, no material — and the flag-off scene is the same object graph as before.
+      */}
+      {NINO_UI ? <NinoOverlay earthRef={groupRef} sst={sst} /> : null}
     </group>
   );
 }
