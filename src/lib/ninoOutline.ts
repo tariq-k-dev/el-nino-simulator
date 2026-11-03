@@ -98,10 +98,36 @@ export function ninoOutlineLoops(
     const lons: number[] = [];
     for (let i = 0; i <= n; i += 1) lons.push(lonMin + (span * i) / n);
 
+    /**
+     * Steps along the LATITUDE legs — added in NINO-HARDEN B1.
+     *
+     * Before this, each loop was two parallel rows joined by a single segment at each end, so the
+     * vertical legs were ONE chord spanning the whole box height: 10 degrees for Niño 1+2, 10 for
+     * Niño 4. The midpoint of such a chord sits at `R·cos(5°)` = 0.998685 R — that is 0.001315 R
+     * INSIDE the unit sphere, so the middle of every vertical leg was buried under the globe's own
+     * surface and depth-hidden, while its two ends poked out at 1.0025. The outline was therefore
+     * visibly two parallel arcs with the ends clipped, not a closed box.
+     *
+     * With the legs sampled at `stepDeg` the worst chord is 1 degree wide, whose midpoint sits at
+     * `1.0025·cos(0.5°)` = 1.002462 R — still above the 1.0020 test floor and outside the sphere.
+     *
+     * The legs are sampled in the same 360 longitude space the horizontal edges already use, so a
+     * vertex on a leg is `latLonToVector3(lat, lon360, radius)` with the same periodic trig — no
+     * normalisation step, and the dateline merge (`boxLon360Ranges`) is untouched.
+     */
+    const m = Math.max(1, Math.ceil(Math.abs(box.latMax - box.latMin) / stepDeg));
+    const lats: number[] = [];
+    for (let i = 1; i < m; i += 1) lats.push(box.latMin + ((box.latMax - box.latMin) * i) / m);
+
     // South edge: lon increases at latMin.
     for (const lon of lons) push(box.latMin, lon);
+    // East leg: lat increases at the east end, interior vertices only.
+    const eastLon = lons[lons.length - 1];
+    for (const lat of lats) push(lat, eastLon);
     // North edge: lon decreases at latMax, so the loop returns without retracing.
     for (let i = lons.length - 1; i >= 0; i -= 1) push(box.latMax, lons[i]);
+    // West leg: lat decreases back to latMin, interior vertices only.
+    for (let i = lats.length - 1; i >= 0; i -= 1) push(lats[i], lons[0]);
 
     // Close THIS loop explicitly, and only to its own first point.
     if (loop.length > 0) loop.push(loop[0]);

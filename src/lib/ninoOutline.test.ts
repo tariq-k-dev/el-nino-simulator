@@ -102,20 +102,19 @@ describe('ninoOutlineLoops', () => {
 describe('continuity across the dateline', () => {
   it('never steps further than the box is tall, for any shipped box', () => {
     /*
-     * The "no segment jumps across the globe" proof, stated correctly.
+     * The "no segment jumps across the globe" proof, restated for NINO-HARDEN B1.
      *
-     * A boundary walk always contains the two VERTICAL legs — (latMin, lon) to (latMax, lon) — so
-     * the legitimate worst step is the box's own LATITUDE SPAN, not the longitude sample size. The
-     * first version of this test asserted <= 2 and failed at 10.0 for every box, which was the test
-     * being wrong: 10 degrees is Niño 1+2's height, and 10 is the whole of it.
+     * Before B1 this test's bound was `max(height, stepDeg) + 0.5` because a boundary walk always
+     * contained the two VERTICAL legs as single chords — the legitimate worst step was the box's own
+     * latitude span (10 degrees for Niño 1+2 and for Niño 4). The legs are now sampled at
+     * `NINO_OUTLINE_STEP_DEG`, so the bound tightens to the sample step plus corner slack, and the
+     * comment that said "the legitimate worst step is the box's own LATITUDE SPAN" is no longer true.
      *
-     * What actually matters is that no step approaches a half-circumference. The bound below is
-     * max(height, stepDeg) with slack for the corner diagonal, and the separately-asserted 90 degree
-     * cap is what would catch a jumped segment: a dateline stitch would produce ~180.
+     * What matters is unchanged: no step may approach a half-circumference. The separately-asserted
+     * 90 degree cap is what would catch a jumped segment; a dateline stitch would produce ~180.
      */
     for (const box of ALL_BOXES) {
-      const height = box.latMax - box.latMin;
-      const allowed = Math.max(height, NINO_OUTLINE_STEP_DEG) + 0.5;
+      const allowed = NINO_OUTLINE_STEP_DEG + 0.0001;
       const worst = maxStepDegrees(ninoOutlineVertices(box));
       expect(worst).toBeLessThanOrEqual(allowed);
       expect(worst).toBeLessThan(90);
@@ -132,10 +131,22 @@ describe('continuity across the dateline', () => {
     expect(loops).toHaveLength(1);
 
     const loop = loops[0];
-    // The range is [160, 210] at 1-degree steps: 51 south vertices, 51 north, plus the repeat.
-    expect(loop.length).toBe(51 + 51 + 1);
-    // Height is 10 degrees (5N..5S), so the vertical legs are the worst legitimate step.
-    expect(maxStepDegrees(loop)).toBeLessThanOrEqual(10.5);
+    /*
+     * NINO-HARDEN B1: the latitude legs are sampled now, so the count is no longer
+     * 51 south + 51 north + 1. It is
+     *   51 south + 9 east-leg interior + 51 north + 9 west-leg interior + 1 closing repeat = 121.
+     * The 9 comes from a 10-degree height at a 1-degree step: m = ceil(10/1) = 10, and `lats`
+     * holds the m-1 = 9 INTERIOR vertices only — the two ends are already the corners the
+     * horizontal edges produced, so including them would duplicate a vertex and produce a
+     * zero-length segment.
+     */
+    expect(loop.length).toBe(51 + 9 + 51 + 9 + 1);
+    /*
+     * And the worst legitimate step is now the SAMPLE step, not the box height. Was
+     * `<= 10.5` because the vertical legs were one chord each; it is `<= 1.0001` because they
+     * are sampled at NINO_OUTLINE_STEP_DEG.
+     */
+    expect(maxStepDegrees(loop)).toBeLessThanOrEqual(1.0001);
   });
 
   it('emits two separate loops for a box that crosses the prime meridian', () => {
@@ -154,8 +165,8 @@ describe('continuity across the dateline', () => {
      * most of the sphere. Flattening here is only safe because the loops are already built.
      */
     for (const loop of loops) {
-      // Height is 2 degrees for the synthetic box.
-      expect(maxStepDegrees(loop)).toBeLessThanOrEqual(2.5);
+      // Height is 2 degrees for the synthetic box, so the legs are 1 interior vertex each side.
+      expect(maxStepDegrees(loop)).toBeLessThanOrEqual(1.0001);
       expect(maxStepDegrees(loop)).toBeLessThan(90);
     }
   });
@@ -166,10 +177,15 @@ describe('continuity across the dateline', () => {
      * line WOULD jump between them. The bound below documents that limit honestly: it is asserted
      * per loop above, and the flattened form is only for global properties (radius, counts). Kept as
      * a test so the distinction is visible rather than assumed.
+     *
+     * NINO-HARDEN B1 changed the threshold, not the property: the jump between loop two's start and
+     * loop one's end for TWO_RANGE_BOX was > 2.5 degrees and is now > 1.0001, because both loops are
+     * sampled at the 1-degree step. Asserting `> 1.0001` keeps this a statement about the
+     * between-loop jump rather than about the sample size.
      */
     const flat = ninoOutlineVertices(TWO_RANGE_BOX);
     expect(flat.length).toBeGreaterThan(0);
-    expect(maxStepDegrees(flat)).toBeGreaterThan(2.5);
+    expect(maxStepDegrees(flat)).toBeGreaterThan(1.0001);
   });
 });
 
@@ -261,8 +277,24 @@ describe('sampling density and shape', () => {
     expect(loop).toHaveLength(open.length + 1);
     expect(loop[loop.length - 1]).toEqual(loop[0]);
 
-    const north = open.filter((v) => v[1] > 0.01);
-    const south = open.filter((v) => v[1] < -0.01);
+    /*
+     * NINO-HARDEN B1: filter by the EDGE LATITUDE, not by the sign of y.
+     *
+     * The old filters were `v[1] > 0.01` and `v[1] < -0.01`, which was exact when a loop held only
+     * two rows. Now each loop also carries the interior vertices of its two latitude legs, and those
+     * sit at 9 different latitudes — so a sign filter would put 4 of the east leg's and 4 of the west
+     * leg's vertices into `north` and 8 into `south`, and the "constant latitude" assertion below
+     * would fail on a box that is built correctly.
+     *
+     * `latLonToVector3(lat, lon, radius)` returns y = radius·cos(φ), so with the outline radius the
+     * rows sit at ±1.0025·cos(85°) = ±0.087353; comparing within 1e-9 selects exactly the 51
+     * vertices of each row and nothing on the legs.
+     */
+    const yAt = (lat: number) => NINO_OUTLINE_RADIUS * Math.cos(((90 - lat) * Math.PI) / 180);
+    const northY = yAt(NINO_BOXES[1].latMax);
+    const southY = yAt(NINO_BOXES[1].latMin);
+    const north = open.filter((v) => Math.abs(v[1] - northY) < 1e-9);
+    const south = open.filter((v) => Math.abs(v[1] - southY) < 1e-9);
 
     // 50 degrees at 1 degree per step is 51 samples, on each of the two parallel edges.
     expect(north).toHaveLength(51);
@@ -292,6 +324,73 @@ describe('sampling density and shape', () => {
         if (v[1] > yMax) yMax = v[1];
       }
       expect(yMax - yMin).toBeCloseTo(0, 12);
+    }
+  });
+
+  it('keeps every segment close enough to the sphere that no chord dips inside it', () => {
+    /*
+     * NINO-HARDEN B1's actual defect, asserted for the first time.
+     *
+     * Before B1 the latitude legs were ONE chord each, spanning the box height. For Niño 1+2 that is
+     * a 10-degree chord at radius 1.0025, whose midpoint sits at 1.0025·cos(5°) = 0.998685 — BELOW
+     * the unit sphere. The outline was drawn above the surface at its corners (1.0025) and buried
+     * under the globe in the middle of each vertical edge, so the box looked like two parallel arcs
+     * rather than a closed loop.
+     *
+     * The brief asks for "every chord midpoint radius = 1.0020". That exact value is not what a
+     * 1-degree sample at radius 1.0025 gives: the midpoint of a 1-degree chord sits at
+     * 1.0025·cos(0.5°) = 1.002462. Asserting 1.0020 exactly would be asserting a number the geometry
+     * never produces, so the assertion is the FLOOR the brief actually cares about — no midpoint may
+     * be closer to the centre than 1.0020, i.e. every segment stays at least 2 mm above the surface
+     * of a 1-unit globe — and the measured minimum is reported alongside it.
+     *
+     * Measured minimum midpoint radius across all shipped boxes: 1.002462 (see the printout in the
+     * B1 report). The old builder's value is recorded in the comment above the leg sampling code.
+     */
+    for (const box of ALL_BOXES) {
+      for (const loop of ninoOutlineLoops(box)) {
+        for (let i = 1; i < loop.length; i += 1) {
+          const a = loop[i - 1];
+          const b = loop[i];
+          const midRadius = Math.hypot((a[0] + b[0]) / 2, (a[1] + b[1]) / 2, (a[2] + b[2]) / 2);
+          expect(midRadius).toBeGreaterThanOrEqual(1.002);
+          /*
+           * And no segment may be long enough for its midpoint to fall out of that band even in
+           * principle: at 1.0025 the midpoint radius is 1.0025·cos(θ/2), which stays >= 1.0020 for
+           * θ <= 2·acos(1.0020/1.0025) = 3.62 degrees. The 1.0001 step bound asserted above is well
+           * inside that, so the two assertions agree instead of one hiding the other.
+           */
+          const chordDeg =
+            (Math.acos(
+              Math.min(
+                1,
+                Math.max(
+                  -1,
+                  (a[0] * b[0] + a[1] * b[1] + a[2] * b[2]) /
+                    (Math.hypot(a[0], a[1], a[2]) * Math.hypot(b[0], b[1], b[2])),
+                ),
+              ),
+            ) *
+              180) /
+            Math.PI;
+          expect(chordDeg).toBeLessThanOrEqual(1.0001);
+        }
+      }
+    }
+  });
+
+  it('puts every vertex at radius 1.0025 to twelve places, legs included', () => {
+    /*
+     * The legs are new vertices, so the radius invariant has to be re-proved over them rather than
+     * inherited: `1.0025` to 1e-12 is what the brief asks for, and a leg vertex that used a
+     * normalised direction instead of `latLonToVector3` would sit at 1.0 and pass no other test.
+     */
+    for (const box of ALL_BOXES) {
+      for (const loop of ninoOutlineLoops(box)) {
+        for (const v of loop) {
+          expect(Math.hypot(v[0], v[1], v[2])).toBeCloseTo(1.0025, 12);
+        }
+      }
     }
   });
 });
