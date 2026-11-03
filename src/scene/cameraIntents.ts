@@ -31,6 +31,14 @@ export interface CameraPose {
 export interface CameraIntents {
   /** Park the camera at `pose`. Synchronous; returns nothing to await. */
   setPose(pose: CameraPose): void;
+  /**
+   * Fly to a Niño box by id (step 2.3c-1, C2). `null` clears the selection and returns to default.
+   *
+   * A separate entry point rather than a pose, because the framing depends on the live aspect and
+   * the flight must use the EXISTING tween: the caller supplies only WHICH box, and the director
+   * derives the aim point and the distance from `ninoFraming` at the moment the flight starts.
+   */
+  focusNinoBox(boxId: string | null): void;
 }
 
 let registered: CameraIntents | null = null;
@@ -51,4 +59,14 @@ export function submitPose(pose: CameraPose): void {
 /** True once a director is registered — lets a probe or a test assert the channel is live. */
 export function hasCameraIntents(): boolean {
   return registered !== null;
+}
+
+/**
+ * Submit a Niño box focus. A no-op before the director mounts, like `submitPose`.
+ *
+ * Separate wrapper so callers never reach into `registered` and do not have to know the channel's
+ * shape; `null` is the clear/return-to-default request.
+ */
+export function submitNinoFocus(boxId: string | null): void {
+  registered?.focusNinoBox(boxId);
 }

@@ -50,6 +50,10 @@ interface LandscapeDockProps {
   onClearSelection: () => void;
   onSstChange: (value: number) => void;
   onChangeScenario: (patch: Pick<Partial<ScenarioState>, 'jetStreamShift' | 'agricultureWeight'>) => void;
+  /** The Niño box last flown to (C2.1), forwarded to the cards for `aria-pressed`. */
+  activeNinoBox: string | null;
+  /** The "Show on globe" trigger. The ONLY way a Niño box is flown to. */
+  onShowOnGlobe: (boxId: string) => void;
 }
 
 export function LandscapeDock({
@@ -65,6 +69,8 @@ export function LandscapeDock({
   onClearSelection,
   onSstChange,
   onChangeScenario,
+  activeNinoBox,
+  onShowOnGlobe,
 }: LandscapeDockProps) {
   const width = dockWidth(viewportW);
 
@@ -117,6 +123,8 @@ export function LandscapeDock({
           onClearSelection={onClearSelection}
           onSstChange={onSstChange}
           onChangeScenario={onChangeScenario}
+          activeNinoBox={activeNinoBox}
+          onShowOnGlobe={onShowOnGlobe}
         />
       </div>
     </aside>

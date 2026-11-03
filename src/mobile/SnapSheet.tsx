@@ -118,6 +118,10 @@ interface SnapSheetProps {
   onSstChange: (value: number) => void;
   /** Jets and cropland weight — the teleconnection sliders, reused rather than duplicated. */
   onChangeScenario: (patch: Pick<Partial<ScenarioState>, 'jetStreamShift' | 'agricultureWeight'>) => void;
+  /** The Niño box last flown to (C2.1), forwarded to the cards for `aria-pressed`. */
+  activeNinoBox: string | null;
+  /** The "Show on globe" trigger. The ONLY way a Niño box is flown to. */
+  onShowOnGlobe: (boxId: string) => void;
 }
 
 /**
@@ -149,6 +153,8 @@ export const SnapSheet = forwardRef<SnapSheetHandle, SnapSheetProps>(function Sn
     onClearSelection,
     onSstChange,
     onChangeScenario,
+    activeNinoBox,
+    onShowOnGlobe,
   },
   ref,
 ) {
@@ -348,6 +354,8 @@ export const SnapSheet = forwardRef<SnapSheetHandle, SnapSheetProps>(function Sn
           onClearSelection={onClearSelection}
           onSstChange={onSstChange}
           onChangeScenario={onChangeScenario}
+          activeNinoBox={activeNinoBox}
+          onShowOnGlobe={onShowOnGlobe}
         />
         {/*
           The full tier's sections live in `SheetBody` behind `surface`. This latch is what keeps MOBILE1's

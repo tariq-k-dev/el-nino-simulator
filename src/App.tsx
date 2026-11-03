@@ -12,6 +12,7 @@ import { useScenario } from '@/state/useScenario';
 import { REGION_MAP } from '@/lib/regions';
 import { buildReportHtml, captureCanvas, downloadPng, openReport } from '@/lib/report';
 import { isNinoUiEnabled } from '@/lib/ninoFlag';
+import { submitNinoFocus } from '@/scene/cameraIntents';
 import type { RegionId } from '@/types/enso';
 import { fixed } from '@/lib/format';
 
@@ -56,6 +57,15 @@ export default function App() {
   const isMobile = isMobileMode(layout.mode);
 
   const [activeRegion, setActiveRegion] = useState<RegionId | null>(null);
+  /**
+   * The Niño box the user last pressed "Show on globe" for (step 2.3c-1, C2.4).
+   *
+   * Lives here rather than in the scene because it drives BOTH the card's `aria-pressed` and the
+   * outline highlight, and those are on opposite sides of the canvas. The camera flight itself is
+   * handed to the director through `submitNinoFocus`, so this state is the UI mirror of the flight
+   * rather than its source of truth. Clearing it (on reset / deselect) is what dims the outline.
+   */
+  const [activeNinoBox, setActiveNinoBox] = useState<string | null>(null);
   const [focusNonce, setFocusNonce] = useState(0);
   const [exporting, setExporting] = useState(false);
   const [booted, setBooted] = useState(false);
@@ -75,8 +85,34 @@ export default function App() {
    * requirement is that Reset take the existing close path rather than a parallel one, so there is one
    * piece of code that knows how the app deselects. Its signature takes no arguments, so a caller cannot
    * accidentally select a region through it.
+   *
+   * Step 2.3c-1 C2.4 extends it to the Niño box highlight: "clear it on view reset using the existing
+   * reset path". Folding the box clear in HERE rather than adding a second call at the Reset button is
+   * what keeps Reset a single rule — the drawer's X and Escape now dim the outline too, which is the
+   * behaviour "cleared via the existing reset path" implies rather than a Reset-only exception.
    */
-  const clearSelection = useCallback(() => selectRegion(null), [selectRegion]);
+  const clearSelection = useCallback(() => {
+    selectRegion(null);
+    setActiveNinoBox(null);
+    submitNinoFocus(null);
+  }, [selectRegion]);
+
+  /**
+   * "Show on globe" — the only Niño trigger (C2.1).
+   *
+   * Clears any region selection first: a region focus and a box focus are two different camera
+   * destinations, and leaving both latched would have the focus machine and the box flight tweening
+   * toward different targets on the same frame. Then it hands the box id to the camera director and
+   * mirrors it into state for `aria-pressed` and the outline highlight.
+   */
+  const showNinoOnGlobe = useCallback(
+    (boxId: string) => {
+      selectRegion(null);
+      setActiveNinoBox(boxId);
+      submitNinoFocus(boxId);
+    },
+    [selectRegion],
+  );
 
   const handleExport = useCallback(async () => {
     setExporting(true);
@@ -146,6 +182,7 @@ export default function App() {
           onSelect={selectRegion}
           focusNonce={focusNonce}
           onLoaded={() => setBooted(true)}
+          activeNinoBox={activeNinoBox}
         />
       </div>
 
@@ -268,7 +305,7 @@ export default function App() {
           {NINO_UI ? (
             <div className="flex max-h-[calc(100vh-3rem)] w-[268px] shrink-0 flex-col gap-2 overflow-y-auto">
               <RegionCards metrics={analytics.metrics} activeRegion={activeRegion} onSelect={selectRegion} />
-              <NinoCards nino34Anomaly={scenario.sstAnomaly} unit={units === 'imperial' ? 'F' : 'C'} layout="desktop" />
+              <NinoCards nino34Anomaly={scenario.sstAnomaly} unit={units === 'imperial' ? 'F' : 'C'} layout="desktop" onShowOnGlobe={showNinoOnGlobe} activeBoxId={activeNinoBox} />
             </div>
           ) : (
             <RegionCards metrics={analytics.metrics} activeRegion={activeRegion} onSelect={selectRegion} />
@@ -320,6 +357,8 @@ export default function App() {
           exporting={exporting}
           onToggleUnits={toggleUnits}
           onExport={handleExport}
+          activeNinoBox={activeNinoBox}
+          onShowOnGlobe={showNinoOnGlobe}
         />
       ) : null}
 

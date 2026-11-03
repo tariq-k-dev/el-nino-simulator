@@ -51,6 +51,10 @@ interface MobileShellProps {
   onSelect: (id: RegionId | null) => void;
   onClearSelection: () => void;
   onScenarioChange: (patch: Partial<ScenarioState>) => void;
+  /** The Niño box last flown to, so the sheet can collapse and the card can show selection. */
+  activeNinoBox: string | null;
+  /** The "Show on globe" trigger, forwarded to the cards inside the sheet. */
+  onShowOnGlobe: (boxId: string) => void;
 }
 
 export function MobileShell({
@@ -69,6 +73,8 @@ export function MobileShell({
   onSelect,
   onClearSelection,
   onScenarioChange,
+  activeNinoBox,
+  onShowOnGlobe,
 }: MobileShellProps) {
   const sheetRef = useRef<SnapSheetHandle>(null);
 
@@ -85,6 +91,24 @@ export function MobileShell({
     if (isPortrait && !wasPortrait.current) sheetRef.current?.resetTier();
     wasPortrait.current = isPortrait;
   }, [mode]);
+
+  /**
+   * When a Niño box is flown to on a PHONE, collapse the sheet to peek (C2.1).
+   *
+   * The step requires the globe to be visible after the button is pressed, and the button lives inside
+   * the sheet — so leaving the sheet at the tier the user pressed from would hide the very thing the
+   * press was for. Checked what a REGION selection does: it does not touch the tier at all (the mobile
+   * region switcher just calls `onSelect`), so there is no existing behaviour to mirror here and the
+   * collapse has to be explicit. `resetTier()` is the sheet's own handle — the same one the portrait
+   * rotation rule uses — so this adds no new mechanism.
+   */
+  const wasNinoBox = useRef<string | null>(null);
+  useEffect(() => {
+    if (activeNinoBox && activeNinoBox !== wasNinoBox.current) {
+      sheetRef.current?.resetTier();
+    }
+    wasNinoBox.current = activeNinoBox;
+  }, [activeNinoBox]);
 
   return (
     <>
@@ -110,6 +134,8 @@ export function MobileShell({
           units={units}
           activeRegion={activeRegion}
           onSelect={(id) => onSelect(id)}
+          activeNinoBox={activeNinoBox}
+          onShowOnGlobe={onShowOnGlobe}
           onClearSelection={onClearSelection}
           onSstChange={(value) => onScenarioChange({ sstAnomaly: value })}
           onChangeScenario={(patch) => onScenarioChange(patch)}
@@ -127,6 +153,8 @@ export function MobileShell({
           units={units}
           activeRegion={activeRegion}
           onSelect={(id) => onSelect(id)}
+          activeNinoBox={activeNinoBox}
+          onShowOnGlobe={onShowOnGlobe}
           onClearSelection={onClearSelection}
           onSstChange={(value) => onScenarioChange({ sstAnomaly: value })}
           onChangeScenario={(patch) => onScenarioChange(patch)}

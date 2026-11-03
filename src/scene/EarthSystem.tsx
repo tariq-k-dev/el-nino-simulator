@@ -49,6 +49,13 @@ interface EarthSystemProps {
   activeRegion: RegionId | null;
   onSelect: (id: RegionId) => void;
   spin: MutableRefObject<SpinState>;
+  /**
+   * The Niño box currently selected by a card's "Show on globe" (C2.4), or null.
+   *
+   * Optional so the existing tests that mount `EarthSystem` without it keep working; when it is
+   * undefined the overlay draws every outline at the base brightness, which is the pre-C2 look.
+   */
+  activeNinoBox?: string | null;
 }
 
 /**
@@ -56,7 +63,14 @@ interface EarthSystemProps {
  * The camera rig reads `spin.y` to compute where a marker actually is — that is
  * what keeps focus accurate while the planet is turning.
  */
-export function EarthSystem({ sst, metrics, activeRegion, onSelect, spin }: EarthSystemProps) {
+export function EarthSystem({
+  sst,
+  metrics,
+  activeRegion,
+  onSelect,
+  spin,
+  activeNinoBox = null,
+}: EarthSystemProps) {
   const groupRef = useRef<THREE.Group>(null);
   const look = useSyncExternalStore(subscribeLookFlags, getLookFlags, getLookFlags);
 
@@ -91,7 +105,7 @@ export function EarthSystem({ sst, metrics, activeRegion, onSelect, spin }: Eart
         in `NinoOverlay.tsx`, so with the flag off nothing here is constructed at all — no pins, no
         geometry, no material — and the flag-off scene is the same object graph as before.
       */}
-      {NINO_UI ? <NinoOverlay earthRef={groupRef} sst={sst} /> : null}
+      {NINO_UI ? <NinoOverlay earthRef={groupRef} sst={sst} selectedBoxId={activeNinoBox} /> : null}
     </group>
   );
 }

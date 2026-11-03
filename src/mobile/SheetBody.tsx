@@ -54,6 +54,10 @@ export interface SheetBodyProps {
   onSstChange: (value: number) => void;
   /** Jets and cropland weight — the teleconnection sliders, reused rather than duplicated. */
   onChangeScenario: (patch: Pick<Partial<ScenarioState>, 'jetStreamShift' | 'agricultureWeight'>) => void;
+  /** The Niño box last flown to (C2.1), forwarded to the cards for `aria-pressed`. */
+  activeNinoBox: string | null;
+  /** The "Show on globe" trigger. The ONLY way a Niño box is flown to. */
+  onShowOnGlobe: (boxId: string) => void;
 }
 
 /**
@@ -74,6 +78,8 @@ export function SheetBody({
   onClearSelection,
   onSstChange,
   onChangeScenario,
+  activeNinoBox,
+  onShowOnGlobe,
 }: SheetBodyProps) {
   const accent = thermalColor(metrics.sst, 0.95);
   const category = ensoCategory(scenarioSst);
@@ -195,6 +201,8 @@ export function SheetBody({
               nino34Anomaly={scenarioSst}
               unit={units === 'imperial' ? 'F' : 'C'}
               layout="mobile"
+              onShowOnGlobe={onShowOnGlobe}
+              activeBoxId={activeNinoBox}
             />
           ) : null}
         </div>

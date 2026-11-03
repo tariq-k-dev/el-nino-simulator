@@ -55,10 +55,28 @@ interface NinoCardsProps {
    * identical on both, which is what keeps the sheet and the desktop panel from drifting.
    */
   layout: 'desktop' | 'mobile';
+  /**
+   * The only trigger that flies the globe to a Niño box (step 2.3c-1, C2.1).
+   *
+   * The pins are deliberately NON-interactive (`dotOnly` on `Hotspot`), so this callback is the
+   * whole of the flight surface. Optional so the 2.3b unit tests that render the cards without a
+   * flight handler keep working unchanged.
+   */
+  onShowOnGlobe?: (boxId: string) => void;
+  /** The box currently flown to, for `aria-pressed`. `null` when nothing is selected. */
+  activeBoxId?: string | null;
 }
 
 /** One card. Deliberately an `<article>`, not a button: it is a reading surface. */
-function NinoCard({ model }: { model: NinoCardModel }) {
+function NinoCard({
+  model,
+  onShowOnGlobe,
+  activeBoxId = null,
+}: {
+  model: NinoCardModel;
+  onShowOnGlobe?: (boxId: string) => void;
+  activeBoxId?: string | null;
+}) {
   return (
     <article
       data-testid={`nino-card-${model.regionId}`}
@@ -94,18 +112,63 @@ function NinoCard({ model }: { model: NinoCardModel }) {
       ) : null}
 
       <p className="mt-1.5 text-[9px] leading-snug text-slate-500">{model.captionText}</p>
+
+      {/*
+        C2.1 — the ONLY trigger that flies the globe to this box.
+
+        `min-h-11` is the 44 px touch target the step requires; `min-w-11` keeps a short label from
+        producing a narrow target. `aria-pressed` carries the selected state (the outline highlight
+        mirrors it), and the aria-label spells out which box, because "Show on globe" alone would be
+        ambiguous read out of context. Keyboard-accessible by being a real <button>.
+      */}
+      {onShowOnGlobe ? (
+        <button
+          type="button"
+          data-testid={`nino-show-${model.regionId}`}
+          onClick={() => onShowOnGlobe(model.regionId)}
+          aria-pressed={activeBoxId === model.regionId}
+          aria-label={`Show ${model.regionLabel} on the globe`}
+          className={[
+            'mt-2 flex min-h-11 min-w-11 w-full items-center justify-center gap-1.5 rounded-lg border px-2',
+            'font-mono text-[9px] font-medium uppercase tracking-[0.14em] transition-colors',
+            'focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-sky-300/70',
+            activeBoxId === model.regionId
+              ? 'border-sky-300/50 bg-sky-300/15 text-sky-100'
+              : 'border-[rgba(255,255,255,0.18)] bg-[rgba(255,255,255,0.04)] text-slate-300 hover:border-[rgba(255,255,255,0.34)] hover:text-white',
+          ].join(' ')}
+        >
+          <span aria-hidden="true">◎</span>
+          Show on globe
+        </button>
+      ) : null}
     </article>
   );
 }
 
-export function NinoCards({ nino34Anomaly, unit, layout }: NinoCardsProps) {
+export function NinoCards({
+  nino34Anomaly,
+  unit,
+  layout,
+  onShowOnGlobe,
+  activeBoxId = null,
+}: NinoCardsProps) {
   const models = REGION_ORDER.map((id) => ninoCardModel(id, nino34Anomaly, unit));
 
   return (
     <section
       data-testid="nino-cards"
       aria-labelledby="nino-cards-heading"
-      className={['flex flex-col gap-2', layout === 'mobile' ? 'mt-3' : 'mt-2'].join(' ')}
+      /*
+       * `pointer-events-auto` — REQUIRED, and its absence was a real defect found by the C2 driver.
+       *
+       * The desktop right panel is `pointer-events-none` on purpose (it is an overlay above a
+       * full-viewport canvas), so every interactive child re-enables pointer events for itself:
+       * `RegionCards.tsx:31` does exactly this. Without it, `elementFromPoint` at the "Show on globe"
+       * button returned the `#globe-canvas` div and Playwright reported "canvas intercepts pointer
+       * events" on every retry — the only trigger for a Niño flight was unclickable on desktop.
+       * Harmless on mobile, where the sheet body is not inside a pointer-events-none ancestor.
+       */
+      className={['pointer-events-auto flex flex-col gap-2', layout === 'mobile' ? 'mt-3' : 'mt-2'].join(' ')}
     >
       <div className="flex items-center justify-between px-1">
         <h2
@@ -121,7 +184,12 @@ export function NinoCards({ nino34Anomaly, unit, layout }: NinoCardsProps) {
 
       <div className="flex flex-col gap-2">
         {models.map((model) => (
-          <NinoCard key={model.regionId} model={model} />
+          <NinoCard
+            key={model.regionId}
+            model={model}
+            onShowOnGlobe={onShowOnGlobe}
+            activeBoxId={activeBoxId}
+          />
         ))}
       </div>
     </section>

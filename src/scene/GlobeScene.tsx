@@ -165,6 +165,8 @@ interface GlobeSceneProps {
   onSelect: (id: RegionId | null) => void;
   focusNonce: number;
   onLoaded?: () => void;
+  /** The Niño box selected by a card button (C2.4), for the brighter outline. */
+  activeNinoBox?: string | null;
 }
 
 /**
@@ -179,6 +181,7 @@ export function GlobeScene({
   onSelect,
   focusNonce,
   onLoaded,
+  activeNinoBox = null,
 }: GlobeSceneProps) {
   const controlsRef = useRef<OrbitControlsImpl | null>(null);
   /**
@@ -680,6 +683,7 @@ export function GlobeScene({
           activeRegion={activeRegion}
           onSelect={onSelect}
           spin={spin}
+          activeNinoBox={activeNinoBox}
         />
         <Preload all />
       </Suspense>

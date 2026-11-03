@@ -83,7 +83,9 @@ import { useFrame, useThree } from '@react-three/fiber';
 import type { OrbitControls as OrbitControlsImpl } from 'three-stdlib';
 import * as THREE from 'three';
 import type { RegionId } from '@/types/enso';
-import { REGION_MAP, latLonToVector3 } from '@/lib/regions';
+import { NINO_BOXES, REGION_MAP, latLonToVector3 } from '@/lib/regions';
+import { boxCentreLon360, freeRectFraction, ninoFlyToDistance } from '@/lib/ninoFraming';
+import { GLOBE_LOOK } from '@/scene/globeLook';
 import {
   ARRIVE_EPSILON_R,
   FLY_DISTANCE_EASE_BASE,
@@ -188,6 +190,15 @@ interface PolicyContext {
   desiredTarget: MutableRefObject<THREE.Vector3>;
   desiredDistance: MutableRefObject<number>;
   lastFit: MutableRefObject<number | null>;
+  /**
+   * The Niño box flight target (step 2.3c-1, C2). `null` when no box flight is in progress.
+   *
+   * Kept separate from `targetRegion` because a box is not a `RegionId`: it has no drawer, no
+   * metrics row and no accent, and reusing the region channel would make the region drawer think a
+   * box was selected. The aim point and distance are resolved once, when the flight starts, so a
+   * mid-flight aspect change cannot retarget an in-progress tween.
+   */
+  ninoFlight: MutableRefObject<{ direction: THREE.Vector3; distance: number } | null>;
   withOwnWrite: (fn: () => void) => void;
   dispatch: (event: FocusEvent) => void;
 }
@@ -253,6 +264,96 @@ function runLockedFlyTo(ctx: PolicyContext): void {
     Math.abs(camera.position.distanceTo(controls.target) - wanted) < ARRIVE_EPSILON_R;
   if (targetSettled && distanceSettled) {
     dispatch(state === 'returning' ? { type: 'RETURNED' } : { type: 'ARRIVED' });
+  }
+}
+
+/**
+ * The NIÑO BOX fly-to (step 2.3c-1, C2.3) — the existing tween, aimed at a box instead of a region.
+ *
+ * Reuses exactly the live policy's machinery: `arcStep` for the great-circle tween and `isArrived`
+ * for the same convergence epsilon. What is different is where the destination comes from —
+ * `ninoFlight`, resolved once at button-press time from `ninoFraming` — and that the distance is
+ * eased toward the box's fitted distance rather than held constant.
+ *
+ * ## The dateline, and why nothing here interpolates longitude
+ *
+ * A flight cannot take the wrong way round the globe, structurally: `arcStep` interpolates between
+ * two UNIT VECTORS on the shortest great circle, with the step size proportional to `acos(from·to)`,
+ * which is by definition ≤ 180°. The 3D direction for lon 185 (Niño 4's centre) and for lon -150
+ * (the pacific pin) are 25° apart, so the tween covers 25° — there is no scalar longitude anywhere
+ * for a `+335°` long-way bug to live in. `ninoFraming.shortestLonDelta` exists to make that claim
+ * TESTABLE at the longitude level (and is used by the tests for the two flights the step names);
+ * the flight itself is correct by construction rather than by getting the sign right.
+ *
+ * ## Distance
+ *
+ * Eased with the same `FLY_DISTANCE_EASE_BASE` the locked policy uses and clamped into the controls'
+ * own range, so a fly-to can never park the camera outside `[minDistance, maxDistance]` and the
+ * pinch/wheel that follows stays in range by construction. minDistance is NOT touched here.
+ */
+function runNinoFlyTo(ctx: PolicyContext): void {
+  const { camera, controls, stepDt, ninoFlight, withOwnWrite, dispatch } = ctx;
+
+  const flight = ninoFlight.current;
+  if (!flight) {
+    /* No target: hand the camera back rather than tweening toward nothing. */
+    withOwnWrite(() => controls.update());
+    return;
+  }
+
+  const wanted = facingPose({
+    pinDir: [flight.direction.x, flight.direction.y, flight.direction.z],
+    distance: flight.distance,
+    polarMin: controls.minPolarAngle,
+    polarMax: controls.maxPolarAngle,
+  }).direction;
+
+  const from = orbitDirection(camera, controls);
+  const arrived = isArrived(from, wanted);
+  const next = arrived ? wanted : arcStep({ from, to: wanted, dtS: stepDt });
+
+  /* Ease the radius toward the fitted distance while the direction tweens, clamped by the controls. */
+  const currentDistance = orbitDistance(camera, controls);
+  const distanceEase = easeFactor(FLY_DISTANCE_EASE_BASE, stepDt);
+  const clampedWanted = THREE.MathUtils.clamp(
+    flight.distance,
+    controls.minDistance,
+    controls.maxDistance,
+  );
+  const nextDistance = THREE.MathUtils.lerp(currentDistance, clampedWanted, distanceEase);
+
+  withOwnWrite(() => {
+    camera.position
+      .copy(controls.target)
+      .add(SCRATCH_DIR.set(next[0], next[1], next[2]).multiplyScalar(nextDistance));
+    controls.update();
+  });
+
+  /*
+   * A box flight IS a distance writer that is not the fit, exactly like the locked fly-to above.
+   *
+   * Without this latch the frame rig's distance channel still owns the radius and eases it back to the
+   * fit on the very next frame, so the flight's radius is overwritten mid-tween and the camera lands at
+   * `frame.dTarget` instead of the box's fitted distance. The measured symptom is a "settled" distance
+   * that is neither the requested value nor inside `[minDistance, maxDistance]` in a way the controls
+   * would allow — 5.813 against a ceiling of 5 at 390x844 portrait.
+   *
+   * `withOwnWrite` suppresses the controls' own `change` listener while this module writes, so the
+   * latch has to be dispatched here rather than relying on the listener to notice.
+   */
+  if (ctx.lastFit.current !== null) {
+    const d = camera.position.distanceTo(controls.target);
+    if (Math.abs(d - ctx.lastFit.current) > LAST_FIT_EPSILON) dispatch({ type: 'USER_ZOOM' });
+  }
+
+  /*
+   * Clear the flight on arrival. The selection itself (`activeBoxId`) lives in React state and the
+   * outline highlight is driven from there, so this only stops the tween; the camera then falls back
+   * to the "not travelling" branch where the controls own it.
+   */
+  if (arrived && Math.abs(nextDistance - clampedWanted) < ARRIVE_EPSILON_R) {
+    ninoFlight.current = null;
+    ctx.dispatch({ type: 'ARRIVED' });
   }
 }
 
@@ -516,6 +617,11 @@ export function CameraDirector({
   const easedOffset = useRef({ dx: 0, dy: 0 });
   const appliedSize = useRef({ w: 0, h: 0 });
   const lastFit = useRef<number | null>(null);
+  /**
+   * The Niño box flight target (C2). Resolved once when the flight starts so a mid-flight aspect
+   * change cannot retarget an in-progress tween.
+   */
+  const ninoFlight = useRef<{ direction: THREE.Vector3; distance: number } | null>(null);
   const hasApplied = useRef(false);
   const rigOwnsDistance = useRef(true);
   const recentDistances = useRef<number[]>([]);
@@ -587,6 +693,55 @@ export function CameraDirector({
          * keeps its own latch internally (see `runLockedFlyTo`), which is where the behaviour
          * `globe.spec.ts` depends on actually lives.
          */
+      },
+      /**
+       * Resolve a Niño box into a camera target. `null` cancels the flight.
+       *
+       * Everything that depends on the LIVE viewport is computed here, at press time: the aspect
+       * comes from the camera the director already holds, so a portrait phone gets the width-limited
+       * distance without the card having to know anything about the renderer. The whole framing
+       * decision is `ninoFlyToDistance` — pure, unit-tested, no three.js.
+       */
+      focusNinoBox: (boxId: string | null) => {
+        if (boxId === null) {
+          ninoFlight.current = null;
+          return;
+        }
+        const box = NINO_BOXES.find((b) => b.id === boxId);
+        if (!box) {
+          ninoFlight.current = null;
+          return;
+        }
+        /*
+         * `camera.aspect` is maintained by R3F on resize, so this is the same aspect the projection
+         * uses. Guarding against 0 keeps a degenerate pre-layout size from producing Infinity.
+         */
+        const aspect = camera.aspect > 0 ? camera.aspect : 16 / 9;
+        /*
+         * Fit to the FREE RECT, not the raw viewport. The frame rig parks the aimed point at the free
+         * rect's centre, so the free rect is the window the outline has to fit inside — fitting to the
+         * viewport let a wide box slide under the 316 px right panel (measured: the Nino 4 outline ran
+         * 209 px beneath it at 1280x720). `getInsets()` is the same registry the frame rig reads, and
+         * an unmeasured/zero rect degrades to full-viewport framing rather than NaN.
+         */
+        const insetsNow = getInsets();
+        const freeRect = freeRectFraction(
+          insetsNow.free,
+          window.innerWidth || 0,
+          window.innerHeight || 0,
+        );
+        const distance = ninoFlyToDistance(box, { fovDeg: camera.fov, aspect, freeRect });
+        /*
+         * Aim at the box centre in 360 space, then convert to a direction. `latLonToVector3` takes a
+         * longitude in degrees and is periodic in 360, so lon 185 and lon -175 give the SAME vector:
+         * there is no wrap step because the wrap is already implicit in sin/cos.
+         */
+        const [x, y, z] = latLonToVector3(
+          box.anchorLat,
+          boxCentreLon360(box),
+          GLOBE_LOOK.pins.anchorRadius,
+        );
+        ninoFlight.current = { direction: new THREE.Vector3(x, y, z), distance };
       },
     });
     return () => registerCameraIntents(null);
@@ -697,6 +852,7 @@ export function CameraDirector({
       desiredTarget,
       desiredDistance,
       lastFit,
+      ninoFlight,
       withOwnWrite,
       dispatch,
     };
@@ -707,6 +863,13 @@ export function CameraDirector({
       } else {
         runLiveFlyTo(ctx);
       }
+    } else if (ninoFlight.current) {
+      /*
+       * A box flight is active. Checked OUTSIDE `isTravelling` because a box is not a region and does
+       * not drive the focus machine: the machine stays `idle` and the controls own the camera during
+       * the tween, so the flight has to be its own gate rather than a machine state.
+       */
+      runNinoFlyTo(ctx);
     } else {
       /*
        * Not travelling: the controls own the camera. `update()` still has to run every frame because
