@@ -71,6 +71,24 @@ export default function App() {
   const [booted, setBooted] = useState(false);
 
   const selectRegion = useCallback((id: RegionId | null) => {
+    /*
+     * NINO-HARDEN B3a (A2a): selecting a region CANCELS a Niño box focus.
+     *
+     * A box flight and a region flight are two camera destinations, and before this only one side of
+     * the pair was wired: `showNinoOnGlobe` cleared the region, but `selectRegion` left `activeNinoBox`
+     * set and left the box flight running. Measured at 1280x720 (A2a): after clicking the Pacific
+     * region while Niño 4 was focused, `d` stayed at the box's 2.44292 instead of moving to the
+     * region's own flight distance, the drawer said `pacific`, and the Niño 4 button was still
+     * `aria-pressed=true` because nothing had cleared the state that drives it.
+     *
+     * Both calls sit inside `if (NINO_UI)` for the same reason as `clearSelection` (B2): flag-off must
+     * not run Niño code at all. Unlike `clearSelection`, this is the NON-NULL arm — pressing "Reset" or
+     * the drawer's X is `id === null` and is handled by `clearSelection`, which already clears the box.
+     */
+    if (id !== null && NINO_UI) {
+      setActiveNinoBox(null);
+      submitNinoFocus(null);
+    }
     setActiveRegion((prev) => {
       // Re-clicking the active region re-centres the camera on it.
       if (prev === id && id !== null) setFocusNonce((n) => n + 1);
@@ -90,11 +108,25 @@ export default function App() {
    * reset path". Folding the box clear in HERE rather than adding a second call at the Reset button is
    * what keeps Reset a single rule — the drawer's X and Escape now dim the outline too, which is the
    * behaviour "cleared via the existing reset path" implies rather than a Reset-only exception.
+   *
+   * NINO-HARDEN B2: both Niño calls are inside `if (NINO_UI)`.
+   *
+   * Flag-off, `setActiveNinoBox(null)` and `submitNinoFocus(null)` were still running on every reset,
+   * deselect and Escape — which made the flag-off tree call the new Niño code even though nothing on
+   * screen was Niño-shaped. Both are cheap and both were behaviourally inert (`activeNinoBox` is null,
+   * and `submitNinoFocus(null)` clears a `ninoFlight` that is already null), so this is not a bug fix
+   * in the observable sense; it is what makes the flag-off claim literally true rather than true-by-
+   * effect, and it is what the flag-off fingerprint below checks.
+   *
+   * `NINO_UI` is a module const, so it is not a dependency of this callback and the hook list is
+   * unchanged: the callback's identity still only moves when `selectRegion` does.
    */
   const clearSelection = useCallback(() => {
     selectRegion(null);
-    setActiveNinoBox(null);
-    submitNinoFocus(null);
+    if (NINO_UI) {
+      setActiveNinoBox(null);
+      submitNinoFocus(null);
+    }
   }, [selectRegion]);
 
   /**

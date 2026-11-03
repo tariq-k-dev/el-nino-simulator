@@ -713,6 +713,35 @@ export function CameraDirector({
           return;
         }
         /*
+         * NINO-HARDEN B3a (A2d): a box flight TAKES OVER from a region flight.
+         *
+         * Measured at 1280x720 (A2d): region Pacific focused at d 4.6943, then the Niño 1+2 button
+         * pressed — final d 4.69432, unchanged, against a predicted 1.4546. The press was never
+         * honoured: `useFrame` asked `isTravelling(state)` FIRST and the region machine was still in a
+         * travelling state, so the live fly-to owned the camera for the whole frame and the box branch
+         * was never reached. The flight object was set and then simply never read.
+         *
+         * Two halves, both needed:
+         *
+         *   1. the branch order in `useFrame` (below) — the box wins while it exists;
+         *   2. this reset of the region machine, because `App.showNinoOnGlobe` calls `selectRegion(null)`
+         *      and the `activeRegion` effect dispatches `SELECT(null)` a render LATER. Without the reset
+         *      the machine would land in `returning` behind the box flight and, the instant the flight
+         *      cleared itself on arrival, `runLiveFlyTo` would fly the camera back to the default pose —
+         *      a box focus that ends by flying away from the box.
+         *
+         * `initialFocus()` rather than a new machine event: the machine is a ref this component owns,
+         * and cancelling a region flight is a RESET OF ITS DATA, not a new transition rule. Adding an
+         * event would change `FOCUS_EVENTS` and thus the table the exhaustive test enumerates, for a
+         * transition only this file needs. When the `activeRegion` effect then dispatches `SELECT(null)`
+         * the machine is already `idle`, and `closeOrStay(idle)` is a no-op — so the two mechanisms
+         * agree instead of fighting.
+         */
+        machine.current = initialFocus(machine.current.context.poseRef);
+        targetRegion.current = null;
+        /* The region effect paused this; a box focus is not a region focus, so it runs again. */
+        spin.current.paused = false;
+        /*
          * `camera.aspect` is maintained by R3F on resize, so this is the same aspect the projection
          * uses. Guarding against 0 keeps a degenerate pre-layout size from producing Infinity.
          */
@@ -744,8 +773,14 @@ export function CameraDirector({
         ninoFlight.current = { direction: new THREE.Vector3(x, y, z), distance };
       },
     });
+    /*
+     * `spin` joined this list in NINO-HARDEN B3a: `focusNinoBox` now unpauses the globe when a box
+     * flight takes over from a region flight, so the callback closes over `spin` and the effect must
+     * re-register when it changes. `spin` is a stable ref from `useRef`, so this cannot loop — the
+     * entry is correctness for the linter and documentation for a reader, not a re-run.
+     */
     return () => registerCameraIntents(null);
-  }, [camera, controlsRef]);
+  }, [camera, controlsRef, spin]);
 
   /* -------------------------------------------------- OrbitControls as an input device */
 
@@ -857,19 +892,32 @@ export function CameraDirector({
       dispatch,
     };
 
-    if (isTravelling(state)) {
-      if (IS_LOCKED) {
-        runLockedFlyTo(ctx);
-      } else {
-        runLiveFlyTo(ctx);
-      }
-    } else if (ninoFlight.current) {
+    /*
+     * NINO-HARDEN B3a: the BOX flight is checked FIRST.
+     *
+     * It used to be `if (isTravelling(state)) { ... } else if (ninoFlight.current) { ... }`, which made
+     * the region's travelling state own the camera even when a box flight was live — the A2d defect, where
+     * pressing a Niño card during a region flight changed nothing (final d 4.69432 against a predicted
+     * 1.4546). A box focus is the more recent user intent, so it wins while it exists.
+     *
+     * Flag-off this is provably inert: `ninoFlight.current` is only ever assigned inside
+     * `focusNinoBox`, which is only called by `submitNinoFocus`, which App.tsx now calls only inside
+     * `if (NINO_UI)`. With the flag off it is `null` on every frame, so `isTravelling` decides exactly
+     * as before and the region branches below are reached by the same condition as before.
+     */
+    if (ninoFlight.current) {
       /*
        * A box flight is active. Checked OUTSIDE `isTravelling` because a box is not a region and does
        * not drive the focus machine: the machine stays `idle` and the controls own the camera during
        * the tween, so the flight has to be its own gate rather than a machine state.
        */
       runNinoFlyTo(ctx);
+    } else if (isTravelling(state)) {
+      if (IS_LOCKED) {
+        runLockedFlyTo(ctx);
+      } else {
+        runLiveFlyTo(ctx);
+      }
     } else {
       /*
        * Not travelling: the controls own the camera. `update()` still has to run every frame because
