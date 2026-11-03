@@ -139,11 +139,30 @@ export default function App() {
    */
   const showNinoOnGlobe = useCallback(
     (boxId: string) => {
+      /*
+       * NINO-HARDEN B6(c): a SECOND press of the same card toggles OFF.
+       *
+       * Implemented here rather than in the card, because all three shells (desktop cards, portrait
+       * sheet body, landscape dock) forward to this one callback — wiring the toggle into any of them
+       * would leave the other two pressing an already-selected box with no way to deselect it, which is
+       * also a keyboard trap: `aria-pressed="true"` on a button whose only action is to re-select
+       * itself.
+       *
+       * The clear path is the SAME one Reset and the drawer's X use (`clearSelection`), so there is one
+       * definition of "no box": it clears the highlight, cancels a flight in progress (via
+       * `submitNinoFocus(null)`) and, through the director's derived pause, resumes the spin. The brief's
+       * rule that the camera STAYS is satisfied because nothing here touches the camera pose — only the
+       * flight target and the selection.
+       */
+      if (NINO_UI && activeNinoBox === boxId) {
+        clearSelection();
+        return;
+      }
       selectRegion(null);
       setActiveNinoBox(boxId);
       submitNinoFocus(boxId);
     },
-    [selectRegion],
+    [activeNinoBox, clearSelection, selectRegion],
   );
 
   const handleExport = useCallback(async () => {

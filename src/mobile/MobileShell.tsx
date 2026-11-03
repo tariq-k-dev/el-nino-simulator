@@ -31,6 +31,7 @@ import { HeaderCompact } from '@/mobile/HeaderCompact';
 import { LandscapeDock } from '@/mobile/LandscapeDock';
 import { SnapSheet, type SnapSheetHandle } from '@/mobile/SnapSheet';
 import type { LayoutMode2 } from '@/mobile/layoutMath';
+import { NINO_BOXES } from '@/lib/regions';
 
 interface MobileShellProps {
   /** The three-way mode, from the store. `desktop` is never passed: `App` does not mount this shell there. */
@@ -93,7 +94,13 @@ export function MobileShell({
   }, [mode]);
 
   /**
-   * When a Niño box is flown to on a PHONE, collapse the sheet to peek (C2.1).
+   * When a Niño box is flown to, collapse the sheet to peek.
+   *
+   * NINO-HARDEN B6(c): this now says phone AND TABLET, because that is what it does. The original
+   * comment claimed "on a PHONE" while the effect below is gated on `activeNinoBox` alone — it fires at
+   * 1032x1376 too, and A7 measured the tablet collapse as real (`tier` Peek after a press at both
+   * 390x844 and 1032x1376). Either the comment or the behaviour was wrong; the behaviour is right
+   * (a tablet Full sheet hides the globe exactly as a phone one does), so the comment is corrected.
    *
    * The step requires the globe to be visible after the button is pressed, and the button lives inside
    * the sheet — so leaving the sheet at the tier the user pressed from would hide the very thing the
@@ -106,12 +113,81 @@ export function MobileShell({
   useEffect(() => {
     if (activeNinoBox && activeNinoBox !== wasNinoBox.current) {
       sheetRef.current?.resetTier();
+      /*
+       * NINO-HARDEN B6(b): move focus to the slider handle after the collapse.
+       *
+       * The card the user just pressed is inside the sheet body, and the body UNMOUNTS at Peek — so
+       * focus fell to `BODY` and a keyboard or screen-reader user lost their place entirely. A7 measured
+       * `activeElement` as BODY at both 390x844 and 1032x1376, with zero `aria-pressed="true"` nodes
+       * surviving. The handle (`SnapSheet.tsx:297-303`, `role="slider"`, `tabIndex=0`) is the nearest
+       * control that survives the collapse and it is what moves the sheet back, so it is the honest
+       * destination rather than an arbitrary one.
+       *
+       * Deferred one frame: `resetTier()` animates and the sheet body is still mounted in this task, so
+       * focusing synchronously would land on an element that is about to be removed.
+       */
+      requestAnimationFrame(() => {
+        const handle = document.querySelector<HTMLElement>(
+          '[role="slider"][aria-label="Sheet position"]',
+        );
+        handle?.focus();
+      });
     }
     wasNinoBox.current = activeNinoBox;
   }, [activeNinoBox]);
 
+  /*
+   * NINO-HARDEN B6(a): the flight announcement lives HERE, at shell level, not in the sheet body.
+   *
+   * The body unmounts at Peek — which is exactly the tier a box press collapses to — so an
+   * `aria-live` node inside it is removed in the same frame its text would have been announced, and the
+   * announcement is lost. Mounted on the shell it survives every tier, every mode change and every
+   * sheet unmount, which is the only way the message is reliably spoken.
+   *
+   * The label comes from `NINO_BOXES.anchorLat`-bearing registry entries rather than a second hardcoded
+   * table: `NINO_BOXES` already carries each box's display `label` ('NIÑO 1+2', 'NIÑO 4', 'NIÑO 3.4'),
+   * so the announcement cannot drift from the card.
+   *
+   * The node is `aria-live="polite"` and visually hidden rather than `display:none` or `aria-hidden`:
+   * a hidden node is not announced. Flag-on only — `activeNinoBox` is `null` under the flag, so the
+   * element renders with empty text and no announcement.
+   */
+  const announcedBox = activeNinoBox ? NINO_BOXES.find((b) => b.id === activeNinoBox) : undefined;
+  const ninoAnnouncement = announcedBox ? `Showing ${announcedBox.label} on the globe` : '';
+
   return (
     <>
+      {/*
+        NINO-HARDEN B6(a): the persistent announcement node.
+
+        Mounted FIRST in the shell and OUTSIDE every conditional, so it exists in every mode, every
+        sheet tier and every unmount — the property the brief asks for ("mounted persistently at shell
+        level, flag-on only, NOT inside the sheet body"). The text changes when a box is shown; an empty
+        string announces nothing, which is the flag-off and no-selection case.
+
+        `sr-only`-style clipping rather than `hidden`/`display:none`: those remove the node from the
+        accessibility tree and it would never be spoken.
+      */}
+      <div
+        role="status"
+        aria-live="polite"
+        aria-atomic="true"
+        data-testid="nino-live"
+        style={{
+          position: 'absolute',
+          width: 1,
+          height: 1,
+          padding: 0,
+          margin: -1,
+          overflow: 'hidden',
+          clip: 'rect(0, 0, 0, 0)',
+          whiteSpace: 'nowrap',
+          border: 0,
+        }}
+      >
+        {ninoAnnouncement}
+      </div>
+
       <HeaderCompact
         mode={mode}
         viewportW={viewportW}
