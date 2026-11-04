@@ -737,3 +737,373 @@ test.describe('G2: pressing a card flies the camera to the box and lands inside 
     },
   );
 });
+
+/* ------------------------------------------------------------------- G3 the card is the only trigger */
+
+/**
+ * Where a Niño pin is on screen, derived from the same constants the scene uses.
+ *
+ * **Neither probe can answer this.** `__look.pinsWorld()` and `__globe.pins()` both map over `REGIONS`
+ * (`GlobeScene.tsx:587-607`), and the Niño pins are not regions — `NinoOverlay` hands `Hotspot` a
+ * `boxAsRegion()` with `INERT_REGION_ID` (`NinoOverlay.tsx:47,59-70`), so they are absent from both lists. There
+ * is no probe for them and adding one would edit `src/`, which the prompt forbids.
+ *
+ * So the position is recomputed here from the published inputs: `latLonToVector3(anchorLat, anchorLon360, R)`
+ * with `R = anchorRadius * idleLift + coreOffset` (`globeLook.ts:33,39,41`), spun by the same Y rotation the
+ * scene applies, then projected through the page's own camera via `__globe.project`. The spin angle is supplied
+ * by the test rather than read, because the probe has no spin getter — which is why G3a freezes the spin first,
+ * making the angle a known constant instead of a guess.
+ */
+const PIN_ANCHOR_R = 1.012 * 1.035 + 0.055;
+
+function pinCoreWorld(lat: number, lon: number, spinY: number): [number, number, number] {
+  const phi = ((90 - lat) * Math.PI) / 180;
+  const theta = (((lon % 360) + 360) % 360 + 180) * (Math.PI / 180);
+  const r = PIN_ANCHOR_R;
+  const x = -r * Math.sin(phi) * Math.cos(theta);
+  const y = r * Math.cos(phi);
+  const z = r * Math.sin(phi) * Math.sin(theta);
+  /* The scene's rotation is [x*c + z*s, y, -x*s + z*c] (GlobeScene.tsx:596-600). */
+  const c = Math.cos(spinY);
+  const s = Math.sin(spinY);
+  return [x * c + z * s, y, -x * s + z * c];
+}
+
+async function ninoPinScreen(
+  page: Page,
+  box: 'nino12' | 'nino4',
+  spinY: number,
+): Promise<{ x: number; y: number; behind: boolean; world: [number, number, number] } | null> {
+  const geom = GEO[box];
+  const core = pinCoreWorld(geom.anchorLat, geom.anchorLon, spinY);
+  return page.evaluate((w) => {
+    const q = window.__globe!.project(w as [number, number, number]);
+    return { x: q.x, y: q.y, behind: q.behind, world: w as [number, number, number] };
+  }, core);
+}
+
+/** The topmost DOM node at a point — the guard that a mouse press reaches the canvas and not a panel. */
+async function topNodeAt(page: Page, x: number, y: number): Promise<string> {
+  return page.evaluate(
+    ({ px, py }) => {
+      const el = document.elementFromPoint(px, py);
+      if (!el) return '(none)';
+      if (el.tagName === 'CANVAS') return 'canvas';
+      const box = el.closest('[data-occluder]');
+      return box ? `${el.tagName} in ${box.getAttribute('data-occluder')}` : el.tagName;
+    },
+    { px: x, py: y },
+  );
+}
+
+test.describe('G3: the card is the only trigger, and a press survives what the globe does', () => {
+  test('G3a: a real mouse press on the pin does nothing; on the card it selects', async ({ page }) => {
+    /*
+     * M4 asks for a real `page.mouse` press on the pin AND on the card, with the R1 settle and the same
+     * pre-settle pattern pin-click's D4 uses. The pattern copied from `pin-click.spec.ts:963-991` is:
+     *
+     *     await settleStable(page);  await page.waitForTimeout(700);  await settleStable(page);
+     *
+     * The 700 ms between two settles is not padding. D4's own comment records why a single settle is not enough:
+     * a tween that has finished still leaves the controls to write their pose on the following frames, so the
+     * projection taken immediately after `settled` flips can be one frame stale. Two settles bracketing a short
+     * wait is the cheapest way to be sure the pose is not still being written.
+     */
+    await openLive(page, DESKTOP);
+    await settleStable(page);
+    await page.waitForTimeout(700);
+    await settleStable(page);
+
+    /*
+     * Freeze the spin at a KNOWN angle so the pin's screen position cannot move between the read and the press,
+     * and so the test can predict where the pin is without a spin getter existing. 0.9 rad is arbitrary; it is
+     * chosen only to put the Niño 1+2 anchor (5 S, 85 W) on the near hemisphere at the default pose.
+     */
+    const SPIN = 0.9;
+    await page.evaluate((angle) => window.__globe!.setSpin(true, angle), SPIN);
+    await settleStable(page);
+
+    const pin = await ninoPinScreen(page, 'nino12', SPIN);
+    expect(pin, 'the Nino 1+2 pin must project through the page camera').not.toBeNull();
+    expect(pin!.behind, 'the pin must be on the near hemisphere for this press to mean anything').toBe(false);
+
+    const top = await topNodeAt(page, pin!.x, pin!.y);
+    expect(top, `the pin point (${pin!.x.toFixed(1)}, ${pin!.y.toFixed(1)}) must be on the canvas`).toBe('canvas');
+
+    /* The press itself: a real mouse click at the pin's own projected pixel. */
+    await page.mouse.click(pin!.x, pin!.y);
+    await settleStable(page);
+
+    /*
+     * THE PRODUCT RULE, not a tolerance. `dotOnly` hands `undefined` for the click/hover handlers
+     * (`Hotspot.tsx:412-416`), so R3F never puts the Niño pin on its interaction list and the press cannot reach
+     * any handler at all. A press on the pin is therefore required to be exactly equivalent to a press on empty
+     * globe: no selection, no flight, no announcement.
+     */
+    expect(await cardPressed(page, 'nino12'), 'a press on the pin must NOT select the box').toBe(false);
+    /*
+     * `announced()` returns null when the node is absent and '' when it is present but empty. On DESKTOP the node
+     * is absent by construction (G1a, `App.tsx:394`), so both readings mean "nothing was said"; asserting only
+     * `''` would be asserting a mobile-only shape on a desktop page.
+     */
+    expect([null, ''], 'a press on the pin must NOT announce').toContain(await announced(page));
+
+    const dAfterPin = await page.evaluate(() => window.__globe!.distance());
+    const pose = await page.evaluate(() => window.__globe!.defaultOrbit());
+    expect(dAfterPin, 'a press on the pin must not fly the camera').toBeCloseTo(pose.distance, 3);
+
+    /* Now the card, with the same real mouse press. */
+    await pressCardWithMouse(page, 'nino12');
+    await settleStable(page);
+    await page.waitForTimeout(700);
+    await settleStable(page);
+
+    expect(await cardPressed(page, 'nino12'), 'the card press must select the box').toBe(true);
+
+    annotate(
+      'G3a',
+      `pin point (${pin!.x.toFixed(1)}, ${pin!.y.toFixed(1)}) top=${top}: no selection, d ${dAfterPin.toFixed(5)}; ` +
+        'card press selected',
+    );
+  });
+
+  test('G3b: the press target is the button, not the whole card', async ({ page }) => {
+    /*
+     * The card body is an <article> with a heading, two paragraphs and the button. If the handler sat on the
+     * article, a press anywhere on the card would select — which is a different affordance from the one M1's
+     * "first press" language assumes, and would also make the card impossible to scroll past on a phone.
+     */
+    await openLive(page, DESKTOP);
+
+    const artBox = await page.locator('[data-testid="nino-card-nino12"]').boundingBox();
+    expect(artBox).not.toBeNull();
+
+    /* A point in the card's TITLE area: inside the article, well above the button. */
+    const titleY = artBox!.y + 14;
+    const top = await topNodeAt(page, artBox!.x + 20, titleY);
+    expect(top, 'the card body must be hit-testable where the title is').not.toBe('canvas');
+
+    await page.mouse.click(artBox!.x + 20, titleY);
+    await settleStable(page);
+    expect(await cardPressed(page, 'nino12'), 'a press on the card body must NOT select').toBe(false);
+
+    annotate('G3b', `card body press at (${(artBox!.x + 20).toFixed(1)}, ${titleY.toFixed(1)}) -> no selection`);
+  });
+
+  test('G3c: the named text is the registry label, spelled with the tilde', async ({ page }) => {
+    await openLive(page, DESKTOP);
+
+    /* The heading and the accessible name both come from `model.regionLabel`, which is `NIÑO 1+2`. */
+    await expect(page.locator('[data-testid="nino-card-nino12"] h3')).toHaveText(LABEL_NINO12);
+    await expect(page.locator('[data-testid="nino-card-nino4"] h3')).toHaveText(LABEL_NINO4);
+    await expect(page.locator('[data-testid="nino-show-nino12"]')).toHaveAttribute(
+      'aria-label',
+      `Show ${LABEL_NINO12} on the globe`,
+    );
+
+    annotate('G3c', `headings ${LABEL_NINO12} / ${LABEL_NINO4}; aria-label "Show ${LABEL_NINO12} on the globe"`);
+  });
+
+  test('G3d: a press during a settled view is not cancelled by a later canvas press', async ({ page }) => {
+    /*
+     * M2 forbids a refit/flight count here because this test changes the free rect mid-flight, so the only
+     * claim is the settled distance. The behaviour under test is B3b's: a user cancel clears `ninoFlight`, and
+     * the SELECTION survives (`activeNinoBoxId` is what the re-fit keys on), so pressing the empty globe must not
+     * deselect the box or strand the camera mid-tween.
+     */
+    await openLive(page, DESKTOP);
+
+    await pressCardWithMouse(page, 'nino12');
+    const press = await snapshotPress(page);
+    const settledD = await settleFlight(page);
+
+    /* A press on empty canvas, no movement — the B3b cancel path. */
+    await page.mouse.move(20, 400);
+    await page.mouse.down();
+    await page.mouse.up();
+    await settleStable(page);
+    await page.waitForTimeout(700);
+    await settleStable(page);
+
+    expect(await cardPressed(page, 'nino12'), 'a canvas press must not deselect the box').toBe(true);
+
+    const dAfter = await page.evaluate(() => window.__globe!.distance());
+    const predicted = predictedDistance(
+      GEO.nino12,
+      { w: press!.freeRectFrac.widthFrac * press!.innerW, h: press!.freeRectFrac.heightFrac * press!.innerH },
+      { w: press!.innerW, h: press!.innerH },
+      press!.fov,
+      press!.aspect,
+    );
+    const offset = dAfter - predicted;
+
+    annotate(
+      'M3',
+      `G3d settled d ${settledD.toFixed(5)} before the cancel, ${dAfter.toFixed(5)} after; ` +
+        `predicted ${predicted.toFixed(5)}, offset ${offset >= 0 ? '+' : ''}${offset.toFixed(5)}, travel inward`,
+    );
+
+    expect(
+      Math.abs(offset),
+      'the box fit must survive a cancel press — the camera must not be stranded where the tween stopped',
+    ).toBeLessThanOrEqual(ARRIVE_TOL);
+  });
+
+  test('G3e: pressing a second box moves the selection rather than adding to it', async ({ page }) => {
+    await openLive(page, DESKTOP);
+
+    await pressCardWithMouse(page, 'nino12');
+    await settleFlight(page);
+    expect(await cardPressed(page, 'nino12')).toBe(true);
+
+    await pressCardWithMouse(page, 'nino4');
+    await settleFlight(page);
+
+    expect(await cardPressed(page, 'nino4'), 'the second box becomes the selected one').toBe(true);
+    expect(await cardPressed(page, 'nino12'), 'the first box must be released').toBe(false);
+
+    /*
+     * The announcement is asserted on a PHONE, in G1d and G3d, not here: this test runs at 1280x720 where the
+     * live-region node does not exist (G1a). Asserting it here would fail for the same reason G1a's first version
+     * did — a mobile-only node read on a desktop page.
+     */
+    annotate('G3e', 'nino12 true -> nino4 true with nino12 false (announcement covered by G1d/G3d on a phone)');
+  });
+
+  test('G3f: at 390x844 and 1032x1376 the box flight lands, traced at 0, 1, 3 and 5 s', async ({ page }) => {
+    /*
+     * M6: d and target at 0, 1, 3 and 5 s are ANNOTATIONS ONLY. Nothing here asserts a drift, because a settled
+     * camera that then moves is a finding to report, not a threshold to invent. The one assertion is that the
+     * flight arrived at all, and it uses M3's tolerance.
+     */
+    for (const vp of [PHONE, TABLET]) {
+      await openLive(page, vp);
+      const size = `${vp.width}x${vp.height}`;
+
+      await ensureCardsReachable(page, 'nino12');
+
+      /*
+       * THE SNAPSHOT MUST FOLLOW THE PRESS. `__ninoPress` is written BY the press (`CameraDirector.tsx:985`), so
+       * reading it first returns undefined and every predicted distance becomes NaN — measured here as exactly
+       * that failure ("Received: NaN"). It also has to be read immediately, before anything else presses.
+       */
+      await pressCardWithMouse(page, 'nino12');
+      const press = await snapshotPress(page);
+
+      const t0 = Date.now();
+      const trace: string[] = [];
+      let settledD = Number.NaN;
+      let targetLen = 0;
+      let settledFree = { w: 0, h: 0 };
+      let settledViewport = { w: 0, h: 0 };
+
+      for (const mark of [0, 1000, 3000, 5000]) {
+        const wait = mark - (Date.now() - t0);
+        if (wait > 0) await page.waitForTimeout(wait);
+        const s = await page.evaluate(() => {
+          const f = window.__frame!.snapshot();
+          return {
+            d: window.__globe!.distance(),
+            tgt: window.__globe!.target(),
+            dFit: f.dFit,
+            settled: f.settled,
+            free: f.free,
+            vw: window.innerWidth,
+            vh: window.innerHeight,
+          };
+        });
+        const tl = Math.hypot(s.tgt[0], s.tgt[1], s.tgt[2]);
+        trace.push(
+          `${mark}ms d ${s.d.toFixed(5)} |target| ${tl.toFixed(3)} dFit ${s.dFit.toFixed(5)} ` +
+            `free ${s.free.w.toFixed(1)}x${s.free.h.toFixed(1)} settled ${s.settled}`,
+        );
+        if (mark === 5000) {
+          settledD = s.d;
+          targetLen = tl;
+          settledFree = { w: s.free.w, h: s.free.h };
+          settledViewport = { w: s.vw, h: s.vh };
+        }
+      }
+
+      /*
+       * WHICH RECT THE ARRIVAL IS PREDICTED AGAINST — and why it is the SETTLED one here, not the press-time one.
+       *
+       * Measured in this very test at 1032x1376: the press-time rect predicts 1.42759, the flight settles at
+       * 1.45359, and the difference is 0.02601. That gap is not drift; it is the sheet COLLAPSING TO PEEK on
+       * press (G3g proves the collapse), which shrinks the reserved height and therefore moves the free rect
+       * mid-flight. `refitNinoForRect` re-arms the flight against the new rect — that is the d9c9093/B7 fix — so
+       * the camera correctly lands framed for the rect that exists at settle, not the one that existed at press.
+       *
+       * So the arrival law is stated the way the product implements it: d at settle equals the fit for the free
+       * rect at settle. The press-time prediction is still computed and printed, because the DIFFERENCE between the
+       * two is the measurement of the retarget, and that belongs in the report rather than in a threshold.
+       */
+      const predictedFromPress = press
+        ? predictedDistance(
+            GEO.nino12,
+            { w: press.freeRectFrac.widthFrac * press.innerW, h: press.freeRectFrac.heightFrac * press.innerH },
+            { w: press.innerW, h: press.innerH },
+            press.fov,
+            press.aspect,
+          )
+        : Number.NaN;
+      const predictedAtSettle = predictedDistance(GEO.nino12, settledFree, settledViewport);
+
+      const offset = settledD - predictedAtSettle;
+      annotate('M6', `${size} trace: ${trace.join(' | ')}`);
+      annotate(
+        'M3',
+        `${size} settled d ${settledD.toFixed(5)}, predicted (settled rect) ${predictedAtSettle.toFixed(5)}, ` +
+          `offset ${offset >= 0 ? '+' : ''}${offset.toFixed(5)}, travel inward, |target| ${targetLen.toFixed(3)}; ` +
+          `predicted (press rect) ${predictedFromPress.toFixed(5)} — rect moved ${(predictedFromPress - predictedAtSettle).toFixed(5)} in d`,
+      );
+
+      /*
+       * THE SELECTION ORACLE DIFFERS BY VIEWPORT, and both are the product's own witnesses.
+       *
+       * On a phone the press collapses the sheet to Peek (G3g), which unmounts the cards, so `cardPressed` returns
+       * null for the rest of the test — measured here as exactly that failure ("Received: null"). The announcement
+       * node lives outside every tier conditional (`MobileShell.tsx:172-207`), which is precisely the property B6a
+       * added it for, so it is the one selection oracle that survives a tier change on mobile.
+       *
+       * Both viewports here ARE mobile shells (390x844 and 1032x1376), so both use the announcement.
+       */
+      await expect
+        .poll(() => announced(page), { timeout: 15_000, intervals: [150] })
+        .toBe(`Showing ${LABEL_NINO12} on the globe`);
+
+      expect(Math.abs(offset), `${size}: arrival offset ${offset.toFixed(5)}`).toBeLessThanOrEqual(ARRIVE_TOL);
+    }
+  });
+
+  test('G3g: on a phone the sheet collapses on press and the cards go with it', async ({ page }) => {
+    /*
+     * Measured in NINO-CLOSE4 P5 and reproduced by G1f: the press collapses the sheet to Peek, and the sheet body
+     * at Peek does not mount the cards. M1 turns that into an obligation — record it as an annotation and reopen
+     * before any second press — and that is what `ensureCardsReachable` does.
+     */
+    await openLive(page, PHONE);
+    await ensureCardsReachable(page, 'nino12');
+    const tierBefore = await sheetTier(page);
+
+    await pressCardWithMouse(page, 'nino12');
+    await settleStable(page);
+    await waitForSheetStill(page);
+
+    const tierAfter = await sheetTier(page);
+    const cardsMounted = await page.locator('[data-testid="nino-cards"]').count();
+
+    annotate(
+      'G3g',
+      `tier ${tierBefore} -> ${tierAfter}; nino-cards nodes after the press = ${cardsMounted}` +
+        (tierAfter === 'peek' ? ' (sheet collapsed after press)' : ''),
+    );
+
+    expect(tierAfter, 'the press collapses the sheet to peek').toBe('peek');
+    expect(cardsMounted, 'at peek the cards are unmounted, which is why a second press needs the helper').toBe(0);
+
+    /* And the selection is still there once the sheet is reopened. */
+    await ensureCardsReachable(page, 'nino12');
+    expect(await cardPressed(page, 'nino12'), 'the selection must survive the collapse').toBe(true);
+  });
+});
