@@ -268,6 +268,22 @@ async function pressCardWithMouse(page: Page, boxId: 'nino12' | 'nino4'): Promis
    * between "the test can press the card" and "the test asserts a card is unreachable".
    */
   const scrolled = await page.evaluate((id) => {
+    /*
+     * DESKTOP MUST NOT SCROLL — and this is not a micro-optimisation.
+     *
+     * Measured at 1280x720: calling `scrollIntoView` on the desktop card block moves the ENTIRE overlay layout
+     * up by 240 px. The Reset view button goes from y 46.0 to y -194.0 and the Pacific impact-zone card from
+     * y 73.4 to y -171.6, while `window.scrollY` stays 0 and `document.documentElement.scrollHeight` stays 720 —
+     * so this is not a document scroll being reported oddly, it is the fixed-position HUD being translated. Both
+     * then fail `elementFromPoint` (returns null) and every later click in the test lands on nothing.
+     *
+     * That silently broke G3(a-card) and G3(e), which press a box card and then click a region card or Reset:
+     * the press appeared to succeed and the follow-up click was a no-op. Nothing on desktop is ever below the
+     * fold (the panel is 720 px tall and its cards end at y 284), so the scroll has no purpose there at all.
+     */
+    const isMobileish = window.innerWidth < 640 || document.querySelector('[data-testid="mobile-sheet"]') !== null;
+    if (!isMobileish) return { before: -1, after: -1, scrollHeight: -1, clientHeight: -1, skipped: true };
+
     const target = document.querySelector(`[data-testid="nino-show-${id}"]`);
     if (!target) return null;
     let scroller: HTMLElement | null = target.parentElement;
@@ -2143,6 +2159,652 @@ test.describe('G2: the box flight arrives, and the geometry it lands on', () => 
       annotate('R3', `${size}: floor after the flight ${afterFlight.toFixed(5)}`);
       expect(afterFlight, `${size}: the floor must still be 1.25 after a flight`).toBeCloseTo(1.25, 2);
     }
+    errs.assertClean();
+  });
+});
+
+/* ------------------------------------------------------------------------------ G3 interrupts, 1280x720 */
+
+/**
+ * The outline's stroke opacity: 0.95 while the box is selected, 0.55 while it is not.
+ *
+ * `NinoOverlay.tsx:99-110` builds one `LineBasicMaterial` per outline with exactly those two opacities and
+ * swaps it when `selected` changes, so the number is the highlight state rather than a proxy for it. Read from
+ * the scene graph by the name the component gives the loop (`nino-outline-<id>`, `NinoOverlay.tsx:119`) because
+ * nothing exposes the selection as a DOM attribute at 1280x720 — the cards are the only DOM witness and they
+ * are read separately.
+ */
+/** The two stroke opacities `NinoOverlay.tsx:102-104` builds. */
+const OPACITY_SELECTED = 0.95;
+const OPACITY_IDLE = 0.55;
+
+/**
+ * Wait for an outline's stroke to reach a value, instead of reading it once.
+ *
+ * The material is swapped in a `useMemo` keyed on `selected` (`NinoOverlay.tsx:99-110`), so there is at least
+ * one committed-then-painted frame between the click and the new opacity being readable from the scene graph.
+ * Measured: right after a toggle-off `aria-pressed` was already false while the outline still read 0.95;
+ * a single-read assertion blamed the product for a frame of latency.
+ */
+async function expectOutline(page: Page, boxId: 'nino12' | 'nino4', want: number, why: string): Promise<number> {
+  await expect
+    .poll(() => outlineOpacity(page, boxId), { timeout: 5_000, intervals: [50], message: why })
+    .toBe(want);
+  return want;
+}
+
+async function outlineOpacity(page: Page, boxId: 'nino12' | 'nino4'): Promise<number | null> {
+  return page.evaluate((id) => {
+    type Mat = { opacity?: number };
+    type LineLike = { material?: Mat | Mat[] };
+    const scene = (window as unknown as Record<string, unknown>).__scene as
+      | { traverse: (cb: (o: unknown) => void) => void }
+      | undefined;
+    if (!scene) return null;
+    const found: LineLike[] = [];
+    scene.traverse((o) => {
+      if ((o as { name?: string }).name === `nino-outline-${id}`) found.push(o as LineLike);
+    });
+    const m = found[0]?.material;
+    if (!m) return null;
+    if (Array.isArray(m)) return m[0]?.opacity ?? null;
+    return m.opacity ?? null;
+  }, boxId);
+}
+
+/** The idle spin rate, in rad/s, measured over 3 s from a pin's world position. Same witness G2(e) uses. */
+async function spinRateOver3s(page: Page): Promise<number> {
+  const spinAngle = () =>
+    page.evaluate(() => {
+      const p = window.__look!.pinsWorld()[0];
+      return Math.atan2(p.core[0], p.core[2]);
+    });
+  const a = await spinAngle();
+  await page.waitForTimeout(3000);
+  const b = await spinAngle();
+  let d = b - a;
+  while (d > Math.PI) d -= 2 * Math.PI;
+  while (d < -Math.PI) d += 2 * Math.PI;
+  return Math.abs(d) / 3;
+}
+
+/**
+ * A front-facing REGION pin that a real mouse click can actually reach.
+ *
+ * The planet is frozen first (`setSpin(true, 0)`), because a spinning pin moves 12-38 px/s and the distance
+ * between reading a coordinate and clicking it is one CDP round trip — `pin-click.spec.ts:443-458` measures that
+ * window as ~460 ms of wall time, which is the whole 14 px hit radius. Freezing removes that from the
+ * measurement instead of blaming the hit test for it.
+ *
+ * `elementFromPoint` must resolve to the canvas at the chosen point, so the click cannot be decided by a panel
+ * node overlapping the globe.
+ */
+/**
+ * A front pin's CURRENT screen position, optionally excluding one id.
+ *
+ * **This must be read at press time, not before it.** Measured across a Nino 4 flight: 300 ms after the press
+ * the `pacific` pin had moved from x 398.4 to x 791.5 — 393 px. A coordinate captured before the press is
+ * therefore 393 px stale by the time the click arrives, which lands on empty ocean and leaves the box selected.
+ * The first version of G3(a) did exactly that and failed with `aria-pressed` still true; that was my test code,
+ * not the product.
+ */
+async function reachablePin(
+  page: Page,
+  exclude: string | null,
+): Promise<{ id: string; x: number; y: number } | null> {
+  const pins = await page.evaluate(() =>
+    window.__globe!.pins().map((p) => ({ id: p.id, x: p.x, y: p.y, behind: p.behind, facing: p.facing })),
+  );
+  for (const p of pins) {
+    if (p.id === exclude) continue;
+    /* `facing` is a BOOLEAN on this probe (`globals.d.ts:27`), not the signed dot product — do not compare it. */
+    if (p.behind || !p.facing) continue;
+    const top = await topNodeAt(page, p.x, p.y);
+    if (top === 'canvas') return { id: p.id, x: p.x, y: p.y };
+  }
+  return null;
+}
+
+/** The canvas' centre, and the topmost node there. */
+async function canvasCentre(page: Page): Promise<{ x: number; y: number; top: string }> {
+  const c = await page.evaluate(() => {
+    const el = document.querySelector('canvas');
+    if (!el) return null;
+    const r = el.getBoundingClientRect();
+    return { x: r.x + r.width / 2, y: r.y + r.height / 2 };
+  });
+  if (!c) throw new Error('[canvasCentre] no canvas');
+  return { ...c, top: await topNodeAt(page, c.x, c.y) };
+}
+
+/** A real drag on the canvas: down, a move in 10 steps, up. No synthetic events. */
+async function dragCanvas(page: Page, dx: number, dy = 0): Promise<void> {
+  const c = await canvasCentre(page);
+  expect(c.top, 'a drag must start on the canvas, not on a panel').toBe('canvas');
+  await page.mouse.move(c.x, c.y);
+  await page.mouse.down();
+  for (let i = 1; i <= 10; i++) {
+    await page.mouse.move(c.x + (dx * i) / 10, c.y + (dy * i) / 10);
+    await page.waitForTimeout(16);
+  }
+  await page.mouse.up();
+}
+
+/**
+ * A real click on an old region card in the DESKTOP Impact Zones panel.
+ *
+ * **`button[data-region-id]` is not this control.** Those attributes exist only in `RegionDrawer.tsx:297`
+ * (off-canvas and `aria-hidden` while closed) and `SheetBody.tsx:172` (mobile). The desktop panel renders six
+ * text buttons with no such attribute, measured: 4 region cards then 2 "Show on globe" buttons. Selecting by
+ * attribute therefore clicked a hidden drawer button and the press did nothing — the premise failure the first
+ * version reported.
+ */
+async function clickImpactZoneCard(page: Page, re: RegExp): Promise<{ x: number; y: number; ok: boolean }> {
+  const info = await page.evaluate((src) => {
+    const rx = new RegExp(src);
+    const panel = document.querySelector('[data-occluder="right-panel"]');
+    if (!panel) return null;
+    const btn = [...panel.querySelectorAll('button')].find((b) => rx.test(b.textContent ?? ''));
+    if (!btn) return null;
+    const r = btn.getBoundingClientRect();
+    const cx = r.x + r.width / 2;
+    const cy = r.y + r.height / 2;
+    const top = document.elementFromPoint(cx, cy);
+    return { x: cx, y: cy, ok: top === btn || btn.contains(top) };
+  }, re.source);
+  if (!info) throw new Error(`[clickImpactZoneCard] no card matching ${re} in the right panel`);
+  await page.mouse.click(info.x, info.y);
+  return { ...info };
+}
+
+/**
+ * d and the target distance at four wall-clock offsets, as annotations.
+ *
+ * M6 is explicit that these are recorded, not asserted: what the numbers show is whether d drifts toward
+ * `dFit` after a toggle-off, and a threshold there would encode the product decision instead of measuring it.
+ */
+async function traceDAndTarget(
+  page: Page,
+  label: string,
+  offsets: readonly number[] = [0, 1, 3, 5],
+): Promise<Array<{ t: number; d: number; dt: number; spinning: boolean }>> {
+  const out: Array<{ t: number; d: number; dt: number; spinning: boolean }> = [];
+  const t0 = Date.now();
+  for (const off of offsets) {
+    const waitMs = off * 1000 - (Date.now() - t0);
+    if (waitMs > 0) await page.waitForTimeout(waitMs);
+    const row = await page.evaluate(() => ({
+      d: window.__globe!.distance(),
+      dt: window.__frame!.snapshot().target.d,
+      spinning: window.__frame!.snapshot().spinning,
+    }));
+    out.push({ t: off, ...row });
+  }
+  annotate(
+    'M6',
+    `${label}: ` + out.map((r) => `t${r.t}s d ${r.d.toFixed(5)} target ${r.dt.toFixed(5)} spin ${r.spinning}`).join('; '),
+  );
+  return out;
+}
+
+test.describe('G3: the box flight survives what the user does to the globe', () => {
+  /*
+   * (a) THE LITERAL REQUIREMENT: press Nino 4, then 300 ms later click a region pin.
+   *
+   * Five witnesses, because an interrupted flight still leaves the camera moving and a single check could be
+   * satisfied by the interruption rather than the cancellation: aria-pressed, outline opacity, the card's own
+   * state, `__frame.regionId`, and the orbit target four seconds later.
+   *
+   * ## The pin coordinate must be read at click time, and it is still a knife-edge
+   *
+   * A pin's screen position is a function of the camera, so a coordinate captured before the press is stale:
+   * measured across this exact flight, `pacific` moved x 398.4 -> 791.5 within the first 300 ms (393 px). That
+   * bug is fixed here — the pin is read immediately before the click.
+   *
+   * What CANNOT be fixed from the test side is the second half: R3F fires `onClick` only when the object is hit
+   * at BOTH pointerdown and pointerup (`pin-click.spec.ts:447-450`), and the camera is still travelling between
+   * the two. Measured drift in that window is 74.6 px against a 14 px hit radius.
+   *
+   * ## What real input actually does, measured, and why this test is expected to FAIL
+   *
+   * Probe, 1280x720, planet frozen so the camera is the only thing moving the pin:
+   *   - at rest the same click selects: region `pacific`, focus `focused`, d 3.8935 -> 4.6941;
+   *   - 300 ms into the Nino 4 flight the click cancels the flight — d froze at 2.6433 and never reached
+   *     1.3946 — but selects NOTHING: `regionId` null, and the box stays selected with aria-pressed true.
+   *
+   * So the product cancels without deciding, leaving a stranded box: flight stopped, nothing chosen, the card
+   * still claiming to be active. Per R7/M7 this test encodes that and is left failing rather than softened.
+   */
+  test('G3(a): a region pin clicked 300 ms into a box flight cancels it and takes the camera', async ({ page }) => {
+    const errs = watchErrors(page);
+    await openLive(page, DESKTOP);
+
+    /* Freeze the planet, so the only thing moving the pin is the camera. */
+    await page.evaluate(() => window.__globe!.setSpin(true, 0));
+    await page.waitForTimeout(600);
+
+    await pressCardWithMouse(page, 'nino4');
+    await page.waitForTimeout(300);
+
+    /* Read the pin NOW: the camera is already travelling (d 3.8935 -> 2.6996 in the first 300 ms). */
+    const pin = await reachablePin(page, null);
+    expect(pin, 'a front region pin must be geometrically in front 300 ms into the flight').not.toBeNull();
+    await page.mouse.click(pin!.x, pin!.y);
+
+    await page.waitForTimeout(4000);
+
+    const after = await page.evaluate(() => {
+      const t = window.__globe!.target();
+      return {
+        regionId: window.__frame!.snapshot().regionId,
+        focus: window.__frame!.snapshot().focus,
+        targetRadius: Math.hypot(t[0], t[1], t[2]),
+        d: window.__globe!.distance(),
+      };
+    });
+    const pressed4 = await cardPressed(page, 'nino4');
+    const opacity4 = await outlineOpacity(page, 'nino4');
+
+    annotate(
+      'R2a',
+      `pin ${pin!.id} clicked 300 ms into the nino4 flight: region ${after.regionId}; ` +
+        `nino4 aria-pressed ${pressed4}, outline opacity ${opacity4}; d ${after.d.toFixed(5)} ` +
+        `(R2 says 3.6178 if the box won, 3.8935 if nothing moved); |target| ${after.targetRadius.toFixed(4)}`,
+    );
+
+    expect(pressed4, 'the box must be cleared — aria-pressed false').toBe(false);
+    expect(opacity4, 'the outline must not be highlighted (0.55 is the unselected stroke)').toBe(0.55);
+    expect(after.regionId, 'the clicked pin becomes the active region').toBe(pin!.id);
+    expect(after.focus).toBe('focused');
+    /*
+     * The face-pin policy keeps `controls.target` at the origin (see `pin-click.spec.ts:1008`), so the region is
+     * proven by `regionId` + `focus` + the camera direction, NOT by a displaced target. Asserting a displaced
+     * target was my error and would fail for a correct product.
+     */
+    expect(after.targetRadius).toBeLessThanOrEqual(1e-6);
+    errs.assertClean();
+  });
+
+  test('G3(a-card): a region card clicked 300 ms into a box flight cancels it and takes the camera', async ({
+    page,
+  }) => {
+    const errs = watchErrors(page);
+    await openLive(page, DESKTOP);
+
+    await pressCardWithMouse(page, 'nino4');
+    await page.waitForTimeout(300);
+    const click = await clickImpactZoneCard(page, /Pacific/i);
+    expect(click.ok, 'the region card in the right panel must be pressable').toBe(true);
+
+    await page.waitForTimeout(4000);
+
+    const after = await page.evaluate(() => {
+      const t = window.__globe!.target();
+      return {
+        regionId: window.__frame!.snapshot().regionId,
+        focus: window.__frame!.snapshot().focus,
+        targetRadius: Math.hypot(t[0], t[1], t[2]),
+        d: window.__globe!.distance(),
+      };
+    });
+    const pressed4 = await cardPressed(page, 'nino4');
+    const opacity4 = await outlineOpacity(page, 'nino4');
+
+    annotate(
+      'R2a',
+      `pacific card clicked at 300 ms: region ${after.regionId}; nino4 aria-pressed ${pressed4}, ` +
+        `outline opacity ${opacity4}; d ${after.d.toFixed(5)}; |target| ${after.targetRadius.toFixed(4)}`,
+    );
+
+    expect(pressed4).toBe(false);
+    expect(opacity4).toBe(0.55);
+    expect(after.regionId).toBe('pacific');
+    expect(after.focus).toBe('focused');
+    /*
+     * The orbit target stays at the ORIGIN — `pin-click.spec.ts:1008` asserts exactly this ("face-pin keeps
+     * controls.target at the origin"), because the lens aims by rotating the planet under a fixed camera rather
+     * than by translating the target. My first version asserted |target| > 0.5 and measured 0; that was my
+     * assumption about the mechanism, not a product fault.
+     */
+    expect(after.targetRadius, 'the face-pin policy keeps controls.target at the origin').toBeLessThanOrEqual(1e-6);
+    errs.assertClean();
+  });
+
+  /*
+   * (b) A drag does NOT cancel the flight.
+   *
+   * The distinction from (a) is the product decision being tested: choosing another thing is a decision, while
+   * moving the globe with the pointer is not. The assertion is on d's own spread over 3 s — "flat within 0.01" —
+   * so a flight that restarted, or a fit that pulled back, shows up as spread rather than as a single reading.
+   */
+  test('G3(b): a 200 px drag 300 ms into a flight leaves d flat and the box selected', async ({ page }) => {
+    const errs = watchErrors(page);
+    await openLive(page, DESKTOP);
+
+    await pressCardWithMouse(page, 'nino4');
+    await page.waitForTimeout(300);
+    await dragCanvas(page, 200);
+
+    const samples: number[] = [];
+    for (let i = 0; i < 6; i++) {
+      samples.push(await page.evaluate(() => window.__globe!.distance()));
+      await page.waitForTimeout(600);
+    }
+    /*
+     * A loop, not `Math.max(...samples)`. `source-guards.test.ts` forbids spreading an array into Math.min/max
+     * because an unbounded component blows the stack, and the guard names this file if it does. Six elements
+     * would never overflow, but the rule is about the pattern, not this instance — and the guard is part of
+     * `pnpm test`, which is one of the four gates.
+     */
+    let lo = Infinity;
+    let hi = -Infinity;
+    for (const v of samples) {
+      if (v < lo) lo = v;
+      if (v > hi) hi = v;
+    }
+    const spread = hi - lo;
+    const pressed = await cardPressed(page, 'nino4');
+
+    annotate('R2b', `drag 200 px at 300 ms: d ${samples.map((n) => n.toFixed(5)).join(' -> ')}; spread ${spread.toFixed(5)}`);
+    expect(pressed, 'a drag must not clear the box').toBe(true);
+    expect(spread, `d must stay flat within 0.01 over 3 s; spread was ${spread.toFixed(5)}`).toBeLessThanOrEqual(0.01);
+    errs.assertClean();
+  });
+
+  test('G3(c): wheel-out 300 ms into a flight holds the box and does not pull back', async ({ page }) => {
+    const errs = watchErrors(page);
+    await openLive(page, DESKTOP);
+
+    await pressCardWithMouse(page, 'nino4');
+    await page.waitForTimeout(300);
+
+    const c = await canvasCentre(page);
+    expect(c.top, 'the wheel must be delivered to the canvas').toBe('canvas');
+    await page.mouse.move(c.x, c.y);
+    for (let i = 0; i < 6; i++) {
+      await page.mouse.wheel(0, 200);
+      await page.waitForTimeout(80);
+    }
+
+    const afterWheel = await page.evaluate(() => window.__globe!.distance());
+    await page.waitForTimeout(3000);
+    const later = await page.evaluate(() => window.__globe!.distance());
+    const pressed = await cardPressed(page, 'nino4');
+
+    annotate('R2c', `wheel-out at 300 ms: d after wheel ${afterWheel.toFixed(5)}, 3 s later ${later.toFixed(5)}`);
+    expect(pressed, 'wheel-out must not clear the box').toBe(true);
+    expect(
+      Math.abs(later - afterWheel),
+      `the fit must not pull the camera back: ${afterWheel.toFixed(5)} -> ${later.toFixed(5)}`,
+    ).toBeLessThanOrEqual(0.01);
+    errs.assertClean();
+  });
+
+  /*
+   * (d) A region is open, then a box is chosen. R1 then R2, the drawer closes and the region clears.
+   *
+   * THIS IS AN R8 FIXME AND THE REASON IS MEASURED, NOT ASSUMED. With `pacific` selected the desktop drawer is
+   * open, and the Nino 1+2 press button's centre sits at (1122.0, 504.19) — where `elementFromPoint` returns a
+   * DIV with class `absolute top-0 h-full rounded-full transition-all duration-3…`, i.e. the drawer's own
+   * slider track, not the button. `NinoCards.tsx:14` places the cards inside `[data-occluder="right-panel"]`,
+   * which the drawer slides over, so the card is COVERED while a region is open. A mouse user therefore cannot
+   * perform this scenario at all, which means the "drawer closed, region cleared" assertion cannot be reached
+   * through real input, and asserting it through a synthetic click would certify a path a user cannot take.
+   *
+   * The behaviour underneath is already correct where it IS reachable: G3(a-card) opens the drawer from a box
+   * flight with a real click and the region clears. Un-fixme this when the desktop card block is placed clear
+   * of the drawer (§ product decision on the right-panel/z-order).
+   */
+  test.fixme( // allow-skip: the open desktop drawer covers the Nino card — measured at 1280x720 with pacific open, the nino12 press button centre (1122.0, 504.19) resolves to the drawer's slider track DIV, so no real click can reach it.
+    'G3(d): with a region open, pressing Nino 1+2 settles to the R2 distance and clears the region',
+    async ({ page }) => {
+      await openLive(page, DESKTOP);
+      const click = await clickImpactZoneCard(page, /Pacific/i);
+      expect(click.ok, 'precondition: the impact-zone card must be pressable').toBe(true);
+      await expect.poll(() => page.evaluate(() => window.__frame!.snapshot().focus), { timeout: 25_000 }).toBe(
+        'focused',
+      );
+      await settleStable(page);
+
+      await pressCardWithMouse(page, 'nino12');
+      const settled = await settleD(page);
+      const predicted = P2D.nino12['1280x720'];
+      const offset = settled - predicted;
+      const after = await page.evaluate(() => ({
+        regionId: window.__frame!.snapshot().regionId,
+        drawer: document.querySelector('[data-occluder="right-drawer"]')?.getAttribute('aria-hidden'),
+      }));
+      annotate(
+        'R2d',
+        `settled d ${settled.toFixed(5)}, predicted ${predicted.toFixed(5)}, offset ${offset.toFixed(5)}; ` +
+          `region ${after.regionId}, drawer aria-hidden ${after.drawer}`,
+      );
+      expect(after.regionId).toBeNull();
+      expect(after.drawer).toBe('true');
+      expect(Math.abs(offset)).toBeLessThanOrEqual(0.006);
+    },
+  );
+
+  /*
+   * (e) Reset during a flight.
+   *
+   * Three separate claims, because "Reset worked" could be true while any one of them is false: the flight is
+   * cleared (`regionId` null and no box selected), the camera reaches the default pose (`viewIsDefault`, a probe
+   * field written by the director rather than inferred from d), and the spin resumes — measured as a rate, not
+   * as the `spinning` flag, so a flag that is set while the rotation is frozen cannot pass.
+   */
+  test('G3(e): Reset 300 ms into a flight clears it, returns to the default pose, and resumes the spin', async ({
+    page,
+  }) => {
+    const errs = watchErrors(page);
+    await openLive(page, DESKTOP);
+
+    await pressCardWithMouse(page, 'nino12');
+    await page.waitForTimeout(300);
+    /*
+     * Re-measure the button at the moment of the click. It is enabled mid-flight (`viewIsDefault` false), which
+     * a probe confirmed — but its RECT was captured in the same round trip as the press, and the header layout
+     * settles after it. Reading a stale rect and clicking it lands on nothing, which is what the first version
+     * did: the reset never fired and the box stayed pressed.
+     */
+    /*
+     * Measure the button and CLICK IN THE SAME ROUND TRIP, then verify the point was actually the button.
+     *
+     * Measured: mid-flight the control is enabled (`disabled: false`, `viewIsDefault` false) and a click at its
+     * rect does run the reset — `viewIsDefault` true by 2500 ms, d back to 3.8935. The first version separated
+     * the rect read from the click by a `toBeEnabled` wait and clicked a stale position, so the reset never
+     * fired and the 20 s poll timed out. The topmost-node guard is the same one `pressCardWithMouse` uses: it
+     * makes a covered button a named failure instead of an empty click.
+     */
+    const click = await page.evaluate(() => {
+      const b = document.querySelector('[data-testid="reset-view"]') as HTMLButtonElement | null;
+      if (!b) return null;
+      const r = b.getBoundingClientRect();
+      const x = r.x + r.width / 2;
+      const y = r.y + r.height / 2;
+      const top = document.elementFromPoint(x, y);
+      return { x, y, disabled: b.disabled, ok: Boolean(top && (top === b || b.contains(top))), tag: top?.tagName ?? '(none)' };
+    });
+    expect(click, 'the Reset view control must be mounted').not.toBeNull();
+    expect(click!.ok, `the Reset point must be the button, not <${click!.tag}>`).toBe(true);
+    expect(click!.disabled, 'Reset must be enabled mid-flight (viewIsDefault is false)').toBe(false);
+    await page.mouse.click(click!.x, click!.y);
+
+    /*
+     * Two signals, in the order they become true. `aria-pressed` clears at once (measured at 300 ms), while
+     * `viewIsDefault` only lands when the return journey finishes (~2.5 s), so polling the fast one first keeps a
+     * genuine reset failure distinguishable from a slow camera.
+     */
+    await expect
+      .poll(() => cardPressed(page, 'nino12'), { timeout: 5_000, intervals: [100] })
+      .toBe(false);
+    await expect
+      .poll(() => page.evaluate(() => window.__frame!.snapshot().viewIsDefault), { timeout: 25_000, intervals: [200] })
+      .toBe(true);
+    await settleStable(page);
+
+    const state = await page.evaluate(() => ({
+      regionId: window.__frame!.snapshot().regionId,
+      viewIsDefault: window.__frame!.snapshot().viewIsDefault,
+      spinning: window.__frame!.snapshot().spinning,
+      d: window.__globe!.distance(),
+    }));
+    const pressed = await cardPressed(page, 'nino12');
+    const opacity = await outlineOpacity(page, 'nino12');
+    const rate = await spinRateOver3s(page);
+
+    annotate(
+      'R2e',
+      `Reset at 300 ms: region ${state.regionId}, aria-pressed ${pressed}, outline opacity ${opacity}; ` +
+        `viewIsDefault ${state.viewIsDefault}; d ${state.d.toFixed(5)}; spinning flag ${state.spinning}; ` +
+        `measured spin ${rate.toFixed(5)} rad/s`,
+    );
+
+    expect(pressed, 'Reset must clear the box').toBe(false);
+    expect(opacity, 'Reset must un-highlight the outline').toBe(0.55);
+    expect(state.regionId).toBeNull();
+    expect(state.viewIsDefault, 'the camera must be at the framed default pose').toBe(true);
+    expect(rate, 'the spin must be running again after Reset').toBeGreaterThan(1e-3);
+    errs.assertClean();
+  });
+
+  /*
+   * (f) Toggle-off by pressing the selected card again, at all three viewports.
+   *
+   * M1 applies here: the first press collapses the sheet to Peek and Peek does not mount the cards, so every
+   * aria-pressed read and the second press are preceded by reopening the sheet with the real slider keyboard.
+   * M6 governs the numbers: d and target at 0/1/3/5 s are ANNOTATIONS, and the report says whether d drifts
+   * toward dFit in each case. There is no assertion on that drift, because whether the camera should hold or
+   * return is a product decision this step does not make.
+   */
+  test('G3(f): pressing the selected card again releases it at all three viewports', async ({ page }) => {
+    const errs = watchErrors(page);
+    for (const vp of [DESKTOP, PHONE, TABLET] as const) {
+      const size = key(vp);
+      await openLive(page, vp);
+      if (vp !== DESKTOP) await ensureCardsReachable(page, 'nino12');
+      await pressCardWithMouse(page, 'nino12');
+      await settleD(page);
+
+      /*
+       * M1 APPLIES TO THE READ, NOT JUST THE SECOND PRESS. The first press collapses the sheet to Peek and Peek
+       * does not mount the cards (`SheetBody.tsx` mounts them in the `showControls` half block), so reading
+       * `aria-pressed` immediately returns null — measured as `Received: null`, which is a missing node, not a
+       * false value. Reopening has to happen BEFORE this read as well as before the second press.
+       */
+      if (vp !== DESKTOP) {
+        annotate('M1', `${size}: sheet collapsed after press — reopened to Half before reading aria-pressed`);
+        await openSheetToHalf(page);
+        await ensureCardsReachable(page, 'nino12');
+      }
+      const pressedOn = await cardPressed(page, 'nino12');
+      expect(pressedOn, `${size}: the first press must select`).toBe(true);
+
+      await pressCardWithMouse(page, 'nino12');
+      if (vp !== DESKTOP) await openSheetToHalf(page);
+      const pressedOff = await cardPressed(page, 'nino12');
+      const opacity = await expectOutline(page, 'nino12', OPACITY_IDLE, `${size}: outline after toggle-off`);
+      const trace = await traceDAndTarget(page, `${size} nino12 toggle-off`);
+
+      if (vp !== DESKTOP) await openSheetToHalf(page);
+      const rate = await spinRateOver3s(page);
+
+      annotate(
+        'R2f',
+        `${size}: aria-pressed ${pressedOn} -> ${pressedOff}; outline opacity ${opacity}; ` +
+          `spin after release ${rate.toFixed(5)} rad/s`,
+      );
+
+      expect(pressedOff, `${size}: the second press must release`).toBe(false);
+      expect(opacity, `${size}: the outline must return to the unselected stroke`).toBe(OPACITY_IDLE);
+      expect(rate, `${size}: the spin must resume after release`).toBeGreaterThan(1e-3);
+      expect(trace.length).toBe(4);
+    }
+    errs.assertClean();
+  });
+
+  /*
+   * (g) Decision (b): a DRAG cancels the camera journey but keeps the box, so the card is still pressed and the
+   * next press on it turns the box OFF rather than on. The test is named for the behaviour it encodes, because a
+   * reader looking for "why does pressing twice not fly twice" needs to find this file.
+   */
+  test('G3(g): after a drag cancel, the next press of the same card toggles the box OFF', async ({ page }) => {
+    const errs = watchErrors(page);
+    await openLive(page, DESKTOP);
+
+    await pressCardWithMouse(page, 'nino4');
+    await page.waitForTimeout(300);
+    await dragCanvas(page, 200);
+    await page.waitForTimeout(1000);
+
+    const afterDrag = await cardPressed(page, 'nino4');
+    const opacityAfterDrag = await outlineOpacity(page, 'nino4');
+
+    await pressCardWithMouse(page, 'nino4');
+    await page.waitForTimeout(1200);
+    const afterSecond = await cardPressed(page, 'nino4');
+    const opacityAfterSecond = await outlineOpacity(page, 'nino4');
+
+    annotate(
+      'R2g',
+      `after the drag: aria-pressed ${afterDrag}, outline ${opacityAfterDrag}; after the second press: ` +
+        `aria-pressed ${afterSecond}, outline ${opacityAfterSecond}`,
+    );
+
+    expect(afterDrag, 'the drag must keep the box selected (decision b)').toBe(true);
+    expect(opacityAfterDrag).toBe(OPACITY_SELECTED);
+    expect(afterSecond, 'the second press must turn the box OFF').toBe(false);
+    expect(opacityAfterSecond).toBe(OPACITY_IDLE);
+    errs.assertClean();
+  });
+
+  /*
+   * (h) A bare canvas tap — real mouse down and up at one point, no movement — 300 ms into a flight.
+   *
+   * CLOSE3 recorded that this does NOT cancel the flight, and R7 makes that evidence binding: if real input
+   * cancels, this test FAILS and stays. The d trace is recorded either way, because "did anything move" is the
+   * other half of the question.
+   */
+  test('G3(h): a zero-movement canvas tap 300 ms into a flight does not cancel it (CLOSE3)', async ({ page }) => {
+    const errs = watchErrors(page);
+    await openLive(page, DESKTOP);
+
+    await pressCardWithMouse(page, 'nino12');
+    await page.waitForTimeout(300);
+
+    const c = await canvasCentre(page);
+    expect(c.top, 'the tap must land on the canvas').toBe('canvas');
+    await page.mouse.move(c.x, c.y);
+    await page.mouse.down();
+    await page.waitForTimeout(60);
+    await page.mouse.up();
+
+    const trace: string[] = [];
+    for (let i = 0; i < 6; i++) {
+      trace.push((await page.evaluate(() => window.__globe!.distance())).toFixed(5));
+      await page.waitForTimeout(600);
+    }
+
+    const after = await page.evaluate(() => ({
+      regionId: window.__frame!.snapshot().regionId,
+      spinning: window.__frame!.snapshot().spinning,
+      d: window.__globe!.distance(),
+    }));
+    const pressed = await cardPressed(page, 'nino12');
+    const opacity = await outlineOpacity(page, 'nino12');
+
+    annotate(
+      'R2h',
+      `zero-movement tap at 300 ms: aria-pressed ${pressed}, outline ${opacity}, region ${after.regionId}; ` +
+        `d ${trace.join(' -> ')}`,
+    );
+
+    expect(
+      pressed,
+      'CLOSE3: a tap with no movement must NOT cancel the flight — if real input cancels it, this is a FAIL',
+    ).toBe(true);
+    expect(opacity, 'the outline must stay highlighted after a bare tap').toBe(OPACITY_SELECTED);
+    expect(after.regionId).toBeNull();
     errs.assertClean();
   });
 });
