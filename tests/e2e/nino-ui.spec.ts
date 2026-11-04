@@ -2665,11 +2665,18 @@ test.describe('G3: the box flight survives what the user does to the globe', () 
     const pressed4 = await cardPressed(page, 'nino4');
     const opacity4 = await outlineOpacity(page, 'nino4');
 
+    /*
+     * 2.4426, not 3.6178: this test runs at 1280x720, and R2's nino4 predictions are 2.4426 (desktop),
+     * 3.6178 (390x844) and 2.6117 (1032x1376). The first version of this annotation quoted the PHONE figure,
+     * and the G3 commit message repeated the mistake with nino12's 1.3946. Both are corrected here; no
+     * assertion ever depended on these strings.
+     */
     annotate(
       'R2a',
       `pin ${pin!.id} clicked 300 ms into the nino4 flight: region ${after.regionId}; ` +
         `nino4 aria-pressed ${pressed4}, outline opacity ${opacity4}; d ${after.d.toFixed(5)} ` +
-        `(R2 says 3.6178 if the box won, 3.8935 if nothing moved); |target| ${after.targetRadius.toFixed(4)}`,
+        `(R2 at 1280x720 says 2.4426 if the box won, 3.8935 if nothing moved); ` +
+        `|target| ${after.targetRadius.toFixed(4)}`,
     );
 
     expect(pressed4, 'the box must be cleared — aria-pressed false').toBe(false);
