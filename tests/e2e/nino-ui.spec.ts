@@ -1107,3 +1107,131 @@ test.describe('G3: the card is the only trigger, and a press survives what the g
     expect(await cardPressed(page, 'nino12'), 'the selection must survive the collapse').toBe(true);
   });
 });
+
+test.describe('G4: the flight retargets when the free rect moves under it', () => {
+  /*
+   * M2 governs everything in this group. A free-rect change during a flight legitimately re-arms
+   * `ninoFlight` through `refitNinoForRect` (CameraDirector.tsx:226-255), so the number of refits and the
+   * number of flights are both > 1 by design. Nothing here counts them; the claims are "it stopped" and
+   * "where it stopped is the fit for the rect that existed when it stopped".
+   *
+   * The lever is a VIEWPORT RESIZE, chosen after ruling out the two UI levers:
+   *   - a region selection CANCELS the box flight outright (`selectRegion` calls `submitNinoFocus(null)`,
+   *     App.tsx:82-86, NINO-HARDEN B3a/A2a), so the box never lands and there is nothing to retarget;
+   *   - a mobile sheet tier change collapses the sheet but only exists on a phone shell, and G3g already
+   *     owns that behaviour.
+   * A resize changes `free` and `viewport` together, which is exactly the input pair the fit law reads.
+   */
+
+  test('G4a: a resize mid-flight retargets the box and it lands framed for the new rect', async ({ page }) => {
+    await openLive(page, DESKTOP);
+    await settleStable(page);
+
+    const dBefore = await page.evaluate(() => window.__globe!.distance());
+    await pressCardWithMouse(page, 'nino12');
+
+    /*
+     * Change the rect while the camera is still moving. The 120 ms read is the guard that the change really
+     * landed in flight: if the flight had already settled, this test would silently become G2a with a resize
+     * after it and would prove nothing about retargeting.
+     */
+    await page.waitForTimeout(120);
+    const inFlight = await page.evaluate(() => ({ d: window.__globe!.distance(), settled: window.__frame!.settled }));
+
+    await page.setViewportSize({ width: 1024, height: 700 });
+
+    const settledD = await settleFlight(page);
+    const after = await page.evaluate(() => {
+      const f = window.__frame!.snapshot();
+      return { free: f.free, vw: window.innerWidth, vh: window.innerHeight, tgt: window.__globe!.target() };
+    });
+
+    const predicted = predictedDistance(
+      GEO.nino12,
+      { w: after.free.w, h: after.free.h },
+      { w: after.vw, h: after.vh },
+    );
+    const offset = settledD - predicted;
+    const targetLen = Math.hypot(after.tgt[0], after.tgt[1], after.tgt[2]);
+
+    annotate(
+      'M3',
+      `G4a settled d ${settledD.toFixed(5)}, predicted d ${predicted.toFixed(5)}, offset ` +
+        `${offset >= 0 ? '+' : ''}${offset.toFixed(5)}, travel inward, |target| ${targetLen.toFixed(3)}`,
+    );
+    annotate(
+      'M2',
+      `G4a NO refit/flight count asserted (M2): mid-flight read d ${inFlight.d.toFixed(5)} settled ` +
+        `${inFlight.settled}, start d ${dBefore.toFixed(5)}, rect change 1280x720 -> 1024x700 applied in flight; ` +
+        `free now ${after.free.w.toFixed(1)}x${after.free.h.toFixed(1)}`,
+    );
+
+    /* The resize has to have happened DURING the flight, or this test is not testing retargeting. */
+    expect(inFlight.settled, 'the resize must land while the camera is still moving').toBe(false);
+    expect(Math.abs(dBefore - settledD), 'the camera must have moved').toBeGreaterThan(0.5);
+    expect(Math.abs(offset), `arrival offset ${offset.toFixed(5)} after a mid-flight resize`).toBeLessThanOrEqual(
+      ARRIVE_TOL,
+    );
+  });
+
+  test('G4b: shrinking the free rect outward retargets without exceeding tolerance', async ({ page }) => {
+    await openLive(page, DESKTOP);
+    await settleStable(page);
+    await pressCardWithMouse(page, 'nino12');
+    await page.waitForTimeout(120);
+
+    const inFlight = await page.evaluate(() => window.__frame!.settled);
+    await page.setViewportSize({ width: 1100, height: 640 });
+    const settledD = await settleFlight(page);
+
+    const after = await page.evaluate(() => {
+      const f = window.__frame!.snapshot();
+      return { free: f.free, vw: window.innerWidth, vh: window.innerHeight, tgt: window.__globe!.target() };
+    });
+    const predicted = predictedDistance(
+      GEO.nino12,
+      { w: after.free.w, h: after.free.h },
+      { w: after.vw, h: after.vh },
+    );
+    const offset = settledD - predicted;
+    const targetLen = Math.hypot(after.tgt[0], after.tgt[1], after.tgt[2]);
+
+    annotate(
+      'M3',
+      `G4b settled d ${settledD.toFixed(5)}, predicted d ${predicted.toFixed(5)}, offset ` +
+        `${offset >= 0 ? '+' : ''}${offset.toFixed(5)}, travel inward, |target| ${targetLen.toFixed(3)}`,
+    );
+    annotate(
+      'M2',
+      `G4b NO refit/flight count asserted (M2): mid-flight settled ${inFlight}, 1280x720 -> 1100x640; ` +
+        `free now ${after.free.w.toFixed(1)}x${after.free.h.toFixed(1)}`,
+    );
+
+    expect(inFlight, 'the resize must land while the camera is still moving').toBe(false);
+    expect(Math.abs(offset), `arrival offset ${offset.toFixed(5)}`).toBeLessThanOrEqual(ARRIVE_TOL);
+  });
+
+  /*
+   * ============================ G4c is a FIXME, and why ============================
+   *
+   * The requirement is "wait for settle before shrinking the viewport, then exactly ONE refit".
+   *
+   * The settle half is observable and implemented in `settleFlight` above. The "exactly one refit" half is not:
+   * `refitNinoForRect` RETURNS a boolean on each call (CameraDirector.tsx:255) and every caller discards it. The
+   * only `ninoRect` ref it mutates is a local `useRef` inside the component, and `__frame`/`__globe` publish no
+   * count (checked: `frameProbe.ts` surface is free/target/current/settled/insets/dFit, `globeProbe.ts` has no
+   * refit member). So there is no witness for the number of refits from the page.
+   *
+   * Three ways out, all rejected:
+   *   1. add a counter to src and expose it on a probe — forbidden by the prompt (nothing under src);
+   *   2. infer the count from camera motion — that measures displacement, not refits, and would certify a
+   *      number it did not observe;
+   *   3. assert the behavioural consequence instead — that is G4a and G4b, which is why they exist.
+   *
+   * So this lands as FIXME with the reason stated here rather than as a passing test with an invented number.
+   */
+  test.fixme( // allow-skip: src exposes no refit counter — refitNinoForRect returns a bool every caller discards and neither __frame nor __globe publishes a count, so "exactly one refit" is unobservable without editing src (forbidden by the prompt); G4a/G4b assert the behavioural consequence instead.
+    'G4c: after settle, shrinking the viewport causes exactly one refit',
+    async () => {},
+  );
+});
