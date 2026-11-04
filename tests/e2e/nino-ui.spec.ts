@@ -3068,3 +3068,248 @@ test.describe('G3: the box flight survives what the user does to the globe', () 
     errs.assertClean();
   });
 });
+
+test.describe('G5: aria-pressed truthfulness, keyboard activation and the live announcement', () => {
+  /*
+   * The announcement string is the registry label, not a second hardcoded copy: `regions.ts:166` gives
+   * `label: 'NIÑO 1+2'` and `MobileShell.tsx:167` composes `Showing ${label} on the globe`. Asserting the
+   * literal proves the composition, including the tilde, which an ASCII-only assertion would miss.
+   */
+  const SHOWN_NINO12 = 'Showing NIÑO 1+2 on the globe';
+
+  /** The Reset view control, by role and name: `Header.tsx:119` appends it last in the right cluster. */
+  const resetView = (page: Page) => page.getByRole('button', { name: 'Reset view' });
+
+  test('G5(a): aria-pressed is truthful through press, release, card swap, region select and Reset', async ({
+    page,
+  }) => {
+    const errs = watchErrors(page);
+    await openLive(page, DESKTOP);
+
+    const both = async () => ({ a: await cardPressed(page, 'nino12'), b: await cardPressed(page, 'nino4') });
+
+    /* 1. Press: the pressed card is true, the other is false. */
+    await pressCardWithMouse(page, 'nino12');
+    await expect.poll(() => cardPressed(page, 'nino12'), { timeout: 15_000 }).toBe(true);
+    let state = await both();
+    annotate('R5a', `after pressing Nino 1+2: nino12 ${state.a}, nino4 ${state.b}`);
+    expect(state.a, 'the pressed card must read aria-pressed true').toBe(true);
+    expect(state.b, 'the unpressed card must read false').toBe(false);
+
+    /* 2. Press again: released. */
+    await pressCardWithMouse(page, 'nino12');
+    await expect.poll(() => cardPressed(page, 'nino12'), { timeout: 15_000 }).toBe(false);
+    state = await both();
+    annotate('R5a', `after pressing it again: nino12 ${state.a}, nino4 ${state.b}`);
+    expect(state.a, 'a second press must clear it').toBe(false);
+
+    /* 3. Card A then card B: exclusivity. Only one box may be shown at a time. */
+    await pressCardWithMouse(page, 'nino12');
+    await expect.poll(() => cardPressed(page, 'nino12'), { timeout: 15_000 }).toBe(true);
+    await pressCardWithMouse(page, 'nino4');
+    await expect.poll(() => cardPressed(page, 'nino4'), { timeout: 15_000 }).toBe(true);
+    state = await both();
+    annotate('R5a', `after A then B: nino12 ${state.a}, nino4 ${state.b}`);
+    expect(state.a, 'pressing B must clear A — the boxes are exclusive').toBe(false);
+    expect(state.b, 'B must be the pressed one').toBe(true);
+
+    /* 4. Region select: and open region replaces the box, so both cards clear. */
+    const click = await clickImpactZoneCard(page, /Pacific/i);
+    expect(click.ok, 'the region card must be pressable').toBe(true);
+    await expect
+      .poll(() => page.evaluate(() => window.__frame!.snapshot().regionId), { timeout: 15_000 })
+      .toBe('pacific');
+    await expect.poll(() => cardPressed(page, 'nino4'), { timeout: 15_000 }).toBe(false);
+    state = await both();
+    annotate('R5a', `after selecting a region: nino12 ${state.a}, nino4 ${state.b}`);
+    expect(state.a, 'a region selection must clear every card').toBe(false);
+    expect(state.b, 'a region selection must clear every card').toBe(false);
+
+    /*
+     * 5. Reset: the region closes and the cards stay false.
+     *
+     * No press between steps 4 and 5. I had one there first and it failed on `pressCard`: with a region open the
+     * desktop drawer covers the cards — measured at (1122.0, 504.2), where the topmost node is the drawer's
+     * slider-track DIV, which is also why G3(d) is a FIXME. Part Q's sequence has nothing between "region select"
+     * and "Reset", so the extra press was mine, not the spec's.
+     */
+    await resetView(page).click();
+    await expect
+      .poll(() => page.evaluate(() => window.__frame!.snapshot().regionId), { timeout: 20_000 })
+      .toBeNull();
+    await expect.poll(() => cardPressed(page, 'nino12'), { timeout: 20_000 }).toBe(false);
+    state = await both();
+    annotate(
+      'R5a',
+      `after Reset view: nino12 ${state.a}, nino4 ${state.b}, region ` +
+        `${await page.evaluate(() => window.__frame!.snapshot().regionId)}`,
+    );
+    expect(state.a, 'Reset must clear the box').toBe(false);
+    expect(state.b, 'Reset must clear the box').toBe(false);
+    errs.assertClean();
+  });
+
+  test('G5(b): Enter on a card collapses to Peek, focuses the Sheet slider, and names the box', async ({ page }) => {
+    const errs = watchErrors(page);
+
+    for (const vp of [PHONE, TABLET]) {
+      await openLive(page, vp);
+      await pressCardByKeyboard(page, 'nino12');
+
+      /* The collapse is what makes the announcement necessary — the card unmounts a frame later. */
+      await expect.poll(() => sheetTier(page), { timeout: 15_000 }).toBe('peek');
+
+      /* Focus must land on the slider handle, not fall to BODY (`MobileShell.tsx:144`). */
+      await expect
+        .poll(
+          () =>
+            page.evaluate(() => {
+              const el = document.activeElement as HTMLElement | null;
+              return el ? `${el.getAttribute('role')}|${el.getAttribute('aria-label')}` : null;
+            }),
+          { timeout: 15_000, intervals: [50] },
+        )
+        .toBe('slider|Sheet position');
+
+      /* The announcement is exact, and it survives the tier change because it is shell-level. */
+      await expect.poll(() => announced(page), { timeout: 15_000, intervals: [100] }).toBe(SHOWN_NINO12);
+
+      const atPeek = await announced(page);
+      const active = await page.evaluate(() => {
+        const el = document.activeElement as HTMLElement | null;
+        return { role: el?.getAttribute('role'), label: el?.getAttribute('aria-label'), tag: el?.tagName };
+      });
+
+      annotate(
+        'G5b',
+        `${vp.width}x${vp.height}: tier peek, activeElement ${active.tag}[role=${active.role}, ` +
+          `aria-label="${active.label}"], announcement "${atPeek}"`,
+      );
+
+      /* And the region must still be there at Half and Full, not only at Peek. */
+      const slider = page.getByRole('slider', { name: 'Sheet position' });
+      for (const step of [
+        { name: 'half', key: 'ArrowUp' as const, want: '1' },
+        { name: 'full', key: 'End' as const, want: '2' },
+        { name: 'peek', key: 'Home' as const, want: '0' },
+      ]) {
+        await slider.focus();
+        await page.keyboard.press(step.key);
+        await expect.poll(() => slider.getAttribute('aria-valuenow'), { timeout: 10_000 }).toBe(step.want);
+        await waitForSheetStill(page);
+        expect(await announced(page), `the announcement must exist at ${step.name} too`).toBe(SHOWN_NINO12);
+      }
+
+      annotate('G5b', `${vp.width}x${vp.height}: announcement "${SHOWN_NINO12}" present at peek, half and full`);
+      errs.assertClean();
+    }
+  });
+
+  test('G5(c): the card buttons are reachable by Tab after the region list, in DOM order', async ({ page }) => {
+    const errs = watchErrors(page);
+    await openLive(page, DESKTOP);
+
+    /*
+     * Tab from the document start and record the order of the things that matter. A fixed Tab count would be
+     * brittle, so the loop walks a bounded number and collects what it lands on — the claim is the ORDER of
+     * the region controls relative to the card buttons.
+     */
+    await page.evaluate(() => (document.activeElement as HTMLElement | null)?.blur());
+    const order: string[] = [];
+    for (let i = 0; i < 40; i++) {
+      await page.keyboard.press('Tab');
+      const id = await page.evaluate(() => {
+        const el = document.activeElement as HTMLElement | null;
+        if (!el) return null;
+        const testid = el.getAttribute('data-testid');
+        if (testid?.startsWith('nino-show-')) return testid;
+        /*
+         * `data-region-id` is NOT the desktop selector. Measured: the four desktop panel buttons carry no
+         * attribute at all — the four `data-region-id` nodes in the document are inside the off-canvas drawer,
+         * behind `aria-hidden="true"`, so matching on it here finds nothing and would report "the region list is
+         * unreachable by Tab" against a panel that is perfectly reachable. Panel membership is the honest test.
+         */
+        if (el.closest('[data-occluder="right-panel"]')) {
+          return `region:${(el.textContent ?? '').trim().slice(0, 20)}`;
+        }
+        const label = el.getAttribute('aria-label') ?? el.textContent?.trim() ?? '';
+        return `${el.tagName}:${label.slice(0, 24)}`;
+      });
+      if (id) order.push(id);
+      if (order.filter((x) => x.startsWith('nino-show-')).length >= 2) break;
+    }
+
+    const firstRegion = order.findIndex((x) => x.startsWith('region:'));
+    const firstCard = order.findIndex((x) => x.startsWith('nino-show-'));
+    annotate('G5c', `Tab order: ${order.join(' -> ')}`);
+
+    expect(firstRegion, 'the region controls must be reachable by Tab').toBeGreaterThanOrEqual(0);
+    expect(firstCard, 'the card buttons must be reachable by Tab').toBeGreaterThanOrEqual(0);
+    expect(firstCard, 'the cards must come AFTER the region list in tab order').toBeGreaterThan(firstRegion);
+
+    /* DOM order too: the cards are appended after the switcher in the same block. */
+    const domOrder = await page.evaluate(() => {
+      const panel = document.querySelector('[data-occluder="right-panel"]');
+      if (!panel) return null;
+      const cards = Array.from(panel.querySelectorAll('[data-testid^="nino-show-"]'));
+      /* The region controls are the panel's buttons that are not the cards. */
+      const regions = Array.from(panel.querySelectorAll('button')).filter(
+        (b) => !b.getAttribute('data-testid')?.startsWith('nino-show-'),
+      );
+      if (!cards.length || !regions.length) return null;
+      const lastRegion = regions[regions.length - 1];
+      return lastRegion.compareDocumentPosition(cards[0]) & Node.DOCUMENT_POSITION_FOLLOWING ? 'after' : 'before';
+    });
+    annotate('G5c', `card buttons sit ${domOrder} the region list in DOM order`);
+    expect(domOrder, 'the card buttons must follow the region list in the DOM').toBe('after');
+    errs.assertClean();
+  });
+
+  test.fixme( // allow-skip: known missing behaviour (R8) — MobileShell.tsx:167 composes `announcedBox ? `Showing ${label} on the globe` : ''`, so releasing a box writes an EMPTY STRING into the polite region; a screen-reader user is told nothing when the box is cleared, and asserting "announces something" would fail against the product exactly as the brief records.
+    'G5(d): releasing a box announces that it was cleared',
+    async ({ page }) => {
+      const errs = watchErrors(page);
+      await openLive(page, PHONE);
+      await pressCardByKeyboard(page, 'nino12');
+      await expect.poll(() => announced(page), { timeout: 15_000 }).toBe(SHOWN_NINO12);
+
+      /* Toggle off via the card again. */
+      await pressCardByKeyboard(page, 'nino12');
+      await page.waitForTimeout(1500);
+
+      const afterRelease = await announced(page);
+      annotate('G5d', `announcement after release: ${JSON.stringify(afterRelease)} (empty is the documented gap)`);
+      expect(afterRelease, 'releasing a box must announce that it was cleared, not go silent').not.toBe('');
+      expect(afterRelease, 'releasing a box must announce that it was cleared').toBeTruthy();
+      errs.assertClean();
+    },
+  );
+
+  test.fixme( // allow-skip: known missing behaviour (R8) — MobileShell.tsx:142-144 finds the focus destination with a global `document.querySelector('[role="slider"][aria-label="Sheet position"]')`, so focus restoration depends on a document-wide string query rather than a ref to the handle the shell already owns; a second sheet, a renamed label or a shadow boundary silently breaks it, and there is no observable that distinguishes the two implementations.
+    'G5(e): focus restoration does not depend on a global aria-label query',
+    async ({ page }) => {
+      const errs = watchErrors(page);
+      await openLive(page, PHONE);
+      await pressCardByKeyboard(page, 'nino12');
+      await expect
+        .poll(
+          () => page.evaluate(() => (document.activeElement as HTMLElement | null)?.getAttribute('aria-label')),
+          { timeout: 15_000 },
+        )
+        .toBe('Sheet position');
+
+      /*
+       * The observable that would distinguish a ref-based restore from a document query: remove the label the
+       * query depends on and see whether focus still reaches the handle. If focus is restored by ref, it does;
+       * if by query, it does not. That is a src change, so this stays a FIXME and the assertion below is the
+       * property the product should eventually satisfy.
+       */
+      const secondHandle = await page.evaluate(
+        () => document.querySelectorAll('[role="slider"][aria-label="Sheet position"]').length,
+      );
+      annotate('G5e', `handles matching the global query: ${secondHandle}`);
+      expect(secondHandle, 'the focus target must be resolvable without a document-wide query').toBe(0);
+      errs.assertClean();
+    },
+  );
+});
