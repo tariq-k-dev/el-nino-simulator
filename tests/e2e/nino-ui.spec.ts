@@ -539,3 +539,201 @@ test.describe('G1: the flag mounts the cards and one shell-level announcement', 
     annotate('G1e', 'flag-off: 0 nino-cards, 0 press buttons, 0 nino-live nodes');
   });
 });
+
+/* --------------------------------------------------------------------------- G2 the box flight arrives */
+
+/**
+ * The fit law, restated independently.
+ *
+ * Deliberately NOT imported from `src/lib/ninoFraming.ts`. The choice is the same one `pin-click.spec.ts:51-56`
+ * and `switcher-ux.spec.ts` make: asserting the product agrees with its own module proves self-consistency, and
+ * would still pass if both drifted together. These are the four published equations, transcribed:
+ *
+ *   halfH   = atan(tan(halfV) * aspect)                                  horizontalHalfFovDeg
+ *   eff     = atan(frac * tan(half))                                     scaledHalfFovDeg
+ *   d(a,h)  = cos(a) + sin(a)/tan(h)   , Infinity when d <= 1            requiredDistanceForHalfAngle
+ *   dBox    = clamp(1.1 * max(dVert, dHoriz), 1.25, 5)                   ninoFlyToDistance
+ *
+ * The box half-extents come from the registry geometry (anchor-relative, longitude scaled by cos(lat)),
+ * reproduced here rather than read, for the same reason.
+ */
+const DEG = Math.PI / 180;
+const INV_DEG = 180 / Math.PI;
+const FIT_MARGIN = 1.1;
+const FIT_MIN = 1.25;
+const FIT_MAX = 5;
+
+type BoxGeom = { latMin: number; latMax: number; lonWest: number; lonEast: number; anchorLat: number; anchorLon: number };
+
+const GEO = {
+  nino12: { latMin: -10, latMax: 0, lonWest: -90, lonEast: -80, anchorLat: -5, anchorLon: -85 },
+  nino4: { latMin: -5, latMax: 5, lonWest: 160, lonEast: -150, anchorLat: 0, anchorLon: -175 },
+} as const satisfies Record<string, BoxGeom>;
+
+const wrap360 = (lon: number): number => ((lon % 360) + 360) % 360;
+const wrap180 = (lon: number): number => ((((lon + 180) % 360) + 360) % 360) - 180;
+
+function halfExtents(box: BoxGeom): { verticalDeg: number; horizontalDeg: number } {
+  const verticalDeg = Math.max(Math.abs(box.latMin - box.anchorLat), Math.abs(box.latMax - box.anchorLat));
+  const anchor360 = wrap360(box.anchorLon);
+  const west = Math.abs(wrap180(wrap360(box.lonWest) - anchor360));
+  const east = Math.abs(wrap180(wrap360(box.lonEast) - anchor360));
+  const horizontalDeg = Math.max(west, east) * Math.cos(box.anchorLat * DEG);
+  return { verticalDeg, horizontalDeg };
+}
+
+function distanceForHalfAngle(halfAngleDeg: number, halfFovDeg: number): number {
+  if (halfAngleDeg <= 0) return 1;
+  if (halfFovDeg <= 0) return Number.POSITIVE_INFINITY;
+  const a = halfAngleDeg * DEG;
+  const half = halfFovDeg * DEG;
+  const d = Math.cos(a) + Math.sin(a) / Math.tan(half);
+  return Number.isFinite(d) && d > 1 ? d : Number.POSITIVE_INFINITY;
+}
+
+function scaledHalf(halfFovDeg: number, frac: number): number {
+  if (!(frac > 0)) return 0;
+  if (frac >= 1) return halfFovDeg;
+  return Math.atan(frac * Math.tan(halfFovDeg * DEG)) * INV_DEG;
+}
+
+/** Predicted settled distance for a box, given the free rect measured at press time. */
+function predictedDistance(
+  box: BoxGeom,
+  free: { w: number; h: number },
+  viewport: { w: number; h: number },
+  fovDeg = 42,
+  aspect?: number,
+): number {
+  const halfV = fovDeg / 2;
+  const asp = aspect ?? viewport.w / viewport.h;
+  const halfH = Math.atan(Math.tan(halfV * DEG) * asp) * INV_DEG;
+  const wf = Math.min(free.w / viewport.w, 1);
+  const hf = Math.min(free.h / viewport.h, 1);
+  const { verticalDeg, horizontalDeg } = halfExtents(box);
+  const dV = distanceForHalfAngle(verticalDeg, scaledHalf(halfV, hf));
+  const dH = distanceForHalfAngle(horizontalDeg, scaledHalf(halfH, wf));
+  const needed = Math.max(dV, dH);
+  const fitted = Number.isFinite(needed) ? needed * FIT_MARGIN : FIT_MAX;
+  return Math.min(Math.max(fitted, FIT_MIN), FIT_MAX);
+}
+
+/** M3's tolerance. Fixed at 0.006 everywhere and never loosened per test. */
+const ARRIVE_TOL = 0.006;
+
+/**
+ * Wait for the box flight to finish and return the settled camera distance.
+ *
+ * M2 forbids asserting a flight count or a refit count after anything that moves the free rect, because a
+ * re-armed flight legitimately produces more than one. So the only claim made here is "it stopped", read from
+ * `__frame.settled` plus the same two-identical-reads rest the rest of the file uses.
+ */
+async function settleFlight(page: Page): Promise<number> {
+  await expect
+    .poll(() => page.evaluate(() => window.__frame!.settled), { timeout: 40_000, intervals: [100] })
+    .toBe(true);
+  await settleStable(page);
+  return page.evaluate(() => window.__globe!.distance());
+}
+
+/** The press-time record, snapshotted so a later press cannot overwrite the numbers under test. */
+async function snapshotPress(
+  page: Page,
+): Promise<{ freeRectFrac: { widthFrac: number; heightFrac: number }; innerW: number; innerH: number; distance: number; aspect: number; fov: number } | null> {
+  return page.evaluate(() => {
+    const rec = (window as unknown as Record<string, unknown>).__ninoPress as
+      | {
+          freeRectFrac: { widthFrac: number; heightFrac: number };
+          innerW: number;
+          innerH: number;
+          distance: number;
+          aspect: number;
+          fov: number;
+        }
+      | undefined;
+    return rec ?? null;
+  });
+}
+
+test.describe('G2: pressing a card flies the camera to the box and lands inside tolerance', () => {
+  test('G2a: Nino 1+2 at 1280x720 arrives at the predicted distance', async ({ page }) => {
+    await openLive(page, DESKTOP);
+
+    const before = await page.evaluate(() => window.__globe!.distance());
+    await pressCardWithMouse(page, 'nino12');
+    const press = await snapshotPress(page);
+    expect(press, 'the press must have been recorded by __ninoPress').not.toBeNull();
+
+    const settledD = await settleFlight(page);
+    expect(await cardPressed(page, 'nino12')).toBe(true);
+
+    /*
+     * The free rect the fit was RESOLVED against is the press-time one, read from `__ninoPress.freeRectFrac`
+     * rather than from `__frame.free` now. On desktop the drawer closes after the press, so the live rect is
+     * already wider than the rect the flight aimed at — predicting from the live one would test the wrong
+     * number and, worse, would silently agree with a stale flight.
+     */
+    const predicted = predictedDistance(
+      GEO.nino12,
+      { w: press!.freeRectFrac.widthFrac * press!.innerW, h: press!.freeRectFrac.heightFrac * press!.innerH },
+      { w: press!.innerW, h: press!.innerH },
+      press!.fov,
+      press!.aspect,
+    );
+
+    const offset = settledD - predicted;
+    const direction = settledD < before ? 'inward (d decreasing)' : 'outward (d increasing)';
+
+    annotate(
+      'M3',
+      `G2a settled d ${settledD.toFixed(5)}, predicted d ${predicted.toFixed(5)}, ` +
+        `offset ${offset >= 0 ? '+' : ''}${offset.toFixed(5)}, travel ${direction}, ` +
+        `start ${before.toFixed(5)}`,
+    );
+
+    expect(Math.abs(offset), `arrival offset ${offset.toFixed(5)} exceeds ${ARRIVE_TOL}`).toBeLessThanOrEqual(
+      ARRIVE_TOL,
+    );
+  });
+
+  test('G2b: a fresh boot has not re-fitted anything before the press', async ({ page }) => {
+    /*
+     * M2 keeps this one: on a fresh boot with no box selected there is nothing for `refitNinoForRect` to do, since
+     * its first gate is `activeNinoBoxId` (`CameraDirector.tsx:236-237`). The observable that WOULD prove a count
+     * does not exist in src — there is no refit counter, only a boolean return consumed at `:1309` and `:1489` —
+     * so this asserts the consequence instead: the distance is still the default pose and no box is selected.
+     *
+     * FIXME record: "refit count" has no readable observable. The test is kept as the nearest honest statement
+     * rather than deleted, and the absence is reported.
+     */
+    await openLive(page, DESKTOP);
+
+    const d = await page.evaluate(() => window.__globe!.distance());
+    const pose = await page.evaluate(() => window.__globe!.defaultOrbit());
+    const region = await page.evaluate(() => window.__frame!.regionId);
+
+    annotate('G2b', `fresh boot d ${d.toFixed(5)}, defaultOrbit.distance ${pose.distance.toFixed(5)}, region ${region}`);
+
+    expect(d, 'a fresh boot must sit at the default distance').toBeCloseTo(pose.distance, 3);
+    expect(region, 'no region may be selected on a fresh boot').toBeNull();
+    expect(await cardPressed(page, 'nino12'), 'no box may be selected on a fresh boot').toBe(false);
+    expect(await cardPressed(page, 'nino4')).toBe(false);
+  });
+
+  test.fixme( // allow-skip: src exposes no refit counter, so "refit count 0" is unobservable without editing src (forbidden by the prompt); G2b asserts the behavioural consequence instead.
+    'G2c: a fresh boot reports a refit count of 0 — NO READABLE OBSERVABLE (src has no refit counter)',
+    async () => {
+      /*
+       * Kept as an explicit FIXME rather than silently dropped.
+       *
+       * `refitNinoForRect` (`CameraDirector.tsx:226-268`) RETURNS a boolean; it does not increment anything, does
+       * not store anything, and nothing exposes a count. The call sites at `:1309` and `:1489` consume the return
+       * into locals named `ninoRefit` / `ninoRefitDesktop`. A spec therefore cannot read "refit count 0" without a
+       * source change under src/, which the prompt forbids.
+       *
+       * Un-fixme this when a probe exposes the count. G2b asserts the behavioural consequence in the meantime.
+       */
+      expect(true).toBe(false);
+    },
+  );
+});
