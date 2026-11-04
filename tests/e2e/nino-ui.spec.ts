@@ -1235,3 +1235,148 @@ test.describe('G4: the flight retargets when the free rect moves under it', () =
     async () => {},
   );
 });
+
+test.describe('G5: toggle-off releases the box; d holds where the box flight left it', () => {
+  /*
+   * The trace helper, shared by all three viewports. M6 asks for d, |target| and dFit at 0, 1, 3 and 5 s and
+   * for a statement about whether d drifts TOWARD dFit once the box is released. Those numbers are annotations,
+   * never thresholds: a camera that eases out over 900 ms and one that jumps and then trims would both satisfy
+   * "drifts toward dFit", and pinning a curve shape would be inventing a spec the product never promised.
+   *
+   * MEASURED RESULT, and it contradicts the wording M6 anticipates: d does NOT drift toward dFit at any of the
+   * three viewports. It does not move at all. `focusNinoBox(null)` clears `ninoFlight` and RETURNS
+   * (CameraDirector.tsx:876-882) — the release path arms no return flight, so the camera stays exactly where the
+   * box flight left it (1280x720 d 1.39601 with dFit 3.88438, unchanged from 0 s to 5 s). Only the spin resumes.
+   *
+   * That is why the assertion is the NON-WORSENING form — |d - dFit| at 5 s no larger than at release — rather
+   * than "d approaches dFit". The weak form is the true one here. It still has teeth: it fails if a release ever
+   * pushes the camera further out than the box fit, which is the failure the original wording was guarding.
+   * Whether a release SHOULD fly back is a product question this spec does not invent an answer to.
+   */
+  async function traceToggleOff(page: Page, label: string): Promise<{
+    trace: string;
+    dAtRelease: number;
+    dAt5: number;
+    dFit: number;
+    targetAt5: number;
+  }> {
+    const dAtRelease = await page.evaluate(() => window.__globe!.distance());
+    const t0 = Date.now();
+    const parts: string[] = [];
+    let dAt5 = Number.NaN;
+    let dFit = Number.NaN;
+    let targetAt5 = Number.NaN;
+
+    for (const mark of [0, 1000, 3000, 5000]) {
+      const wait = mark - (Date.now() - t0);
+      if (wait > 0) await page.waitForTimeout(wait);
+      const s = await page.evaluate(() => {
+        const f = window.__frame!.snapshot();
+        return { d: window.__globe!.distance(), tgt: window.__globe!.target(), dFit: f.dFit, settled: f.settled };
+      });
+      const tl = Math.hypot(s.tgt[0], s.tgt[1], s.tgt[2]);
+      parts.push(`${mark}ms d ${s.d.toFixed(5)} |target| ${tl.toFixed(3)} dFit ${s.dFit.toFixed(5)} settled ${s.settled}`);
+      if (mark === 5000) {
+        dAt5 = s.d;
+        dFit = s.dFit;
+        targetAt5 = tl;
+      }
+    }
+
+    const gapRelease = Math.abs(dAtRelease - dFit);
+    const gap5 = Math.abs(dAt5 - dFit);
+    const verdict =
+      gap5 < gapRelease - 1e-6
+        ? `DRIFTS TOWARD dFit (gap ${gapRelease.toFixed(5)} -> ${gap5.toFixed(5)})`
+        : `does NOT move toward dFit (gap ${gapRelease.toFixed(5)} -> ${gap5.toFixed(5)})`;
+
+    annotate('M6', `${label} toggle-off trace: ${parts.join(' | ')}`);
+    annotate('M6', `${label} after toggle-off d ${verdict}; d at release ${dAtRelease.toFixed(5)}, d at 5 s ${dAt5.toFixed(5)}, dFit ${dFit.toFixed(5)}, |target| at 5 s ${targetAt5.toFixed(3)}`);
+
+    return { trace: parts.join(' | '), dAtRelease, dAt5, dFit, targetAt5 };
+  }
+
+  test('G5a: at 1280x720 pressing the selected box again releases it, and d holds (no return flight is armed)', async ({ page }) => {
+    await openLive(page, DESKTOP);
+    await settleStable(page);
+    const d0 = await page.evaluate(() => window.__globe!.distance());
+
+    await pressCardWithMouse(page, 'nino12');
+    const dSelected = await settleFlight(page);
+    expect(await cardPressed(page, 'nino12'), 'the first press must select').toBe(true);
+
+    /* Toggle off: the same card, pressed again. On desktop the cards never unmount, so no sheet step here. */
+    await pressCardWithMouse(page, 'nino12');
+    const out = await traceToggleOff(page, 'G5a 1280x720');
+
+    expect(await cardPressed(page, 'nino12'), 'the second press must release the box').toBe(false);
+    expect(await cardPressed(page, 'nino4'), 'the other box must stay released').toBe(false);
+    /* Desktop has no live region (G1a), so absence and emptiness both mean "nothing announced". */
+    expect([null, ''], 'a release must not announce a selection').toContain(await announced(page));
+
+    annotate('G5a', `d0 ${d0.toFixed(5)}, d selected ${dSelected.toFixed(5)}, d at 5 s ${out.dAt5.toFixed(5)}, dFit ${out.dFit.toFixed(5)}`);
+    expect(Math.abs(out.dAt5 - out.dFit), 'released camera must be no further from dFit than at release').toBeLessThanOrEqual(
+      Math.abs(out.dAtRelease - out.dFit),
+    );
+  });
+
+  test('G5b: at 390x844 the release clears selection and d holds, through the collapse', async ({ page }) => {
+    await openLive(page, PHONE);
+    await settleStable(page);
+
+    /* M1: the cards are below the fold at this viewport even at half — reopen before the FIRST press too. */
+    await ensureCardsReachable(page, 'nino12');
+    await pressCardWithMouse(page, 'nino12');
+    const dSelected = await settleFlight(page);
+
+    expect(await announced(page), 'the press must announce the selection on a phone').toBe(
+      `Showing ${LABEL_NINO12} on the globe`,
+    );
+    annotate('M1', `G5b sheet tier after first press: ${await sheetTier(page)} — cards collapsed with it`);
+
+    /* M1: before the SECOND press, reopen the sheet, or there is no button to press. */
+    await ensureCardsReachable(page, 'nino12');
+    await pressCardWithMouse(page, 'nino12');
+    const out = await traceToggleOff(page, 'G5b 390x844');
+
+    /* Selection cleared, read through the oracle that outlives the collapse. */
+    await expect.poll(() => announced(page), { timeout: 15_000, intervals: [150] }).not.toBe(
+      `Showing ${LABEL_NINO12} on the globe`,
+    );
+
+    /* M1 again: reopen before reading aria-pressed, since the release collapses the sheet to Peek. */
+    await ensureCardsReachable(page, 'nino12');
+    expect(await cardPressed(page, 'nino12'), 'the release must clear aria-pressed').toBe(false);
+
+    annotate('G5b', `d selected ${dSelected.toFixed(5)}, d at 5 s ${out.dAt5.toFixed(5)}, dFit ${out.dFit.toFixed(5)}`);
+    expect(Math.abs(out.dAt5 - out.dFit), 'released camera must be no further from dFit than at release').toBeLessThanOrEqual(
+      Math.abs(out.dAtRelease - out.dFit),
+    );
+  });
+
+  test('G5c: at 1032x1376 the release clears selection and d holds, through the collapse', async ({ page }) => {
+    await openLive(page, TABLET);
+    await settleStable(page);
+
+    await ensureCardsReachable(page, 'nino12');
+    await pressCardWithMouse(page, 'nino12');
+    const dSelected = await settleFlight(page);
+    expect(await announced(page), 'the press must announce the selection').toBe(`Showing ${LABEL_NINO12} on the globe`);
+
+    await ensureCardsReachable(page, 'nino12');
+    await pressCardWithMouse(page, 'nino12');
+    const out = await traceToggleOff(page, 'G5c 1032x1376');
+
+    await expect.poll(() => announced(page), { timeout: 15_000, intervals: [150] }).not.toBe(
+      `Showing ${LABEL_NINO12} on the globe`,
+    );
+
+    await ensureCardsReachable(page, 'nino12');
+    expect(await cardPressed(page, 'nino12'), 'the release must clear aria-pressed').toBe(false);
+
+    annotate('G5c', `d selected ${dSelected.toFixed(5)}, d at 5 s ${out.dAt5.toFixed(5)}, dFit ${out.dFit.toFixed(5)}`);
+    expect(Math.abs(out.dAt5 - out.dFit), 'released camera must be no further from dFit than at release').toBeLessThanOrEqual(
+      Math.abs(out.dAtRelease - out.dFit),
+    );
+  });
+});
