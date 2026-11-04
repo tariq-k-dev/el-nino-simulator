@@ -350,7 +350,19 @@ async function pressCardWithMouse(page: Page, boxId: 'nino12' | 'nino4'): Promis
 
 /* ------------------------------------------------------------------------------------- G1 the flag */
 
-test.describe('G1: the flag mounts the cards and one shell-level announcement', () => {
+/*
+ * The old-design blocks are titled "EXTRA G<n>" with NO COLON after the group id, on purpose.
+ *
+ * Playwright's `--grep` matches the full title INCLUDING describe names, so a describe titled "G1: ..." makes
+ * `--grep 'G1:'` collect the old tests alongside the Part Q ones — the per-group run then reports a count that
+ * belongs to two designs, and a group can look green because tests that were never meant to run did. The R-1
+ * rename put `EXTRA-` on every old test; dropping the colon from these five describe titles is what makes a
+ * group grep mean one group.
+ *
+ * Note the old blocks' titles read like Part Q ones ("the flag mounts the cards") while the Part Q blocks have
+ * their own wording ("the flag gates the Nino UI"). Matching on the wording alone is how these got swapped once.
+ */
+test.describe('EXTRA G1 the flag mounts the cards and one shell-level announcement', () => {
   test('EXTRA-G1a: flag-on at 1280x720 mounts the card block and two press buttons — and NO live region', async ({
     page,
   }) => {
@@ -671,7 +683,7 @@ async function snapshotPress(
   });
 }
 
-test.describe('G2: pressing a card flies the camera to the box and lands inside tolerance', () => {
+test.describe('EXTRA G2 pressing a card flies the camera to the box and lands inside tolerance', () => {
   test('EXTRA-G2a: Nino 1+2 at 1280x720 arrives at the predicted distance', async ({ page }) => {
     await openLive(page, DESKTOP);
 
@@ -812,7 +824,7 @@ async function topNodeAt(page: Page, x: number, y: number): Promise<string> {
   );
 }
 
-test.describe('G3: the card is the only trigger, and a press survives what the globe does', () => {
+test.describe('EXTRA G3 the card is the only trigger, and a press survives what the globe does', () => {
   test('EXTRA-G3a: a real mouse press on the pin does nothing; on the card it selects', async ({ page }) => {
     /*
      * M4 asks for a real `page.mouse` press on the pin AND on the card, with the R1 settle and the same
@@ -1124,7 +1136,7 @@ test.describe('G3: the card is the only trigger, and a press survives what the g
   });
 });
 
-test.describe('G4: the flight retargets when the free rect moves under it', () => {
+test.describe('EXTRA G4 the flight retargets when the free rect moves under it', () => {
   /*
    * M2 governs everything in this group. A free-rect change during a flight legitimately re-arms
    * `ninoFlight` through `refitNinoForRect` (CameraDirector.tsx:226-255), so the number of refits and the
@@ -1252,7 +1264,255 @@ test.describe('G4: the flight retargets when the free rect moves under it', () =
   );
 });
 
-test.describe('G5: toggle-off releases the box; d holds where the box flight left it', () => {
+/**
+ * Activate a box with real keyboard input, which is the only honest trigger available at 390x844.
+ *
+ * **Why not the mouse (measured).** At 390x844 the press button's own bbox is y 963.9..1007.9 in an 844 px
+ * viewport — 120 px below the fold, inside a sheet body that is taller than the screen. `pressCardWithMouse`
+ * scrolls that body and still leaves it out of reach, which is exactly the E1 finding G2(a) records as a FAIL.
+ * A keyboard user never depends on that: they Tab to the button and press Enter, and the browser brings the
+ * focus target into view for them.
+ *
+ * The activation under test is `page.keyboard.press('Enter')`. The focus step is `focus()` rather than a Tab
+ * walk, because G5(c) is the test that owns tab order — repeating a 20-Tab walk here would make a geometry test
+ * fail whenever the region list changes length, which is a different acceptance question.
+ */
+async function pressCardByKeyboard(page: Page, boxId: 'nino12' | 'nino4'): Promise<void> {
+  const handle = page.getByRole('slider', { name: 'Sheet position' });
+  await handle.focus();
+  await page.keyboard.press('End');
+  await expect.poll(() => handle.getAttribute('aria-valuenow'), { timeout: 10_000 }).toBe('2');
+  await waitForSheetStill(page);
+
+  const button = page.locator(`[data-testid="nino-show-${boxId}"]`);
+  await expect(button).toHaveCount(1);
+  await button.focus();
+  await expect
+    .poll(
+      () => page.evaluate(() => (document.activeElement as HTMLElement | null)?.getAttribute('data-testid')),
+      { timeout: 10_000, intervals: [50] },
+    )
+    .toBe(`nino-show-${boxId}`);
+
+  await page.keyboard.press('Enter');
+}
+
+/** The lowest tier's own reservation: `H - free.y - free.h`, which `computeFreeRect` computes but never publishes. */
+async function reservedBottomPx(page: Page): Promise<{ reserve: number; vh: number; freeY: number; freeH: number }> {
+  return page.evaluate(() => {
+    const f = window.__frame!.snapshot();
+    return { reserve: window.innerHeight - (f.free.y + f.free.h), vh: window.innerHeight, freeY: f.free.y, freeH: f.free.h };
+  });
+}
+
+test.describe('G4: the box flight retargets when the free rect moves under it', () => {
+  /*
+   * M2 governs everything in this group: a free-rect change during a flight legitimately re-arms the flight, so
+   * no test here counts refits or flights. The claims are "it stopped", "where it stopped is the fit for the
+   * rect that existed when it stopped", and "the reservation the sheet publishes is the one the model says".
+   *
+   * R2's predictions are the literals from the issued text, never recomputed at runtime: Nino 4 is 2.4426 at
+   * 1280x720, 3.6178 at 390x844, and 1.8995 after the 390x844 -> 844x390 rotation.
+   */
+
+  test('G4(a): Nino 4 resized from 1280x720 to 390x844 settles at 3.6178 and holds', async ({ page }) => {
+    const errs = watchErrors(page);
+    await openLive(page, DESKTOP);
+
+    await pressCardWithMouse(page, 'nino4');
+    const deskSettled = await settleFlight(page);
+
+    /* The resize must land while the camera is still moving, or this is G2(a) with a resize stapled on. */
+    await page.setViewportSize({ width: 390, height: 844 });
+    const atResize = await page.evaluate(() => ({ d: window.__globe!.distance(), settled: window.__frame!.settled }));
+    expect(atResize.settled, 'the resize must land while the camera is still moving').toBe(false);
+
+    const settled = await settleFlight(page);
+    const free = await reservedBottomPx(page);
+
+    /* Held: the retarget must not be a transient the camera eases out of afterwards. */
+    await page.waitForTimeout(5_000);
+    const held = await page.evaluate(() => window.__globe!.distance());
+    const drift = held - settled;
+
+    const offset = settled - 3.6178;
+    annotate(
+      'R2',
+      `G4a 1280x720 -> 390x844: settled ${settled.toFixed(5)} vs predicted 3.6178, offset ` +
+        `${offset >= 0 ? '+' : ''}${offset.toFixed(5)}; desktop settled ${deskSettled.toFixed(5)}; ` +
+        `held 5 s later ${held.toFixed(5)} (drift ${drift.toFixed(6)}); free offY ${free.freeY.toFixed(2)} ` +
+        `h ${free.freeH.toFixed(2)} in ${free.vh}`,
+    );
+
+    expect(Math.abs(offset), `arrival offset ${offset.toFixed(5)} after the resize`).toBeLessThanOrEqual(ARRIVE_TOL);
+    expect(Math.abs(drift), `the settled distance must hold for 5 s, drifted ${drift.toFixed(6)}`).toBeLessThanOrEqual(
+      0.01,
+    );
+    errs.assertClean();
+  });
+
+  test('G4(b): Nino 4 rotated from 390x844 to 844x390 settles at 1.8995 and holds', async ({ page }) => {
+    const errs = watchErrors(page);
+    await openLive(page, PHONE);
+
+    await pressCardByKeyboard(page, 'nino4');
+    const portrait = await settleFlight(page);
+
+    await page.setViewportSize({ width: 844, height: 390 });
+    const atRotate = await page.evaluate(() => ({ d: window.__globe!.distance(), settled: window.__frame!.settled }));
+    expect(atRotate.settled, 'the rotation must land while the camera is still moving').toBe(false);
+
+    const settled = await settleFlight(page);
+    const free = await reservedBottomPx(page);
+    const layout = await page.evaluate(() => {
+      const f = window.__frame!.snapshot();
+      return { layoutMode: f.layoutMode, freeW: f.free.w };
+    });
+
+    await page.waitForTimeout(5_000);
+    const held = await page.evaluate(() => window.__globe!.distance());
+    const drift = held - settled;
+
+    const offset = settled - 1.8995;
+    annotate(
+      'R2',
+      `G4b 390x844 -> 844x390: settled ${settled.toFixed(5)} vs predicted 1.8995, offset ` +
+        `${offset >= 0 ? '+' : ''}${offset.toFixed(5)}; portrait settled ${portrait.toFixed(5)}; ` +
+        `held 5 s later ${held.toFixed(5)} (drift ${drift.toFixed(6)}); layout ${layout.layoutMode} ` +
+        `free w ${layout.freeW.toFixed(2)}, reserve ${free.reserve.toFixed(2)} in ${free.vh}`,
+    );
+
+    expect(layout.layoutMode, '390x844 -> 844x390 must switch the shell to its landscape layout').toBe('phoneLandscape');
+    expect(Math.abs(offset), `arrival offset ${offset.toFixed(5)} after the rotation`).toBeLessThanOrEqual(ARRIVE_TOL);
+    expect(Math.abs(drift), `the settled distance must hold for 5 s, drifted ${drift.toFixed(6)}`).toBeLessThanOrEqual(
+      0.01,
+    );
+    errs.assertClean();
+  });
+
+  test.fixme( // allow-skip: src exposes no refit counter — refitNinoForRect returns a boolean (CameraDirector.tsx:255) that every caller discards, ninoRect is a component-local useRef, and neither __frame nor __globe publishes a count, so "exactly one refit" after a 56 px URL-bar shrink is unobservable without editing src (forbidden by the prompt); the user ruled G4c lands as a FIXME rather than gaining a counter probe.
+    'G4(c): a 56 px URL-bar shrink refits exactly once, settles, and keeps the outline inside the free rect',
+    async ({ page }) => {
+      const errs = watchErrors(page);
+      await openLive(page, PHONE);
+
+      await pressCardByKeyboard(page, 'nino4');
+      const before = await settleFlight(page);
+      const rectBefore = await page.evaluate(() => window.__frame!.snapshot().free);
+
+      /* A URL bar appearing takes 56 px of viewport height, which is the change the free rect must answer. */
+      await page.setViewportSize({ width: 390, height: 788 });
+      const rectAfter = await page.evaluate(() => window.__frame!.snapshot().free);
+      expect(
+        Math.abs(rectAfter.h - rectBefore.h),
+        'the free rect must change when the URL bar takes 56 px',
+      ).toBeGreaterThan(1);
+
+      const settled = await settleFlight(page);
+      const outline = await outlineWorld(page, 'nino4');
+      expect(outline?.bbox, 'the outline must still be measurable after the shrink').not.toBeNull();
+
+      /* "exactly one refit" is the unobservable claim this FIXME is about; the behavioural consequences follow. */
+      const margin = Math.min(
+        outline!.bbox!.x - rectAfter.x,
+        rectAfter.x + rectAfter.w - (outline!.bbox!.x + outline!.bbox!.w),
+        outline!.bbox!.y - rectAfter.y,
+        rectAfter.y + rectAfter.h - (outline!.bbox!.y + outline!.bbox!.h),
+      );
+
+      annotate(
+        'G4c',
+        `URL bar 390x844 -> 390x788: free h ${rectBefore.h.toFixed(2)} -> ${rectAfter.h.toFixed(2)}; ` +
+          `d ${before.toFixed(5)} -> ${settled.toFixed(5)}; bbox margin ${margin.toFixed(2)} px`,
+      );
+
+      expect(margin, `the outline must stay inside the free rect, margin ${margin.toFixed(2)} px`).toBeGreaterThanOrEqual(0);
+      errs.assertClean();
+    },
+  );
+
+  test('G4(d): the sheet reserves the Peek height at every tier and d does not move between tiers', async ({ page }) => {
+    const errs = watchErrors(page);
+
+    /*
+     * Both viewports in one test: the claim is about the reservation formula, and the two halves are the same
+     * formula at two heights — 0.18 x 844 = 151.92 and 0.18 x 1376 = 247.68. Splitting them would duplicate the
+     * press-and-settle preamble for no additional evidence.
+     */
+    await openLive(page, PHONE);
+    await pressCardByKeyboard(page, 'nino4');
+    const settledD = await settleFlight(page);
+    const free = await reservedBottomPx(page);
+
+    const slider = page.getByRole('slider', { name: 'Sheet position' });
+    const walk: Array<{ tier: string; key: 'Home' | 'ArrowUp' | 'End'; want: string }> = [
+      { tier: 'peek', key: 'Home', want: '0' },
+      { tier: 'half', key: 'ArrowUp', want: '1' },
+      { tier: 'full', key: 'End', want: '2' },
+      { tier: 'peek again', key: 'Home', want: '0' },
+    ];
+
+    const readings: Array<{ tier: string; d: number; reserve: number; tierName: string | null; occlusion: string }> = [];
+    for (const step of walk) {
+      await slider.focus();
+      await page.keyboard.press(step.key);
+      await expect.poll(() => slider.getAttribute('aria-valuenow'), { timeout: 10_000 }).toBe(step.want);
+      await waitForSheetStill(page);
+      const d = await page.evaluate(() => window.__globe!.distance());
+      const r = await reservedBottomPx(page);
+      const tierName = await sheetTier(page);
+
+      /*
+       * Occlusion is recorded, never asserted (Part Q: "Record occlusion at Half and Full as annotations only").
+       * The sheet covering part of the globe at those tiers is a layout decision, not a defect this test may
+       * rule on; the number that matters is that the reservation itself did not change.
+       */
+      const occlusion = await page.evaluate(() => {
+        const el = document.querySelector('[data-tier]');
+        if (!el) return 'no sheet';
+        const b = el.getBoundingClientRect();
+        return `sheet top ${b.top.toFixed(1)} (${((b.top / window.innerHeight) * 100).toFixed(1)}% of viewport)`;
+      });
+
+      readings.push({ tier: step.tier, d, reserve: r.reserve, tierName, occlusion });
+    }
+
+    annotate(
+      'G4d-phone',
+      readings
+        .map(
+          (x) => `${x.tier}: tier ${x.tierName}, reserve ${x.reserve.toFixed(2)} px, d ${x.d.toFixed(6)}, ${x.occlusion}`,
+        )
+        .join(' | '),
+    );
+
+    /* 151.92 is 0.18 x 844 — `peekVisible`, layoutMath.ts:143. Tolerance 1 px, as issued. */
+    for (const r of readings) {
+      expect(Math.abs(r.reserve - 151.92), `390x844 at ${r.tier}: reserve ${r.reserve.toFixed(2)} vs 151.92`).toBeLessThanOrEqual(1);
+      expect(Math.abs(r.d - settledD), `390x844 at ${r.tier}: d must not move between tiers`).toBeLessThanOrEqual(1e-3);
+    }
+
+    /* Same claim at 1032x1376: 0.18 x 1376 = 247.68. */
+    await page.setViewportSize({ width: 1032, height: 1376 });
+    await settleStable(page);
+    const tab = await reservedBottomPx(page);
+    const tabD = await page.evaluate(() => window.__globe!.distance());
+
+    annotate(
+      'G4d-tablet',
+      `1032x1376: reserve ${tab.reserve.toFixed(2)} px at free offY ${tab.freeY.toFixed(2)} h ${tab.freeH.toFixed(2)} ` +
+        `in ${tab.vh}; d ${tabD.toFixed(5)}`,
+    );
+
+    expect(Math.abs(tab.reserve - 247.68), `1032x1376 reserve ${tab.reserve.toFixed(2)} vs 247.68`).toBeLessThanOrEqual(1);
+    expect(tab.reserve, 'the reservation scales with viewport height, so the tablet must reserve more').toBeGreaterThan(
+      free.reserve,
+    );
+    errs.assertClean();
+  });
+});
+
+test.describe('EXTRA G5 toggle-off releases the box; d holds where the box flight left it', () => {
   /*
    * The trace helper, shared by all three viewports. M6 asks for d, |target| and dFit at 0, 1, 3 and 5 s and
    * for a statement about whether d drifts TOWARD dFit once the box is released. Those numbers are annotations,
