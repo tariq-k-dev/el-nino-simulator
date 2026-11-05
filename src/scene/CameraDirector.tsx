@@ -332,6 +332,9 @@ const SCRATCH_DIR = new THREE.Vector3()
 const VIEW_DEFAULT_ANGLE_DEG = 0.5
 const VIEW_DEFAULT_DISTANCE = 0.002
 
+/** Pointer travel (CSS px) after pointerdown before a box flight counts as user-dragged and is cancelled. */
+const BOX_CANCEL_DRAG_PX = 6
+
 /** The refs and helpers either policy needs. Passed explicitly so both policies stay module-level. */
 interface PolicyContext {
   camera: THREE.PerspectiveCamera
@@ -1127,6 +1130,84 @@ export function CameraDirector({
     const controls = controlsRef.current
     if (!controls) return undefined
 
+    const dom = controls.domElement as HTMLElement
+    /* Where the current pointer press began; null when no pointer is down (so a `start` with null = wheel). */
+    let downAt: { x: number; y: number } | null = null
+
+    /**
+     * Cancel a Niño box flight because the USER took the camera.
+     *
+     * Extracted so the drag path and the wheel path run the identical cancel, and so the reasoning below
+     * lives in one place instead of being duplicated at two call sites that could drift apart.
+     *
+     * ## NINO-HARDEN B3b (A2b and A2c): user input CANCELS a Niño box flight
+     *
+     * The machine's `USER_ORBIT_START` only knows about REGION flights; a box flight does not run
+     * through the machine at all, so nothing was cancelling it. The measured effect at 1280x720:
+     * a drag during the box tween traced 2.4881 -> 2.4426 and a wheel-out through it traced
+     * 2.6996 -> 2.446, i.e. in both cases `runNinoFlyTo` kept writing the camera every frame and
+     * pulled it back to the box's fitted distance. The user's input was overwritten in flight.
+     *
+     * ## Why the cancel is DEFERRED for a pointer press
+     *
+     * OrbitControls raises `start` on pointerdown, before R3F's parent-level handler has seen the event,
+     * so cancelling there cancelled the flight for EVERY press — including a press that lands on a pin
+     * and a bare tap that moves nothing. Measured consequence (G3(a)): a pin press 300 ms into a flight
+     * froze the camera mid-tween and left the box selected, i.e. "cancels without deciding", and G3(h)'s
+     * zero-movement tap cancelled a flight it must not touch.
+     *
+     * So a pointer press only RECORDS where it began (`onPointerDownCapture`); the cancel happens when
+     * the pointer travels past `BOX_CANCEL_DRAG_PX` (`onPointerMoveCheck`), or when the selection changes
+     * through `focusNinoBox(null)` because a pin's `onSelect` fired. A wheel or keyboard gesture has no
+     * pointer down, so it still cancels immediately in `onStart`.
+     *
+     * `activeNinoBoxId` is deliberately NOT cleared: the brief's rule is that the box stays highlighted,
+     * because the user interrupted the CAMERA, not the selection.
+     *
+     * ## NINO-HARDEN B7 + ADDENDUM (1): the SELECTION is deliberately NOT cleared here
+     *
+     * A user cancel stops the tween and hands the camera to the user; the box stays selected and
+     * highlighted, and the spin stays paused. Clearing `activeNinoBoxId` here — which the first B7
+     * attempt did — would make a cancelled flight immune to the resize re-fit, which the addendum
+     * forbids: "A user drag or wheel that cancelled the flight must not block the re-fit to the new
+     * free rect."
+     *
+     * ## Why `USER_ZOOM` is dispatched
+     *
+     * Cancelling the flight hands the radius back to the frame rig's fit channel, which would ease it to
+     * `dFit` on the very next frame — so a cancelled flight would still end at the fit distance rather
+     * than where the user left it. `USER_ZOOM` is the machine's own word for "the user owns the
+     * distance", and it is the same event the wheel path dispatches, so this does not invent a second
+     * meaning for `userZoomed`.
+     */
+    const cancelBoxFlight = (): void => {
+      ninoFlight.current = null
+      dispatch({ type: "USER_ZOOM" })
+      dispatch({ type: "USER_ORBIT_START" })
+    }
+
+    /*
+     * CAPTURE phase on pointerdown, because OrbitControls' own pointerdown listener is on the same
+     * element and raises `start` synchronously: the press position has to be recorded before `onStart`
+     * runs, or `onStart` cannot tell a pointer press from a wheel.
+     */
+    const onPointerDownCapture = (e: PointerEvent): void => {
+      downAt = { x: e.clientX, y: e.clientY }
+    }
+    const onPointerMoveCheck = (e: PointerEvent): void => {
+      if (!downAt || !ninoFlight.current) return
+      if (
+        Math.hypot(e.clientX - downAt.x, e.clientY - downAt.y) >
+        BOX_CANCEL_DRAG_PX
+      ) {
+        downAt = null
+        cancelBoxFlight()
+      }
+    }
+    const onPointerEnd = (): void => {
+      downAt = null
+    }
+
     const onStart = (): void => {
       /*
        * A pin click fires pointerdown, which immediately raises OrbitControls' 'start' event.
@@ -1141,45 +1222,17 @@ export function CameraDirector({
       }
 
       /* A drag the user started during a fly-to cancels it; the machine knows the rule. */
-      /*
-       * NINO-HARDEN B3b (A2b and A2c): user input CANCELS a Niño box flight.
-       *
-       * The machine's `USER_ORBIT_START` only knows about REGION flights; a box flight does not run
-       * through the machine at all, so nothing was cancelling it. The measured effect at 1280x720:
-       * a drag during the box tween traced 2.4881 -> 2.4426 and a wheel-out through it traced
-       * 2.6996 -> 2.446, i.e. in both cases `runNinoFlyTo` kept writing the camera every frame and
-       * pulled it back to the box's fitted distance. The user's input was overwritten in flight.
-       *
-       * `'start'` rather than the two gesture listeners the brief names: OrbitControls raises `start`
-       * for rotate, dolly AND pan alike (it brackets every gesture it handles), so one site covers
-       * the drag and the wheel instead of two sites that could drift apart. Guarded on
-       * `ninoFlight.current !== null`, so with the flag off — where the ref is never assigned — this
-       * is a single null check that cannot change any behaviour.
-       *
-       * `activeNinoBox` is deliberately NOT cleared: the brief's rule is that the box stays
-       * highlighted, because the user interrupted the CAMERA, not the selection.
-       */
       if (ninoFlight.current) {
-        ninoFlight.current = null
-        /*
-         * NINO-HARDEN B7 + ADDENDUM (1): the SELECTION is deliberately NOT cleared here.
-         *
-         * A user cancel stops the tween and hands the camera to the user; the box stays selected and
-         * highlighted, and the spin stays paused. Clearing `activeNinoBoxId` here — which the first B7
-         * attempt did — would make a cancelled flight immune to the resize re-fit, which the addendum
-         * forbids: "A user drag or wheel that cancelled the flight must not block the re-fit to the
-         * new free rect."
-         */
-        /*
-         * Mark the camera user-controlled, exactly as a user zoom does.
-         *
-         * Cancelling the flight hands the radius back to the frame rig's fit channel, which would
-         * ease it to `dFit` on the very next frame — so a cancelled flight would still end at the
-         * fit distance rather than where the user left it. `USER_ZOOM` is the machine's own word for
-         * "the user owns the distance", and it is the same event the wheel path dispatches, so this
-         * does not invent a second meaning for `userZoomed`.
-         */
-        dispatch({ type: "USER_ZOOM" })
+        if (downAt !== null) {
+          /*
+           * Pointer press: DEFER. A tap (or a press on a pin) must not cancel; the drag threshold or the
+           * selection change does. Do not dispatch anything here.
+           */
+          return
+        }
+        /* No pointer is down, so this `start` is a wheel/keyboard gesture: cancel immediately, as before. */
+        cancelBoxFlight()
+        return
       }
       dispatch({ type: "USER_ORBIT_START" })
     }
@@ -1207,9 +1260,17 @@ export function CameraDirector({
 
     controls.addEventListener("start", onStart)
     controls.addEventListener("change", onChange)
+    dom.addEventListener("pointerdown", onPointerDownCapture, true)
+    dom.addEventListener("pointermove", onPointerMoveCheck)
+    dom.addEventListener("pointerup", onPointerEnd)
+    dom.addEventListener("pointercancel", onPointerEnd)
     return () => {
       controls.removeEventListener("start", onStart)
       controls.removeEventListener("change", onChange)
+      dom.removeEventListener("pointerdown", onPointerDownCapture, true)
+      dom.removeEventListener("pointermove", onPointerMoveCheck)
+      dom.removeEventListener("pointerup", onPointerEnd)
+      dom.removeEventListener("pointercancel", onPointerEnd)
     }
   }, [camera, controlsRef, activeRegion])
 
