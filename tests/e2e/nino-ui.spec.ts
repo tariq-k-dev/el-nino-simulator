@@ -2530,8 +2530,9 @@ async function reachablePin(
  *
  * A pin sampled before a click is stale by the CDP round trips between sample and pointerdown (pacific
  * moves ~160 px/s early in a box flight against a 35 px proxy). So: sample twice on animation frames in ONE
- * evaluate (page-clock stamped, with the canvas hit-test done in the same trip), derive a velocity, then
- * extrapolate by the time already elapsed plus ~1.5 round trips (move + down).
+ * evaluate (page-clock stamped, with an occlusion check (not covered by a panel, header, nav or dialog) done in
+ * the same trip), derive a velocity, then extrapolate by the time already elapsed plus ~1.5 round trips
+ * (move + down).
  *
  * `rttMs` is the caller's measured round-trip time. It is calibrated on an idle page, so it is a LOWER bound
  * for the in-flight cost — which is the safe direction: under-leading leaves the aim short of the pin, and the
@@ -2550,7 +2551,9 @@ async function clickPinLeading(
             t: performance.timeOrigin + performance.now(),
             pins: window.__globe!.pins().map((p) => {
               const el = document.elementFromPoint(p.x, p.y);
-              return { id: p.id, x: p.x, y: p.y, ok: !p.behind && !!p.facing && el?.tagName === 'CANVAS' };
+              const blocked =
+                el === null || !!el.closest('[data-occluder], aside, nav, header, [role="dialog"]');
+              return { id: p.id, x: p.x, y: p.y, ok: !p.behind && !!p.facing && !blocked };
             }),
           }),
         ),
@@ -3278,7 +3281,7 @@ test.describe('G5: aria-pressed truthfulness, keyboard activation and the live a
 
       annotate(
         'G5b',
-        `${vp.width}x${vp.height}: tier peek, activeElement ${active.tag}[role=${active.role}, ` +
+        `${vp.width}x${vp.height}: tier peek, activeElement ${active.tag} [role=${active.role}, ` +
           `aria-label="${active.label}"], announcement "${atPeek}"`,
       );
 
