@@ -821,6 +821,12 @@ export function GlobeScene({
           controlsRef={controlsRef}
           focusNonce={focusNonce}
           probe={frameProbe}
+          /*
+           * The screen-space fallback's selection path. `handleSelect` rather than `onSelect` so the
+           * press also sets `pinPressRef`, which is what stops the gesture's own `onPointerMissed`
+           * from clearing the selection the fallback just made.
+           */
+          onSelectRegion={handleSelect}
         />
 
         <OrbitControls
