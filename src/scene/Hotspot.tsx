@@ -205,7 +205,7 @@ export function Hotspot({
      * The proxy's POSITION is deliberately static — it sits on the idle head, the point `__globe.pins()`
      * reports and the specs project. If it followed the hover/active lift, hovering would move the proxy
      * out from under the cursor and the pointer-out it caused would move it back: a feedback loop that
-     * flickers the cursor. The active lift is 0.025 R (7.6 px at d_fit), well inside the 14 px radius, so
+     * flickers the cursor. The active lift is 0.025 R (7.6 px at d_fit), well inside the 18 px radius, so
      * a click aimed at the projected head still lands after a selection.
      *
      * `motionExtraPx` widens the radius by the pin's recent screen speed times `MOTION_LEAD_S` (capped at
@@ -504,7 +504,7 @@ export function Hotspot({
         The HIT PROXY — the only click/hover/cursor target for this pin.
 
         A non-rendering sphere centred on the pin HEAD and scaled every frame so its projected radius is
-        `HIT_PX` (14 px, 22 px on a coarse pointer): a sphere's silhouette is a circle from every
+        `HIT_PX` (18 px, 28 px on a coarse pointer): a sphere's silhouette is a circle from every
         direction, so a constant screen footprint costs one scalar and no billboarding, and it never
         collapses edge-on the way the tangent ring does.
 
