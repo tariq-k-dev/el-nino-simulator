@@ -69,6 +69,20 @@ const SCRATCH_NORMAL = new THREE.Vector3()
 const SCRATCH_CENTRE = new THREE.Vector3()
 const SCRATCH_PROXY = new THREE.Vector3()
 
+/*
+ * Scratch for the per-frame screen projection of the proxy centre.
+ *
+ * Same reasoning as the pair above: the proxy's apparent velocity is computed every frame, so a fresh
+ * `Vector3` per frame would allocate for the whole life of the page. `project()` mutates in place, so one
+ * module-scope vector is enough — the frame loop is synchronous and never re-entrant.
+ */
+const SCRATCH_NDC = new THREE.Vector3()
+
+/** Seconds of on-screen travel the hit radius leads by. Roughly one input-to-pointerdown latency. */
+const MOTION_LEAD_S = 0.2
+/** Ceiling on the motion allowance, in CSS px. */
+const MOTION_EXTRA_MAX_PX = 40
+
 /**
  * Does this browser report a coarse primary pointer (a thumb rather than a cursor tip)?
  *
@@ -102,6 +116,9 @@ export function Hotspot({
   const proxyRef = useRef<THREE.Mesh>(null)
   const labelWrapRef = useRef<HTMLDivElement>(null)
   const facingRef = useRef(1)
+  /* Last frame's proxy centre in CSS px, and the current motion allowance in px. */
+  const prevScreenRef = useRef<{ x: number; y: number } | null>(null)
+  const motionExtraRef = useRef(0)
   /* Read once per mount: see `coarsePointer`. */
   const hitPx = useMemo(() => (coarsePointer() ? HIT_PX_COARSE : HIT_PX), [])
 
@@ -187,6 +204,9 @@ export function Hotspot({
      * out from under the cursor and the pointer-out it caused would move it back: a feedback loop that
      * flickers the cursor. The active lift is 0.025 R (7.6 px at d_fit), well inside the 14 px radius, so
      * a click aimed at the projected head still lands after a selection.
+     *
+     * `motionExtraPx` widens the radius by the pin's recent screen speed times `MOTION_LEAD_S` (capped at
+     * `MOTION_EXTRA_MAX_PX`), so a click aimed at a moving pin still lands.
      */
     const proxy = proxyRef.current
     if (proxy) {
@@ -195,7 +215,37 @@ export function Hotspot({
       const focalPx =
         state.size.height / 2 / Math.tan(((cam.fov ?? 42) * Math.PI) / 360)
       const dist = cam.position.distanceTo(SCRATCH_PROXY)
-      const effectiveHitPx = hitPx * 2.5
+
+      /*
+       * Pin velocity in CSS px/s: project the proxy centre to the screen, then diff it against last frame's
+       * position. This is the pin's apparent motion (camera flight plus planet spin), which is what moves
+       * it out from under an aimed pointer. Never React state, for the same reason as the radius.
+       */
+      SCRATCH_NDC.copy(SCRATCH_PROXY).project(cam)
+      if (SCRATCH_NDC.z > 1 || !Number.isFinite(SCRATCH_NDC.x + SCRATCH_NDC.y)) {
+        /* Behind the camera or degenerate: no meaningful velocity. */
+        prevScreenRef.current = null
+        motionExtraRef.current = 0
+      } else {
+        const sx = (SCRATCH_NDC.x * 0.5 + 0.5) * state.size.width
+        const sy = (-SCRATCH_NDC.y * 0.5 + 0.5) * state.size.height
+        const prev = prevScreenRef.current
+        let raw = 0
+        if (prev && delta > 1e-4) {
+          const speed = Math.hypot(sx - prev.x, sy - prev.y) / delta
+          raw = Math.min(MOTION_EXTRA_MAX_PX, speed * MOTION_LEAD_S)
+        }
+        prevScreenRef.current = { x: sx, y: sy }
+        /* Rise instantly (a moving pin needs the allowance now), decay smoothly (no flicker as it slows). */
+        motionExtraRef.current =
+          raw > motionExtraRef.current
+            ? raw
+            : motionExtraRef.current +
+              (raw - motionExtraRef.current) * Math.min(1, delta * 10)
+      }
+      const motionExtraPx = motionExtraRef.current
+
+      const effectiveHitPx = hitPx * 2.5 + motionExtraPx
       const worldR =
         focalPx > 0 ? (effectiveHitPx * dist) / focalPx : PIN_HIT_CLAMP_R
       proxy.scale.setScalar(Math.min(worldR, PIN_HIT_CLAMP_R * 2.5))
