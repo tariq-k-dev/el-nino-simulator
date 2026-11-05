@@ -365,6 +365,19 @@ const BOX_CANCEL_DRAG_PX = 6
  */
 const SCREEN_HIT_FALLBACK_PX = 50
 
+/**
+ * The same fallback's radius while a FLIGHT is running (G3(a)).
+ *
+ * `Hotspot.tsx` measures 74.6 px of pin drift between pointerdown and pointerup during a fly-to, so the
+ * 50 px recovery radius above is not enough to catch a press the ray lost mid-tween: the press falls
+ * through to the cancel path, the camera freezes mid-flight and the box stays selected — "cancels
+ * without deciding". 100 px covers the measured drift with margin.
+ *
+ * Only the box-flight press path uses this. The region-flight path keeps `SCREEN_HIT_FALLBACK_PX`, so
+ * the radius the existing specs were written against does not move.
+ */
+const SCREEN_HIT_FALLBACK_FLIGHT_PX = 100
+
 /** The refs and helpers either policy needs. Passed explicitly so both policies stay module-level. */
 interface PolicyContext {
   camera: THREE.PerspectiveCamera
@@ -1256,7 +1269,11 @@ export function CameraDirector({
     }
 
     /**
-     * The nearest pin whose projected HEAD lies within `SCREEN_HIT_FALLBACK_PX` of a screen point.
+     * The nearest pin whose projected HEAD lies within `radius` of a screen point.
+     *
+     * `radius` defaults to `SCREEN_HIT_FALLBACK_PX`; the box-flight press path passes the wider
+     * `SCREEN_HIT_FALLBACK_FLIGHT_PX` (G3(a)). One implementation rather than two copies, so the facing
+     * gate, the projection and the "nearest wins" rule cannot drift apart between the two callers.
      *
      * ## Why a 2D test exists at all
      *
@@ -1286,12 +1303,16 @@ export function CameraDirector({
      * standing in for the ray origin — the two differ by the near plane (0.1) against a radius of
      * ~3.8, which cannot move the verdict.
      */
-    const screenSpacePinAt = (x: number, y: number): RegionId | null => {
+    const screenSpacePinAt = (
+      x: number,
+      y: number,
+      radius: number = SCREEN_HIT_FALLBACK_PX,
+    ): RegionId | null => {
       const s = sizeRef.current
       if (s.width <= 0 || s.height <= 0) return null
       const camLen = camera.position.length() || 1
       let bestId: RegionId | null = null
-      let bestDist = SCREEN_HIT_FALLBACK_PX
+      let bestDist = radius
       for (const region of Object.values(REGION_MAP)) {
         const head = regionHeadPosition(region.id, spin.current.y)
         /* Facing first: a back pin is skipped without paying for a projection. */
@@ -1381,7 +1402,38 @@ export function CameraDirector({
           /*
            * Pointer press: DEFER. A tap (or a press on a pin) must not cancel; the drag threshold or the
            * selection change does. Do not dispatch anything here.
+           *
+           * G3(a): a press that lands on a PIN is a DECISION, not a cancel, and while a box flight is
+           * running the raycast can lose it — the proxy is tested against the last rendered pose and the
+           * camera has moved since (74.6 px of drift, `Hotspot.tsx`). Without this the press fell through
+           * to the cancel path, which froze the camera mid-tween and left the box selected: "cancels
+           * without deciding". So ask the screen-space fallback first, at the widened flight radius, and
+           * treat a hit as the selection it was meant to be.
+           *
+           * The refs are cleared HERE for the same reason the region-flight branch above clears them:
+           * `onSelectRegion` reaches `App.selectRegion`, which only clears them a render later and only
+           * when `NINO_UI` is on. Until then `refitNinoForRect` would re-arm a flight for a box the user
+           * has just navigated away from, and `syncSpinPause` would keep the planet frozen under a region
+           * that is about to be focused.
+           *
+           * `ninoFlight` is deliberately NOT cleared: `submitNinoFocus(null)` inside `selectRegion` is the
+           * one place that knows how to cancel a box flight, and a second writer here would make the
+           * ordering between the two decide what the frame loop sees.
            */
+          if (onSelectRegion) {
+            const hit = screenSpacePinAt(
+              downAt.x,
+              downAt.y,
+              SCREEN_HIT_FALLBACK_FLIGHT_PX,
+            )
+            if (hit !== null) {
+              activeNinoBoxId.current = null
+              ninoRect.current = null
+              syncSpinPause()
+              onSelectRegion(hit)
+              return
+            }
+          }
           return
         }
         /* No pointer is down, so this `start` is a wheel/keyboard gesture: cancel immediately, as before. */
