@@ -83,6 +83,9 @@ const MOTION_LEAD_S = 0.2
 /** Ceiling on the motion allowance, in CSS px. */
 const MOTION_EXTRA_MAX_PX = 40
 
+/** A label `click` this soon after a label `pointerdown` is the same gesture, already handled. */
+const LABEL_DOWN_CLICK_WINDOW_MS = 1000
+
 /**
  * Does this browser report a coarse primary pointer (a thumb rather than a cursor tip)?
  *
@@ -304,6 +307,20 @@ export function Hotspot({
    * Re-dispatching carries the real `deltaY`, so OrbitControls' zoomSpeed and
    * damping apply exactly as over open space. `bubbles: false` keeps the
    * re-dispatched event from looping back into this handler.
+   *
+   * ## The label selects on POINTERDOWN, not on `click`
+   *
+   * The hit proxy already selects on pointerdown (see its `onPointerDown`), and the label has to do the
+   * same or the two targets disagree about what a press means. The failure this fixes is specific: the
+   * label is repositioned every frame while the camera flies, so a press that starts on the button can
+   * have the button move out from under the pointer before pointerup — the browser then fires no `click`
+   * at all, R3F never saw the press (the label is DOM, not a scene object), and the proxy is never hit.
+   * Nothing is selected and the box stays pressed.
+   *
+   * `click` is kept for the keyboard: Enter or Space produces a `click` with no preceding pointerdown, so
+   * `lastDownSelectAt` is stale and the click selects normally. A click that DOES follow a pointerdown
+   * within `LABEL_DOWN_CLICK_WINDOW_MS` is the same gesture and is ignored, so a press cannot select
+   * twice — a second `onSelect` would bump the focus nonce and re-fly the camera.
    */
   useEffect(() => {
     const el = labelWrapRef.current
@@ -325,8 +342,17 @@ export function Hotspot({
     }
 
     const btn = el.querySelector("button")
+    let lastDownSelectAt = -Infinity
+    const onDown = (e: PointerEvent) => {
+      if (e.button !== 0) return
+      e.stopPropagation()
+      lastDownSelectAt = performance.now()
+      onSelect(region.id)
+    }
     const onClick = (e: MouseEvent) => {
       e.stopPropagation()
+      /* The press already selected; do not select twice (a second select would re-trigger the focus nonce). */
+      if (performance.now() - lastDownSelectAt < LABEL_DOWN_CLICK_WINDOW_MS) return
       onSelect(region.id)
     }
     const onEnter = () => setHovered(true)
@@ -334,6 +360,7 @@ export function Hotspot({
 
     el.addEventListener("wheel", onWheel, { passive: true })
     if (btn) {
+      btn.addEventListener("pointerdown", onDown)
       btn.addEventListener("click", onClick)
       btn.addEventListener("pointerenter", onEnter)
       btn.addEventListener("pointerleave", onLeave)
@@ -342,6 +369,7 @@ export function Hotspot({
     return () => {
       el.removeEventListener("wheel", onWheel)
       if (btn) {
+        btn.removeEventListener("pointerdown", onDown)
         btn.removeEventListener("click", onClick)
         btn.removeEventListener("pointerenter", onEnter)
         btn.removeEventListener("pointerleave", onLeave)
