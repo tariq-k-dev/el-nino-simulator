@@ -1345,20 +1345,24 @@ export function CameraDirector({
             const hit = screenSpacePinAt(downAt.x, downAt.y)
             if (hit !== null) {
               /*
-               * Clear the Niño SELECTION, not only the flight.
+               * Clear the Niño SELECTION, and let the region selection own the camera.
                *
-               * `onSelectRegion` reaches `App.selectRegion`, which does clear the box — but only a render
-               * later, and only when `NINO_UI` is on. Until that render the director's own refs still say
-               * "a box is selected", so `refitNinoForRect` would re-arm a flight for a box the user has
-               * just navigated away from, and `syncSpinPause` would keep the planet frozen under a region
-               * that is about to be focused. Clearing here makes the director's state agree with the
-               * intent on the same frame the press is honoured.
+               * The FLIGHT is deliberately NOT cleared here. `onSelectRegion` reaches `App.selectRegion`,
+               * which calls `submitNinoFocus(null)` synchronously, and that is the one place that knows how
+               * to cancel a box flight. Writing `ninoFlight.current = null` here as well would make this
+               * branch a second writer of the same ref, and the ordering between the two would then decide
+               * which one the frame loop saw.
                *
-               * `ninoRect` goes with it: it is the record of which free rect the box distance was
+               * The refs below still have to be cleared HERE, because `App.selectRegion` only clears them a
+               * render later, and only when `NINO_UI` is on. Until that render the director's own refs would
+               * still say "a box is selected", so `refitNinoForRect` would re-arm a flight for a box the
+               * user has just navigated away from, and `syncSpinPause` would keep the planet frozen under a
+               * region that is about to be focused.
+               *
+               * `ninoRect` goes with them: it is the record of which free rect the box distance was
                * resolved against, and leaving it set would let the next box press compare against a stale
                * rect instead of seeding a fresh one.
                */
-              ninoFlight.current = null
               activeNinoBoxId.current = null
               ninoRect.current = null
               syncSpinPause()
