@@ -90,6 +90,7 @@ import {
   ninoFlyToDistance,
 } from "@/lib/ninoFraming"
 import { GLOBE_LOOK } from "@/scene/globeLook"
+import { PIN_HIT_GATE } from "@/scene/pinVisibilityBands"
 import {
   ARRIVE_EPSILON_R,
   FLY_DISTANCE_EASE_BASE,
@@ -156,6 +157,24 @@ function regionDirection(id: RegionId, spinY: number): THREE.Vector3 {
   const region = REGION_MAP[id]
   const [x, y, z] = latLonToVector3(region.lat, region.lon, 1)
   return new THREE.Vector3(x, y, z).applyAxisAngle(SPIN_AXIS_Y, spinY)
+}
+
+/**
+ * The WORLD position of a pin's visible HEAD, spun by the earth group's current rotation.
+ *
+ * The same point `Hotspot.tsx` draws its core at and `__globe.pins()` reports: the anchor radius
+ * lifted by `idleLift`, then offset along the normal by `coreOffset`. Derived from `regionDirection`
+ * rather than re-deriving the lat/lon, so the spin is applied in exactly one place — the reason
+ * `regionDirection` exists at all.
+ *
+ * Used only by the screen-space fallback below, which needs the point the user SEES rather than the
+ * surface anchor the raycast proxy is centred on.
+ */
+function regionHeadPosition(regionId: RegionId, spinY: number): THREE.Vector3 {
+  const r =
+    GLOBE_LOOK.pins.anchorRadius * GLOBE_LOOK.pins.idleLift +
+    GLOBE_LOOK.pins.coreOffset
+  return regionDirection(regionId, spinY).multiplyScalar(r)
 }
 
 /**
@@ -327,6 +346,8 @@ const DEFAULT_DIRECTION: THREE.Vector3 = DEFAULT_POSITION.clone().normalize()
  */
 const SCRATCH_OFFSET = new THREE.Vector3()
 const SCRATCH_DIR = new THREE.Vector3()
+/** Scratch for the screen-space fallback's normal. Pointer handlers are not re-entrant with the frame. */
+const SCRATCH_HIT = new THREE.Vector3()
 
 /** `viewIsDefault` tolerances: direction within 0.5 deg of the default, distance within 0.002. */
 const VIEW_DEFAULT_ANGLE_DEG = 0.5
@@ -334,6 +355,15 @@ const VIEW_DEFAULT_DISTANCE = 0.002
 
 /** Pointer travel (CSS px) after pointerdown before a box flight counts as user-dragged and is cancelled. */
 const BOX_CANCEL_DRAG_PX = 6
+
+/**
+ * Radius (CSS px) of the screen-space fallback that recovers a pin press the raycast missed.
+ *
+ * Deliberately wider than the proxy's own 18 px (28 px coarse) radius: this is a RECOVERY path for a
+ * press the ray already failed to resolve, so it should be forgiving rather than exact. It is not
+ * consulted on the ordinary path, so it cannot widen the real hit target.
+ */
+const SCREEN_HIT_FALLBACK_PX = 50
 
 /** The refs and helpers either policy needs. Passed explicitly so both policies stay module-level. */
 interface PolicyContext {
@@ -794,6 +824,13 @@ interface CameraDirectorProps {
   focusNonce: number
   /** Receives the per-frame probe state. */
   probe?: MutableRefObject<FrameProbeSink | null>
+  /**
+   * The app's region-selection path, for the screen-space fallback.
+   *
+   * Optional so the director still mounts without it (a test harness, a future shell). When it is
+   * absent the fallback is skipped and a press mid-flight cancels the flight exactly as before.
+   */
+  onSelectRegion?: (id: RegionId) => void
 }
 
 export function CameraDirector({
@@ -802,9 +839,19 @@ export function CameraDirector({
   controlsRef,
   focusNonce,
   probe,
+  onSelectRegion,
 }: CameraDirectorProps) {
   const camera = useThree((state) => state.camera) as THREE.PerspectiveCamera
   const size = useThree((state) => state.size)
+  /**
+   * The canvas size, readable from the pointer handlers.
+   *
+   * A ref rather than a dependency: `size` changes on every resize, and putting it in the
+   * OrbitControls effect's dependency list would tear down and re-register four listeners on each
+   * resize frame. The frame callback below refreshes it, so a handler always sees the size the last
+   * rendered frame used — which is the size the user aimed at.
+   */
+  const sizeRef = useRef(size)
 
   /*
    * THE ONE layout-mode listener (step 3-MOBILE1 B).
@@ -1208,6 +1255,68 @@ export function CameraDirector({
       downAt = null
     }
 
+    /**
+     * The nearest pin whose projected HEAD lies within `SCREEN_HIT_FALLBACK_PX` of a screen point.
+     *
+     * ## Why a 2D test exists at all
+     *
+     * The pin proxy is a real scene object and its `raycast` is the primary hit test, but it is
+     * evaluated against the camera's matrices from the LAST RENDER. During a fly-to the camera is
+     * written every frame and a pointer event can arrive between two frames, so the ray is cast from
+     * a pose the picture has already left — `Hotspot.tsx` measures 74.6 px of pin drift between
+     * pointerdown and pointerup. When a press lands in that gap the ray misses, nothing is selected,
+     * and the flight is cancelled instead: the user's press is swallowed.
+     *
+     * This answers "is the pointer near where a pin is DRAWN" for exactly that case, and only that
+     * case. It is not consulted on the ordinary path, so the proxy's 18 px (28 px coarse) radius and
+     * its facing gate remain the single definition of "a pin was pressed" everywhere else.
+     *
+     * ## The projection uses the LAST RENDERED pose, on purpose
+     *
+     * `project()` reads `camera.matrixWorldInverse`, which R3F refreshes before each render and which
+     * this module does not touch between frames. That is the pose the user was looking at when they
+     * aimed, so it is the correct one to compare against — refreshing the matrix here would project
+     * the pin to where it is about to be drawn rather than where it was seen.
+     *
+     * ## The facing gate is reproduced
+     *
+     * A back-facing pin projects to a point INSIDE the disc, so a pure proximity test would make an
+     * invisible pin selectable through the globe. The test is the same dot product `pinFacesCamera`
+     * performs (`pinVisibilityBands.ts`), with the globe centre at the origin and `camera.position`
+     * standing in for the ray origin — the two differ by the near plane (0.1) against a radius of
+     * ~3.8, which cannot move the verdict.
+     */
+    const screenSpacePinAt = (x: number, y: number): RegionId | null => {
+      const s = sizeRef.current
+      if (s.width <= 0 || s.height <= 0) return null
+      const camLen = camera.position.length() || 1
+      let bestId: RegionId | null = null
+      let bestDist = SCREEN_HIT_FALLBACK_PX
+      for (const region of Object.values(REGION_MAP)) {
+        const head = regionHeadPosition(region.id, spin.current.y)
+        /* Facing first: a back pin is skipped without paying for a projection. */
+        const n = SCRATCH_HIT.copy(head).normalize()
+        const facing =
+          (n.x * camera.position.x +
+            n.y * camera.position.y +
+            n.z * camera.position.z) /
+          camLen
+        if (facing <= PIN_HIT_GATE) continue
+
+        head.project(camera)
+        /* `z > 1` is behind the camera; a non-finite NDC is a degenerate matrix. */
+        if (head.z > 1 || !Number.isFinite(head.x + head.y)) continue
+        const sx = (head.x * 0.5 + 0.5) * s.width
+        const sy = (-head.y * 0.5 + 0.5) * s.height
+        const d = Math.hypot(sx - x, sy - y)
+        if (d < bestDist) {
+          bestDist = d
+          bestId = region.id
+        }
+      }
+      return bestId
+    }
+
     const onStart = (): void => {
       /*
        * A pin click fires pointerdown, which immediately raises OrbitControls' 'start' event.
@@ -1216,6 +1325,30 @@ export function CameraDirector({
        */
       if (activeRegion !== null || targetRegion.current !== null) {
         if (ninoFlight.current) {
+          /*
+           * SCREEN-SPACE FALLBACK — see `screenSpacePinAt`.
+           *
+           * A press that lands on a pin while a region flight is running is the case the raycast
+           * loses: the proxy is tested against the last rendered pose, the camera has moved since,
+           * and the press is swallowed — the flight is cancelled and nothing is selected. So before
+           * cancelling, ask the 2D test whether the pointer is near a drawn pin, and if it is, treat
+           * the press as the selection it was meant to be.
+           *
+           * `onSelectRegion` is the app's own selection path (`GlobeScene`'s `handleSelect`), so the
+           * Niño selection is cleared and the spin resumed by `selectRegion` — which already calls
+           * `submitNinoFocus(null)` — rather than by a second copy of that rule here. A press the ray
+           * DID resolve also reaches this line, and the duplicate `selectRegion` is harmless: React
+           * batches the two state updates into one render, so the focus nonce moves once and the
+           * camera flies once.
+           */
+          if (downAt !== null && onSelectRegion) {
+            const hit = screenSpacePinAt(downAt.x, downAt.y)
+            if (hit !== null) {
+              ninoFlight.current = null
+              onSelectRegion(hit)
+              return
+            }
+          }
           ninoFlight.current = null
         }
         return
@@ -1272,7 +1405,7 @@ export function CameraDirector({
       dom.removeEventListener("pointerup", onPointerEnd)
       dom.removeEventListener("pointercancel", onPointerEnd)
     }
-  }, [camera, controlsRef, activeRegion])
+  }, [camera, controlsRef, activeRegion, onSelectRegion, spin])
 
   /* ------------------------------------------- selection -> machine (replaces CameraRig's effect) */
 
@@ -1342,6 +1475,7 @@ export function CameraDirector({
   /* ------------------------------------------------------------------------ the frame */
 
   useFrame((_, delta) => {
+    sizeRef.current = size
     const controls = controlsRef.current
     if (!controls) return
 
