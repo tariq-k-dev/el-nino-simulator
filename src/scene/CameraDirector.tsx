@@ -357,6 +357,24 @@ const VIEW_DEFAULT_DISTANCE = 0.002
 const BOX_CANCEL_DRAG_PX = 6
 
 /**
+ * True when a press that began at `downAt` ended as a CLICK/TAP rather than a drag.
+ *
+ * The same `BOX_CANCEL_DRAG_PX` threshold the drag-cancel uses, so "a drag" means exactly one thing in
+ * this file: a press that travels further than this cancels the flight, and a press that does not is a
+ * decision the pointerup is allowed to commit.
+ */
+function isClick(
+  downAt: { x: number; y: number } | null,
+  e: PointerEvent,
+): boolean {
+  return (
+    downAt !== null &&
+    Math.hypot(e.clientX - downAt.x, e.clientY - downAt.y) <=
+      BOX_CANCEL_DRAG_PX
+  )
+}
+
+/**
  * Radius (CSS px) of the screen-space fallback that recovers a pin press the raycast missed.
  *
  * Deliberately wider than the proxy's own 18 px (28 px coarse) radius: this is a RECOVERY path for a
@@ -1193,6 +1211,13 @@ export function CameraDirector({
     const dom = controls.domElement as HTMLElement
     /* Where the current pointer press began; null when no pointer is down (so a `start` with null = wheel). */
     let downAt: { x: number; y: number } | null = null
+    /**
+     * The pin the current press landed on, resolved at POINTERDOWN and held until the release decides.
+     *
+     * A closure variable rather than `dom.dataset`: it has the same lifetime as `downAt` beside it, it
+     * cannot be observed or clobbered by anything outside this effect, and it needs no string parsing.
+     */
+    let pinHit: RegionId | null = null
 
     /**
      * Cancel a Niño box flight because the USER took the camera.
@@ -1253,6 +1278,23 @@ export function CameraDirector({
      */
     const onPointerDownCapture = (e: PointerEvent): void => {
       downAt = { x: e.clientX, y: e.clientY }
+      /*
+       * Resolve a potential pin hit NOW, at the press, and hold it until the release decides.
+       *
+       * It cannot be resolved at pointerup: by then the flight has moved the camera on and the pin has
+       * drifted (74.6 px between pointerdown and pointerup, `Hotspot.tsx`), so the point the user aimed
+       * at is no longer under the pointer. Resolving at the press and committing at the release is what
+       * makes "press on a pin during a flight" a decision rather than a cancel — without also making a
+       * DRAG a decision, which is what `onPointerMoveCheck` below prevents.
+       */
+      pinHit = null
+      if (ninoFlight.current !== null && onSelectRegion) {
+        pinHit = screenSpacePinAt(
+          downAt.x,
+          downAt.y,
+          SCREEN_HIT_FALLBACK_FLIGHT_PX,
+        )
+      }
     }
     const onPointerMoveCheck = (e: PointerEvent): void => {
       if (!downAt || !ninoFlight.current) return
@@ -1260,11 +1302,48 @@ export function CameraDirector({
         Math.hypot(e.clientX - downAt.x, e.clientY - downAt.y) >
         BOX_CANCEL_DRAG_PX
       ) {
+        /* A drag is not a decision: drop the held hit so the release cannot commit it. */
+        pinHit = null
         downAt = null
         cancelBoxFlight()
       }
     }
-    const onPointerEnd = (): void => {
+    const onPointerEnd = (e: PointerEvent): void => {
+      /*
+       * COMMIT a held pin hit — but only for a click/tap, and only for `pointerup`.
+       *
+       * `pointercancel` is not a decision (the browser took the pointer away), so it clears the hit
+       * without selecting. A press that travelled past `BOX_CANCEL_DRAG_PX` has already had its hit
+       * dropped by `onPointerMoveCheck`, so `isClick` is a second, independent guard rather than the
+       * only one.
+       */
+      if (
+        e.type === "pointerup" &&
+        pinHit !== null &&
+        isClick(downAt, e) &&
+        onSelectRegion
+      ) {
+        const hit = pinHit
+        pinHit = null
+        downAt = null
+        /*
+         * The refs are cleared HERE for the same reason the `onStart` branches clear them:
+         * `onSelectRegion` reaches `App.selectRegion`, which only clears them a render later and only
+         * when `NINO_UI` is on. Until then `refitNinoForRect` would re-arm a flight for a box the user
+         * has just navigated away from, and `syncSpinPause` would keep the planet frozen under a region
+         * that is about to be focused.
+         *
+         * `ninoFlight` is deliberately NOT cleared: `submitNinoFocus(null)` inside `selectRegion` is the
+         * one place that knows how to cancel a box flight, and a second writer here would make the
+         * ordering between the two decide what the frame loop sees.
+         */
+        activeNinoBoxId.current = null
+        ninoRect.current = null
+        syncSpinPause()
+        onSelectRegion(hit)
+        return
+      }
+      pinHit = null
       downAt = null
     }
 
@@ -1288,20 +1367,27 @@ export function CameraDirector({
      * case. It is not consulted on the ordinary path, so the proxy's 18 px (28 px coarse) radius and
      * its facing gate remain the single definition of "a pin was pressed" everywhere else.
      *
-     * ## The projection uses the LAST RENDERED pose, on purpose
+     * ## The projection refreshes the camera's matrices first
      *
-     * `project()` reads `camera.matrixWorldInverse`, which R3F refreshes before each render and which
-     * this module does not touch between frames. That is the pose the user was looking at when they
-     * aimed, so it is the correct one to compare against — refreshing the matrix here would project
-     * the pin to where it is about to be drawn rather than where it was seen.
+     * `project()` reads `camera.matrixWorldInverse`, which R3F refreshes before each render — but a
+     * pointer event can arrive BETWEEN two frames, and during a flight this module writes the camera
+     * every frame. `Camera.updateMatrixWorld` recomputes the inverse, so the projection is against the
+     * pose the camera holds right now: the pose the press is being resolved against and the one the
+     * next frame will draw. Without it a press resolved mid-flight is compared against a pose the
+     * picture has already left, which is the same staleness that loses the raycast.
      *
-     * ## The facing gate is reproduced
+     * ## The facing gate is reproduced, and relaxed for the flight radius
      *
      * A back-facing pin projects to a point INSIDE the disc, so a pure proximity test would make an
      * invisible pin selectable through the globe. The test is the same dot product `pinFacesCamera`
      * performs (`pinVisibilityBands.ts`), with the globe centre at the origin and `camera.position`
      * standing in for the ray origin — the two differ by the near plane (0.1) against a radius of
      * ~3.8, which cannot move the verdict.
+     *
+     * The widened FLIGHT radius relaxes the gate to the front hemisphere (`facing > 0`) instead of
+     * `PIN_HIT_GATE`: a pin near the limb is both the one a mid-flight press is most likely to be
+     * aimed at and the one the ray is most likely to lose, and the ordinary radius keeps the strict
+     * gate so the hit target the existing specs were written against does not move.
      */
     const screenSpacePinAt = (
       x: number,
@@ -1310,6 +1396,8 @@ export function CameraDirector({
     ): RegionId | null => {
       const s = sizeRef.current
       if (s.width <= 0 || s.height <= 0) return null
+      /* Fresh matrices — see "The projection refreshes the camera's matrices first" above. */
+      camera.updateMatrixWorld(true)
       const camLen = camera.position.length() || 1
       let bestId: RegionId | null = null
       let bestDist = radius
@@ -1322,7 +1410,9 @@ export function CameraDirector({
             n.y * camera.position.y +
             n.z * camera.position.z) /
           camLen
-        if (facing <= PIN_HIT_GATE) continue
+        /* Strict gate at the ordinary radius, front hemisphere at the widened flight radius. */
+        const gate = radius > SCREEN_HIT_FALLBACK_PX ? 0 : PIN_HIT_GATE
+        if (facing <= gate) continue
 
         head.project(camera)
         /* `z > 1` is behind the camera; a non-finite NDC is a degenerate matrix. */
@@ -1400,40 +1490,18 @@ export function CameraDirector({
       if (ninoFlight.current) {
         if (downAt !== null) {
           /*
-           * Pointer press: DEFER. A tap (or a press on a pin) must not cancel; the drag threshold or the
-           * selection change does. Do not dispatch anything here.
+           * Pointer press: DEFER — the RELEASE decides.
            *
-           * G3(a): a press that lands on a PIN is a DECISION, not a cancel, and while a box flight is
-           * running the raycast can lose it — the proxy is tested against the last rendered pose and the
-           * camera has moved since (74.6 px of drift, `Hotspot.tsx`). Without this the press fell through
-           * to the cancel path, which froze the camera mid-tween and left the box selected: "cancels
-           * without deciding". So ask the screen-space fallback first, at the widened flight radius, and
-           * treat a hit as the selection it was meant to be.
+           * `onPointerDownCapture` has already resolved whether the press landed on a pin (at the
+           * widened flight radius) and held it; `onPointerEnd` commits it only if the press ends as a
+           * click/tap, and `onPointerMoveCheck` drops it and cancels the flight if the press becomes a
+           * drag. Deciding here instead would make every press a decision, which is the G3(a) defect
+           * this path exists to avoid: a press 300 ms into a flight froze the camera mid-tween and left
+           * the box selected, i.e. "cancels without deciding".
            *
-           * The refs are cleared HERE for the same reason the region-flight branch above clears them:
-           * `onSelectRegion` reaches `App.selectRegion`, which only clears them a render later and only
-           * when `NINO_UI` is on. Until then `refitNinoForRect` would re-arm a flight for a box the user
-           * has just navigated away from, and `syncSpinPause` would keep the planet frozen under a region
-           * that is about to be focused.
-           *
-           * `ninoFlight` is deliberately NOT cleared: `submitNinoFocus(null)` inside `selectRegion` is the
-           * one place that knows how to cancel a box flight, and a second writer here would make the
-           * ordering between the two decide what the frame loop sees.
+           * Nothing is dispatched here, and `ninoFlight` is not touched: `submitNinoFocus(null)` inside
+           * `selectRegion` is the one place that knows how to cancel a box flight.
            */
-          if (onSelectRegion) {
-            const hit = screenSpacePinAt(
-              downAt.x,
-              downAt.y,
-              SCREEN_HIT_FALLBACK_FLIGHT_PX,
-            )
-            if (hit !== null) {
-              activeNinoBoxId.current = null
-              ninoRect.current = null
-              syncSpinPause()
-              onSelectRegion(hit)
-              return
-            }
-          }
           return
         }
         /* No pointer is down, so this `start` is a wheel/keyboard gesture: cancel immediately, as before. */
