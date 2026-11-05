@@ -171,6 +171,48 @@ class SceneErrorBoundary extends Component<
   }
 }
 
+/**
+ * Clears the "this gesture's pointerdown hit a pin" flag at the START of every gesture.
+ *
+ * ## Why this exists, and why it is not a timestamp
+ *
+ * `onPointerMissed` is the only thing in the app that clears a selection from the canvas, and it fires on
+ * `click`. A pin proxy selects on `pointerdown` (`Hotspot.tsx`, the proxy's `onPointerDown`), deliberately:
+ * the proxy is repositioned every frame while the camera flies, so a press that starts on a pin can have the
+ * pin move out from under the pointer before `pointerup`, and the browser then fires no `click` on the object
+ * at all. Selecting on the press is what makes a moving pin clickable.
+ *
+ * The consequence is that a pin press and the canvas miss that follows it are two halves of ONE gesture, and
+ * the miss must not undo the press. That was previously decided by a 500 ms wall-clock window
+ * (`performance.now() - lastPinSelectTime.current < 500`), which is not a safe window on this page: the
+ * acceptance spec measures a single CDP round trip at ~460 ms on software WebGL, so the down→click gap can
+ * exceed the window and a pin press can be cleared by its own gesture's miss. The symptom is a selection that
+ * is made and then silently undone, which is indistinguishable from "the press never reached the pin" in
+ * every observable except the pin's own press counter.
+ *
+ * A flag reset at the start of each gesture is deterministic: it does not care how slow the frame is, and it
+ * cannot leak across gestures because every `click` is preceded by a `pointerdown`.
+ *
+ * ## Why the listener is on the canvas, in the CAPTURE phase
+ *
+ * R3F connects its own pointer listeners to the Canvas WRAPPER div and dispatches to scene objects from the
+ * bubble phase there. A capture-phase listener on the canvas element itself runs in the at-target phase,
+ * which is strictly before the wrapper's bubble handler — so the flag is cleared before the pin's
+ * `onPointerDown` can set it again for this gesture. A bubble-phase listener would run after R3F had already
+ * dispatched, and would clear the flag the pin had just set.
+ */
+function PinPressGestureReset({ onGestureStart }: { onGestureStart: () => void }) {
+  const gl = useThree((state) => state.gl)
+
+  useEffect(() => {
+    const el = gl.domElement
+    el.addEventListener("pointerdown", onGestureStart, true)
+    return () => el.removeEventListener("pointerdown", onGestureStart, true)
+  }, [gl, onGestureStart])
+
+  return null
+}
+
 interface GlobeSceneProps {
   sst: number
   metrics: ScenarioMetrics
@@ -215,10 +257,24 @@ export function GlobeScene({
 
   // Timestamp to protect pin selection against camera drift misses.
   const lastPinSelectTime = useRef(0)
+  /**
+   * Did THIS gesture's pointerdown land on a pin?
+   *
+   * Set by `handleSelect` when a pin is selected (the proxy selects on pointerdown), cleared by
+   * `PinPressGestureReset` at the start of the next gesture. `onPointerMissed` reads it so a canvas miss that
+   * belongs to a pin press cannot clear the selection that press just made — see the component's docstring for
+   * why the 500 ms window this replaces is not safe on a slow frame.
+   */
+  const pinPressRef = useRef(false)
+  const resetPinPress = useCallback(() => {
+    pinPressRef.current = false
+  }, [])
+
   const handleSelect = useCallback(
     (id: RegionId | null) => {
       if (id !== null) {
         lastPinSelectTime.current = performance.now()
+        pinPressRef.current = true
       }
       onSelect(id)
     },
@@ -699,14 +755,22 @@ export function GlobeScene({
           requestAnimationFrame(() => onLoaded?.())
         }}
         onPointerMissed={(e) => {
-          // If a pin was selected within the last 500ms, ignore the canvas miss.
-          // This prevents camera drift during box flights from canceling the new region.
+          /*
+           * A canvas miss clears the selection — but NOT when the miss belongs to a gesture that started on a
+           * pin. The pin proxy selects on pointerdown, so its own gesture's click can miss (the camera is
+           * still travelling and the proxy has moved) and would otherwise undo the selection it just made.
+           *
+           * `pinPressRef` is the deterministic form of that rule: it is set by the pin's press and cleared at
+           * the start of the next gesture, so it cannot expire mid-gesture however slow the frame is. The
+           * 500 ms timestamp is kept as a second, weaker guard for the drei `<Html>` label path, which is DOM
+           * outside the canvas and therefore never triggers `PinPressGestureReset`.
+           */
+          if (e.type !== "click") return
+          if (pinPressRef.current) return
           if (performance.now() - lastPinSelectTime.current < 500) {
             return
           }
-          if (e.type === "click") {
-            onSelect(null)
-          }
+          onSelect(null)
         }}
       >
         <color attach="background" args={["#02040a"]} />
@@ -793,6 +857,7 @@ export function GlobeScene({
         <AdaptiveDpr pixelated />
 
         <CanvasTouchAction />
+        <PinPressGestureReset onGestureStart={resetPinPress} />
       </Canvas>
     </SceneErrorBoundary>
   )
