@@ -78,21 +78,25 @@
  * the free-rect centre" — would measure that residual as a defect. The snap is the same device the fit
  * already uses for the distance (`|wanted - eased| < 1e-5` -> `wanted`).
  */
-import { useCallback, useEffect, useRef, type MutableRefObject } from 'react';
-import { useFrame, useThree } from '@react-three/fiber';
-import type { OrbitControls as OrbitControlsImpl } from 'three-stdlib';
-import * as THREE from 'three';
-import type { RegionId } from '@/types/enso';
-import { NINO_BOXES, REGION_MAP, latLonToVector3 } from '@/lib/regions';
-import { boxCentreLon360, freeRectFraction, ninoFlyToDistance } from '@/lib/ninoFraming';
-import { GLOBE_LOOK } from '@/scene/globeLook';
+import { useCallback, useEffect, useRef, type MutableRefObject } from "react"
+import { useFrame, useThree } from "@react-three/fiber"
+import type { OrbitControls as OrbitControlsImpl } from "three-stdlib"
+import * as THREE from "three"
+import type { RegionId } from "@/types/enso"
+import { NINO_BOXES, REGION_MAP, latLonToVector3 } from "@/lib/regions"
+import {
+  boxCentreLon360,
+  freeRectFraction,
+  ninoFlyToDistance,
+} from "@/lib/ninoFraming"
+import { GLOBE_LOOK } from "@/scene/globeLook"
 import {
   ARRIVE_EPSILON_R,
   FLY_DISTANCE_EASE_BASE,
   FLY_TARGET_EASE_BASE,
   easeFactor,
-} from '@/camera/easing';
-import { arcStep, facingPose, isArrived, type Vec3 } from '@/camera/facing';
+} from "@/camera/easing"
+import { arcStep, facingPose, isArrived, type Vec3 } from "@/camera/facing"
 import {
   getLayoutSignal,
   getResetRequest,
@@ -100,8 +104,8 @@ import {
   publishViewState,
   startLayoutObserver,
   subscribeResetRequest,
-} from '@/scene/viewStore';
-import type { SpinState } from '@/scene/EarthSystem';
+} from "@/scene/viewStore"
+import type { SpinState } from "@/scene/EarthSystem"
 import {
   D0,
   FRAME_TIME_CONSTANT_S,
@@ -113,9 +117,9 @@ import {
   OFFSET_EPSILON_PX,
   PIN_ENVELOPE,
   type FrameProbeSink,
-} from '@/layout/framing';
-import { computeFrame } from '@/layout/frame';
-import { getInsets } from '@/layout/useInsets';
+} from "@/layout/framing"
+import { computeFrame } from "@/layout/frame"
+import { getInsets } from "@/layout/useInsets"
 import {
   initialFocus,
   isTravelling,
@@ -123,14 +127,18 @@ import {
   type FocusEvent,
   type FocusSnapshot,
   type FocusState,
-} from '@/scene/focusMachine';
-import { registerCameraIntents, type CameraPose } from '@/scene/cameraIntents';
-import { asMobileFrame, computeMobileFit, type MobileFrame } from '@/mobile/mobileFrame';
-import type { LayoutMode2 } from '@/mobile/layoutMath';
+} from "@/scene/focusMachine"
+import { registerCameraIntents, type CameraPose } from "@/scene/cameraIntents"
+import {
+  asMobileFrame,
+  computeMobileFit,
+  type MobileFrame,
+} from "@/mobile/mobileFrame"
+import type { LayoutMode2 } from "@/mobile/layoutMath"
 
 /** The shipped start position; the same constants the `<Canvas camera>` prop uses. */
-const DEFAULT_POSITION = new THREE.Vector3(0, 1.15, 3.15);
-const DEFAULT_TARGET = new THREE.Vector3(0, 0, 0);
+const DEFAULT_POSITION = new THREE.Vector3(0, 1.15, 3.15)
+const DEFAULT_TARGET = new THREE.Vector3(0, 0, 0)
 
 /** World-space direction of a lat/lon after the earth group's Y rotation. */
 /**
@@ -142,12 +150,12 @@ const DEFAULT_TARGET = new THREE.Vector3(0, 0, 0);
  * allocating a `Vector3` per call, which it did before this (a fresh `new THREE.Vector3(0, 1, 0)` for
  * every fly-to).
  */
-const SPIN_AXIS_Y = new THREE.Vector3(0, 1, 0);
+const SPIN_AXIS_Y = new THREE.Vector3(0, 1, 0)
 
 function regionDirection(id: RegionId, spinY: number): THREE.Vector3 {
-  const region = REGION_MAP[id];
-  const [x, y, z] = latLonToVector3(region.lat, region.lon, 1);
-  return new THREE.Vector3(x, y, z).applyAxisAngle(SPIN_AXIS_Y, spinY);
+  const region = REGION_MAP[id]
+  const [x, y, z] = latLonToVector3(region.lat, region.lon, 1)
+  return new THREE.Vector3(x, y, z).applyAxisAngle(SPIN_AXIS_Y, spinY)
 }
 
 /**
@@ -183,14 +191,29 @@ function ninoFlightTarget(
   freePx?: { w: number; h: number },
   viewport?: { w: number; h: number },
 ): { direction: THREE.Vector3; distance: number } {
-  const aspect = camera.aspect > 0 ? camera.aspect : 16 / 9;
+  const aspect = camera.aspect > 0 ? camera.aspect : 16 / 9
   const freeRect =
     freePx && viewport && viewport.w > 0 && viewport.h > 0
       ? { widthFrac: freePx.w / viewport.w, heightFrac: freePx.h / viewport.h }
-      : freeRectFraction(getInsets().free, window.innerWidth || 0, window.innerHeight || 0);
-  const distance = ninoFlyToDistance(box, { fovDeg: camera.fov, aspect, freeRect });
-  const [x, y, z] = latLonToVector3(box.anchorLat, boxCentreLon360(box), GLOBE_LOOK.pins.anchorRadius);
-  return { direction: new THREE.Vector3(x, y, z).applyAxisAngle(SPIN_AXIS_Y, spinY), distance };
+      : freeRectFraction(
+          getInsets().free,
+          window.innerWidth || 0,
+          window.innerHeight || 0,
+        )
+  const distance = ninoFlyToDistance(box, {
+    fovDeg: camera.fov,
+    aspect,
+    freeRect,
+  })
+  const [x, y, z] = latLonToVector3(
+    box.anchorLat,
+    boxCentreLon360(box),
+    GLOBE_LOOK.pins.anchorRadius,
+  )
+  return {
+    direction: new THREE.Vector3(x, y, z).applyAxisAngle(SPIN_AXIS_Y, spinY),
+    distance,
+  }
 }
 
 /**
@@ -224,35 +247,47 @@ function ninoFlightTarget(
  * down and not fight the tween for the radius.
  */
 function refitNinoForRect(args: {
-  activeNinoBoxId: MutableRefObject<string | null>;
-  ninoFlight: MutableRefObject<{ direction: THREE.Vector3; distance: number } | null>;
-  ninoRect: MutableRefObject<{ wf: number; hf: number } | null>;
-  camera: THREE.PerspectiveCamera;
-  spinY: number;
-  free: { x: number; y: number; w: number; h: number };
-  viewport: { w: number; h: number };
+  activeNinoBoxId: MutableRefObject<string | null>
+  ninoFlight: MutableRefObject<{
+    direction: THREE.Vector3
+    distance: number
+  } | null>
+  ninoRect: MutableRefObject<{ wf: number; hf: number } | null>
+  camera: THREE.PerspectiveCamera
+  spinY: number
+  free: { x: number; y: number; w: number; h: number }
+  viewport: { w: number; h: number }
 }): boolean {
-  const { activeNinoBoxId, ninoFlight, ninoRect, camera, spinY, free, viewport } = args;
-  const boxId = activeNinoBoxId.current;
-  if (!boxId) return false;
-  const box = NINO_BOXES.find((b) => b.id === boxId);
-  if (!box) return false;
-  if (viewport.w <= 0 || viewport.h <= 0) return false;
+  const {
+    activeNinoBoxId,
+    ninoFlight,
+    ninoRect,
+    camera,
+    spinY,
+    free,
+    viewport,
+  } = args
+  const boxId = activeNinoBoxId.current
+  if (!boxId) return false
+  const box = NINO_BOXES.find((b) => b.id === boxId)
+  if (!box) return false
+  if (viewport.w <= 0 || viewport.h <= 0) return false
 
-  const wf = free.w / viewport.w;
-  const hf = free.h / viewport.h;
-  const was = ninoRect.current;
+  const wf = free.w / viewport.w
+  const hf = free.h / viewport.h
+  const was = ninoRect.current
   /*
    * A pixel-scale epsilon, not an exact compare: the rect is recomputed from layout numbers every frame
    * and float noise would otherwise re-arm the flight continuously. 1e-4 of the viewport is 0.13 px at
    * 1280 wide — far below anything that changes the fit (the A2d difference is 0.0797).
    */
-  const changed = !was || Math.abs(was.wf - wf) > 1e-4 || Math.abs(was.hf - hf) > 1e-4;
-  if (!changed) return false;
+  const changed =
+    !was || Math.abs(was.wf - wf) > 1e-4 || Math.abs(was.hf - hf) > 1e-4
+  if (!changed) return false
 
-  ninoRect.current = { wf, hf };
-  ninoFlight.current = ninoFlightTarget(box, camera, spinY, free, viewport);
-  return true;
+  ninoRect.current = { wf, hf }
+  ninoFlight.current = ninoFlightTarget(box, camera, spinY, free, viewport)
+  return true
 }
 
 /**
@@ -260,7 +295,8 @@ function refitNinoForRect(args: {
  * effect, so that its survival in a bundle is a fact about emitted code rather than about a comment.
  */
 function noteLocked(): void {
-  (window as unknown as Record<string, unknown>).__frameLocked = LOCKED_BRANCH_MARKER;
+  ;(window as unknown as Record<string, unknown>).__frameLocked =
+    LOCKED_BRANCH_MARKER
 }
 
 /**
@@ -275,37 +311,38 @@ function noteLocked(): void {
  * never starts a fly-to does not set it at runtime. The proof is about EMITTED CODE (`grep` on
  * `dist-e2e/assets/*.js`), which does not depend on it ever running.
  */
-const FOCUS_POLICY_LOCKED_MARKER = 'focus-policy-locked-3b2-a41';
+const FOCUS_POLICY_LOCKED_MARKER = "focus-policy-locked-3b2-a41"
 
 function noteLockedPolicy(): void {
-  (window as unknown as Record<string, unknown>).__frameLockedPolicy = FOCUS_POLICY_LOCKED_MARKER;
+  ;(window as unknown as Record<string, unknown>).__frameLockedPolicy =
+    FOCUS_POLICY_LOCKED_MARKER
 }
 
 /** The default camera DIRECTION (unit), derived from the shipped position rather than retyped. */
-const DEFAULT_DIRECTION: THREE.Vector3 = DEFAULT_POSITION.clone().normalize();
+const DEFAULT_DIRECTION: THREE.Vector3 = DEFAULT_POSITION.clone().normalize()
 
 /*
  * Scratch vectors: `useFrame` runs 60 times a second and this module already allocates a `Vector3` per
  * frame for the offset. The policy code below must not add another per frame, so it works in place.
  */
-const SCRATCH_OFFSET = new THREE.Vector3();
-const SCRATCH_DIR = new THREE.Vector3();
+const SCRATCH_OFFSET = new THREE.Vector3()
+const SCRATCH_DIR = new THREE.Vector3()
 
 /** `viewIsDefault` tolerances: direction within 0.5 deg of the default, distance within 0.002. */
-const VIEW_DEFAULT_ANGLE_DEG = 0.5;
-const VIEW_DEFAULT_DISTANCE = 0.002;
+const VIEW_DEFAULT_ANGLE_DEG = 0.5
+const VIEW_DEFAULT_DISTANCE = 0.002
 
 /** The refs and helpers either policy needs. Passed explicitly so both policies stay module-level. */
 interface PolicyContext {
-  camera: THREE.PerspectiveCamera;
-  controls: OrbitControlsImpl;
-  stepDt: number;
-  state: FocusState;
-  spin: MutableRefObject<SpinState>;
-  targetRegion: MutableRefObject<RegionId | null>;
-  desiredTarget: MutableRefObject<THREE.Vector3>;
-  desiredDistance: MutableRefObject<number>;
-  lastFit: MutableRefObject<number | null>;
+  camera: THREE.PerspectiveCamera
+  controls: OrbitControlsImpl
+  stepDt: number
+  state: FocusState
+  spin: MutableRefObject<SpinState>
+  targetRegion: MutableRefObject<RegionId | null>
+  desiredTarget: MutableRefObject<THREE.Vector3>
+  desiredDistance: MutableRefObject<number>
+  lastFit: MutableRefObject<number | null>
   /**
    * The Niño box flight target (step 2.3c-1, C2). `null` when no box flight is in progress.
    *
@@ -314,9 +351,12 @@ interface PolicyContext {
    * box was selected. The aim point and distance are resolved once, when the flight starts, so a
    * mid-flight aspect change cannot retarget an in-progress tween.
    */
-  ninoFlight: MutableRefObject<{ direction: THREE.Vector3; distance: number } | null>;
-  withOwnWrite: (fn: () => void) => void;
-  dispatch: (event: FocusEvent) => void;
+  ninoFlight: MutableRefObject<{
+    direction: THREE.Vector3
+    distance: number
+  } | null>
+  withOwnWrite: (fn: () => void) => void
+  dispatch: (event: FocusEvent) => void
 }
 
 /**
@@ -331,55 +371,77 @@ interface PolicyContext {
  * — and `FOCUS_POLICY_LOCKED_MARKER` with it — is removed from the shipped bundle.
  */
 function runLockedFlyTo(ctx: PolicyContext): void {
-  noteLockedPolicy();
+  noteLockedPolicy()
 
-  const { camera, controls, stepDt, state, spin, targetRegion, withOwnWrite, dispatch } = ctx;
+  const {
+    camera,
+    controls,
+    stepDt,
+    state,
+    spin,
+    targetRegion,
+    withOwnWrite,
+    dispatch,
+  } = ctx
 
-  const region = targetRegion.current;
+  const region = targetRegion.current
   if (region) {
-    const want = REGION_MAP[region];
-    ctx.desiredTarget.current.copy(regionDirection(region, spin.current.y));
-    ctx.desiredDistance.current = want.zoom;
+    const want = REGION_MAP[region]
+    ctx.desiredTarget.current.copy(regionDirection(region, spin.current.y))
+    ctx.desiredDistance.current = want.zoom
   } else {
-    ctx.desiredTarget.current.copy(DEFAULT_TARGET);
-    ctx.desiredDistance.current = DEFAULT_POSITION.length();
+    ctx.desiredTarget.current.copy(DEFAULT_TARGET)
+    ctx.desiredDistance.current = DEFAULT_POSITION.length()
   }
 
-  const targetEase = easeFactor(FLY_TARGET_EASE_BASE, stepDt);
-  const distanceEase = easeFactor(FLY_DISTANCE_EASE_BASE, stepDt);
-  const wanted = ctx.desiredDistance.current;
+  const targetEase = easeFactor(FLY_TARGET_EASE_BASE, stepDt)
+  const distanceEase = easeFactor(FLY_DISTANCE_EASE_BASE, stepDt)
+  const wanted = ctx.desiredDistance.current
 
   withOwnWrite(() => {
     /* Damp the orbit target. */
-    controls.target.lerp(ctx.desiredTarget.current, targetEase);
+    controls.target.lerp(ctx.desiredTarget.current, targetEase)
 
     /*
      * Ease distance-from-target while preserving the viewing direction, clamped into the controls' own
      * limits so a fly-to can never park the camera outside the range the user may then zoom within.
      */
-    const offset = camera.position.clone().sub(controls.target);
-    const currentDistance = offset.length();
+    const offset = camera.position.clone().sub(controls.target)
+    const currentDistance = offset.length()
     if (currentDistance > 1e-6) {
-      const clamped = THREE.MathUtils.clamp(wanted, controls.minDistance, controls.maxDistance);
-      const nextDistance = THREE.MathUtils.lerp(currentDistance, clamped, distanceEase);
-      camera.position.copy(controls.target).add(offset.setLength(nextDistance));
+      const clamped = THREE.MathUtils.clamp(
+        wanted,
+        controls.minDistance,
+        controls.maxDistance,
+      )
+      const nextDistance = THREE.MathUtils.lerp(
+        currentDistance,
+        clamped,
+        distanceEase,
+      )
+      camera.position.copy(controls.target).add(offset.setLength(nextDistance))
     }
 
     /* update() derives the quaternion from target+offset and clamps the polar angle. */
-    controls.update();
-  });
+    controls.update()
+  })
 
   /* A fly-to IS a distance writer that is not the fit — see the header. */
   if (ctx.lastFit.current !== null) {
-    const d = camera.position.distanceTo(controls.target);
-    if (Math.abs(d - ctx.lastFit.current) > LAST_FIT_EPSILON) dispatch({ type: 'USER_ZOOM' });
+    const d = camera.position.distanceTo(controls.target)
+    if (Math.abs(d - ctx.lastFit.current) > LAST_FIT_EPSILON)
+      dispatch({ type: "USER_ZOOM" })
   }
 
-  const targetSettled = controls.target.distanceTo(ctx.desiredTarget.current) < ARRIVE_EPSILON_R;
+  const targetSettled =
+    controls.target.distanceTo(ctx.desiredTarget.current) < ARRIVE_EPSILON_R
   const distanceSettled =
-    Math.abs(camera.position.distanceTo(controls.target) - wanted) < ARRIVE_EPSILON_R;
+    Math.abs(camera.position.distanceTo(controls.target) - wanted) <
+    ARRIVE_EPSILON_R
   if (targetSettled && distanceSettled) {
-    dispatch(state === 'returning' ? { type: 'RETURNED' } : { type: 'ARRIVED' });
+    dispatch(
+      state === "returning" ? { type: "RETURNED" } : { type: "ARRIVED" },
+    )
   }
 }
 
@@ -408,13 +470,13 @@ function runLockedFlyTo(ctx: PolicyContext): void {
  * pinch/wheel that follows stays in range by construction. minDistance is NOT touched here.
  */
 function runNinoFlyTo(ctx: PolicyContext): void {
-  const { camera, controls, stepDt, ninoFlight, withOwnWrite, dispatch } = ctx;
+  const { camera, controls, stepDt, ninoFlight, withOwnWrite, dispatch } = ctx
 
-  const flight = ninoFlight.current;
+  const flight = ninoFlight.current
   if (!flight) {
     /* No target: hand the camera back rather than tweening toward nothing. */
-    withOwnWrite(() => controls.update());
-    return;
+    withOwnWrite(() => controls.update())
+    return
   }
 
   const wanted = facingPose({
@@ -422,28 +484,36 @@ function runNinoFlyTo(ctx: PolicyContext): void {
     distance: flight.distance,
     polarMin: controls.minPolarAngle,
     polarMax: controls.maxPolarAngle,
-  }).direction;
+  }).direction
 
-  const from = orbitDirection(camera, controls);
-  const arrived = isArrived(from, wanted);
-  const next = arrived ? wanted : arcStep({ from, to: wanted, dtS: stepDt });
+  const from = orbitDirection(camera, controls)
+  const arrived = isArrived(from, wanted)
+  const next = arrived ? wanted : arcStep({ from, to: wanted, dtS: stepDt })
 
   /* Ease the radius toward the fitted distance while the direction tweens, clamped by the controls. */
-  const currentDistance = orbitDistance(camera, controls);
-  const distanceEase = easeFactor(FLY_DISTANCE_EASE_BASE, stepDt);
+  const currentDistance = orbitDistance(camera, controls)
+  const distanceEase = easeFactor(FLY_DISTANCE_EASE_BASE, stepDt)
   const clampedWanted = THREE.MathUtils.clamp(
     flight.distance,
     controls.minDistance,
     controls.maxDistance,
-  );
-  const nextDistance = THREE.MathUtils.lerp(currentDistance, clampedWanted, distanceEase);
+  )
+  const nextDistance = THREE.MathUtils.lerp(
+    currentDistance,
+    clampedWanted,
+    distanceEase,
+  )
 
   withOwnWrite(() => {
     camera.position
       .copy(controls.target)
-      .add(SCRATCH_DIR.set(next[0], next[1], next[2]).multiplyScalar(nextDistance));
-    controls.update();
-  });
+      .add(
+        SCRATCH_DIR.set(next[0], next[1], next[2]).multiplyScalar(
+          nextDistance,
+        ),
+      )
+    controls.update()
+  })
 
   /*
    * A box flight IS a distance writer that is not the fit, exactly like the locked fly-to above.
@@ -458,8 +528,9 @@ function runNinoFlyTo(ctx: PolicyContext): void {
    * latch has to be dispatched here rather than relying on the listener to notice.
    */
   if (ctx.lastFit.current !== null) {
-    const d = camera.position.distanceTo(controls.target);
-    if (Math.abs(d - ctx.lastFit.current) > LAST_FIT_EPSILON) dispatch({ type: 'USER_ZOOM' });
+    const d = camera.position.distanceTo(controls.target)
+    if (Math.abs(d - ctx.lastFit.current) > LAST_FIT_EPSILON)
+      dispatch({ type: "USER_ZOOM" })
   }
 
   /*
@@ -468,22 +539,29 @@ function runNinoFlyTo(ctx: PolicyContext): void {
    * to the "not travelling" branch where the controls own it.
    */
   if (arrived && Math.abs(nextDistance - clampedWanted) < ARRIVE_EPSILON_R) {
-    ninoFlight.current = null;
-    ctx.dispatch({ type: 'ARRIVED' });
+    ninoFlight.current = null
+    ctx.dispatch({ type: "ARRIVED" })
   }
 }
 
 /** The camera's unit direction from the orbit target. Zero-safe: never returns a zero vector. */
-function orbitDirection(camera: THREE.PerspectiveCamera, controls: OrbitControlsImpl): Vec3 {
-  const v = SCRATCH_OFFSET.copy(camera.position).sub(controls.target);
-  if (v.lengthSq() < 1e-18) return [DEFAULT_DIRECTION.x, DEFAULT_DIRECTION.y, DEFAULT_DIRECTION.z];
-  v.normalize();
-  return [v.x, v.y, v.z];
+function orbitDirection(
+  camera: THREE.PerspectiveCamera,
+  controls: OrbitControlsImpl,
+): Vec3 {
+  const v = SCRATCH_OFFSET.copy(camera.position).sub(controls.target)
+  if (v.lengthSq() < 1e-18)
+    return [DEFAULT_DIRECTION.x, DEFAULT_DIRECTION.y, DEFAULT_DIRECTION.z]
+  v.normalize()
+  return [v.x, v.y, v.z]
 }
 
 /** The distance from the orbit target. */
-function orbitDistance(camera: THREE.PerspectiveCamera, controls: OrbitControlsImpl): number {
-  return camera.position.distanceTo(controls.target);
+function orbitDistance(
+  camera: THREE.PerspectiveCamera,
+  controls: OrbitControlsImpl,
+): number {
+  return camera.position.distanceTo(controls.target)
 }
 
 /**
@@ -499,57 +577,69 @@ function orbitDistance(camera: THREE.PerspectiveCamera, controls: OrbitControlsI
  *     where the camera is instead of jumping back to the flight's start.
  */
 function runLiveFlyTo(ctx: PolicyContext): void {
-  const { camera, controls, stepDt, state, spin, targetRegion, withOwnWrite, dispatch } = ctx;
+  const {
+    camera,
+    controls,
+    stepDt,
+    state,
+    spin,
+    targetRegion,
+    withOwnWrite,
+    dispatch,
+  } = ctx
 
   /*
    * Where the camera must point. `facingPose` owns the polar clamp, so the director never compares
    * angles itself; the limits are read off the controls rather than restated (they are the OrbitControls
    * defaults today, but a pin near a pole must not silently mis-frame if that ever changes).
    */
-  let wanted: Vec3;
-  if (state === 'returning') {
-    wanted = [DEFAULT_DIRECTION.x, DEFAULT_DIRECTION.y, DEFAULT_DIRECTION.z];
+  let wanted: Vec3
+  if (state === "returning") {
+    wanted = [DEFAULT_DIRECTION.x, DEFAULT_DIRECTION.y, DEFAULT_DIRECTION.z]
   } else {
-    const region = targetRegion.current;
+    const region = targetRegion.current
     if (region === null) {
       /* `focusing` with no region is unreachable (the machine names one); fall back to the default. */
-      wanted = [DEFAULT_DIRECTION.x, DEFAULT_DIRECTION.y, DEFAULT_DIRECTION.z];
+      wanted = [DEFAULT_DIRECTION.x, DEFAULT_DIRECTION.y, DEFAULT_DIRECTION.z]
     } else {
-      const pin = regionDirection(region, spin.current.y);
+      const pin = regionDirection(region, spin.current.y)
       wanted = facingPose({
         pinDir: [pin.x, pin.y, pin.z],
         distance: orbitDistance(camera, controls),
         polarMin: controls.minPolarAngle,
         polarMax: controls.maxPolarAngle,
-      }).direction;
+      }).direction
     }
   }
 
-  const from = orbitDirection(camera, controls);
-  const arrived = isArrived(from, wanted);
-  const next = arrived ? wanted : arcStep({ from, to: wanted, dtS: stepDt });
+  const from = orbitDirection(camera, controls)
+  const arrived = isArrived(from, wanted)
+  const next = arrived ? wanted : arcStep({ from, to: wanted, dtS: stepDt })
 
   /*
    * The RADIUS is captured before the write and re-applied after it. `controls.update()` is allowed to
    * clamp the polar angle, which changes the direction but must not change the distance.
    */
-  const radius = orbitDistance(camera, controls);
+  const radius = orbitDistance(camera, controls)
 
   withOwnWrite(() => {
     camera.position
       .copy(controls.target)
-      .add(SCRATCH_DIR.set(next[0], next[1], next[2]).multiplyScalar(radius));
-    controls.update();
-  });
+      .add(SCRATCH_DIR.set(next[0], next[1], next[2]).multiplyScalar(radius))
+    controls.update()
+  })
 
-  if (arrived) dispatch(state === 'returning' ? { type: 'RETURNED' } : { type: 'ARRIVED' });
+  if (arrived)
+    dispatch(
+      state === "returning" ? { type: "RETURNED" } : { type: "ARRIVED" },
+    )
 }
 
 /** Angular error between two directions, degrees — for `viewIsDefault`. */
 function angleDegBetween(a: Vec3, b: THREE.Vector3): number {
-  const d = a[0] * b.x + a[1] * b.y + a[2] * b.z;
-  const clamped = d > 1 ? 1 : d < -1 ? -1 : d;
-  return (Math.acos(clamped) * 180) / Math.PI;
+  const d = a[0] * b.x + a[1] * b.y + a[2] * b.z
+  const clamped = d > 1 ? 1 : d < -1 ? -1 : d
+  return (Math.acos(clamped) * 180) / Math.PI
 }
 
 /**
@@ -591,11 +681,11 @@ function angleDegBetween(a: Vec3, b: THREE.Vector3): number {
  */
 interface MobileOffsetState {
   /** The mode and size the offset was last applied for, and the rect size it was fitted to. */
-  mode: LayoutMode2 | null;
-  w: number;
-  h: number;
+  mode: LayoutMode2 | null
+  w: number
+  h: number
   /** The header bottom and the dock width the fit was computed from, so a re-fit happens when either moves. */
-  headerBottom: number;
+  headerBottom: number
 }
 
 /**
@@ -619,9 +709,10 @@ function applyMaxDistance(
   written: { current: number | null },
   wanted: number,
 ): void {
-  if (written.current !== null && Math.abs(written.current - wanted) < 1e-9) return;
-  controls.maxDistance = wanted;
-  written.current = wanted;
+  if (written.current !== null && Math.abs(written.current - wanted) < 1e-9)
+    return
+  controls.maxDistance = wanted
+  written.current = wanted
 }
 
 function applyMobileOffset(
@@ -633,13 +724,19 @@ function applyMobileOffset(
   headerBottom: number,
   compute: () => MobileFrame,
 ): MobileFrame | null {
-  if (state.mode === mode && state.w === w && state.h === h && state.headerBottom === headerBottom) return null;
-  state.mode = mode;
-  state.w = w;
-  state.h = h;
-  state.headerBottom = headerBottom;
+  if (
+    state.mode === mode &&
+    state.w === w &&
+    state.h === h &&
+    state.headerBottom === headerBottom
+  )
+    return null
+  state.mode = mode
+  state.w = w
+  state.h = h
+  state.headerBottom = headerBottom
 
-  if (mode === 'desktop') {
+  if (mode === "desktop") {
     /*
      * Leaving mobile: put the camera back to the null-view state the desktop proofs describe.
      *
@@ -649,13 +746,13 @@ function applyMobileOffset(
      * desktop spec's `cameraViewIsNull` check would pass while the picture stayed wrong.
      */
     if (camera.view !== null) {
-      camera.clearViewOffset();
-      camera.updateProjectionMatrix();
+      camera.clearViewOffset()
+      camera.updateProjectionMatrix()
     }
-    return null;
+    return null
   }
 
-  const frame = compute();
+  const frame = compute()
   /*
    * The GENERALISED offset: both axes, from the free rect's centre.
    *
@@ -664,34 +761,36 @@ function applyMobileOffset(
    * proven by projecting a real camera in `mobileFrame.test.ts`, which is what the prompt's "flip a sign if
    * needed" asks for; the answer was that neither needed flipping.
    */
-  camera.setViewOffset(w, h, frame.viewOffsetX, frame.viewOffsetY, w, h);
+  camera.setViewOffset(w, h, frame.viewOffsetX, frame.viewOffsetY, w, h)
   /*
    * Explicit, per the step: `setViewOffset` only STORES the parameters and flags the matrix, and the commit
    * is this call. Writing it out also makes the projection write visible to `projectionWriter.test.ts`, which
    * asserts the director contains all three of `setViewOffset`, `clearViewOffset` and this.
    */
-  camera.updateProjectionMatrix();
-  return frame;
+  camera.updateProjectionMatrix()
+  return frame
 }
 
 /** `prefers-reduced-motion`, resolved once instead of once per frame. */
-let reducedMotionQuery: MediaQueryList | null | undefined;
+let reducedMotionQuery: MediaQueryList | null | undefined
 function prefersReducedMotion(): boolean {
   if (reducedMotionQuery === undefined) {
     reducedMotionQuery =
-      typeof matchMedia === 'function' ? matchMedia('(prefers-reduced-motion: reduce)') : null;
+      typeof matchMedia === "function"
+        ? matchMedia("(prefers-reduced-motion: reduce)")
+        : null
   }
-  return reducedMotionQuery?.matches ?? false;
+  return reducedMotionQuery?.matches ?? false
 }
 
 interface CameraDirectorProps {
-  activeRegion: RegionId | null;
-  spin: MutableRefObject<SpinState>;
-  controlsRef: MutableRefObject<OrbitControlsImpl | null>;
+  activeRegion: RegionId | null
+  spin: MutableRefObject<SpinState>
+  controlsRef: MutableRefObject<OrbitControlsImpl | null>
   /** Bumped to force a re-focus on the same region (e.g. re-click). */
-  focusNonce: number;
+  focusNonce: number
   /** Receives the per-frame probe state. */
-  probe?: MutableRefObject<FrameProbeSink | null>;
+  probe?: MutableRefObject<FrameProbeSink | null>
 }
 
 export function CameraDirector({
@@ -701,8 +800,8 @@ export function CameraDirector({
   focusNonce,
   probe,
 }: CameraDirectorProps) {
-  const camera = useThree((state) => state.camera) as THREE.PerspectiveCamera;
-  const size = useThree((state) => state.size);
+  const camera = useThree((state) => state.camera) as THREE.PerspectiveCamera
+  const size = useThree((state) => state.size)
 
   /*
    * THE ONE layout-mode listener (step 3-MOBILE1 B).
@@ -715,29 +814,32 @@ export function CameraDirector({
    * `startLayoutObserver` is ref-counted and idempotent, so React 18's development double-mount cannot install
    * two, and joining the one `App` already started is one `refs += 1`.
    */
-  useEffect(() => startLayoutObserver(), []);
+  useEffect(() => startLayoutObserver(), [])
 
   /* ---------------------------------------------------------------- focus machine */
 
-  const machine = useRef<FocusSnapshot>(initialFocus());
+  const machine = useRef<FocusSnapshot>(initialFocus())
   /** The region the machine is targeting; kept apart from React's prop so a retarget is one event. */
-  const targetRegion = useRef<RegionId | null>(null);
+  const targetRegion = useRef<RegionId | null>(null)
   /** True while the fly-to is animating. The machine's `focusing`/`returning` states gate this. */
-  const travelling = useRef(false);
-  const desiredTarget = useRef(new THREE.Vector3().copy(DEFAULT_TARGET));
-  const desiredDistance = useRef(DEFAULT_POSITION.length());
+  const travelling = useRef(false)
+  const desiredTarget = useRef(new THREE.Vector3().copy(DEFAULT_TARGET))
+  const desiredDistance = useRef(DEFAULT_POSITION.length())
 
   /* ------------------------------------------------------------------ frame rig state */
 
-  const appliedOffset = useRef({ dx: 0, dy: 0 });
-  const easedOffset = useRef({ dx: 0, dy: 0 });
-  const appliedSize = useRef({ w: 0, h: 0 });
-  const lastFit = useRef<number | null>(null);
+  const appliedOffset = useRef({ dx: 0, dy: 0 })
+  const easedOffset = useRef({ dx: 0, dy: 0 })
+  const appliedSize = useRef({ w: 0, h: 0 })
+  const lastFit = useRef<number | null>(null)
   /**
    * The Niño box flight target (C2). Resolved once when the flight starts so a mid-flight aspect
    * change cannot retarget an in-progress tween.
    */
-  const ninoFlight = useRef<{ direction: THREE.Vector3; distance: number } | null>(null);
+  const ninoFlight = useRef<{
+    direction: THREE.Vector3
+    distance: number
+  } | null>(null)
   /**
    * The box the user has SELECTED, or `null`.
    *
@@ -756,7 +858,7 @@ export function CameraDirector({
    * It is also what makes B7 inert flag-off: `focusNinoBox` is the only writer, and App.tsx calls
    * `submitNinoFocus` only inside `if (NINO_UI)`, so with the flag off this is `null` on every frame.
    */
-  const activeNinoBoxId = useRef<string | null>(null);
+  const activeNinoBoxId = useRef<string | null>(null)
   /**
    * The free rect (as viewport FRACTIONS) the current box flight was resolved against.
    *
@@ -765,7 +867,7 @@ export function CameraDirector({
    * the only record of which rect the 1.45330 was computed for — without it the re-fit cannot tell a
    * stale flight from a current one and would re-arm on the first frame or never.
    */
-  const ninoRect = useRef<{ wf: number; hf: number } | null>(null);
+  const ninoRect = useRef<{ wf: number; hf: number } | null>(null)
 
   /**
    * Push the spin pause state from the two things that own it, instead of setting it ad hoc.
@@ -781,17 +883,18 @@ export function CameraDirector({
    * effect, cleared on deselect and Reset), so this needs no new state.
    */
   const syncSpinPause = useCallback((): void => {
-    spin.current.paused = targetRegion.current !== null || activeNinoBoxId.current !== null;
-  }, [spin]);
-  const hasApplied = useRef(false);
-  const rigOwnsDistance = useRef(true);
-  const recentDistances = useRef<number[]>([]);
+    spin.current.paused =
+      targetRegion.current !== null || activeNinoBoxId.current !== null
+  }, [spin])
+  const hasApplied = useRef(false)
+  const rigOwnsDistance = useRef(true)
+  const recentDistances = useRef<number[]>([])
 
   /**
    * The distance `userZoomed` was last evaluated against, so a `change` event can tell whether the
    * USER moved it. `null` until the first frame has run (there is no distance to compare yet).
    */
-  const lastSeenDistance = useRef<number | null>(null);
+  const lastSeenDistance = useRef<number | null>(null)
   /**
    * The mobile offset's idempotency key, and the last frame it produced.
    *
@@ -800,29 +903,34 @@ export function CameraDirector({
    * so a frame that does NOT cross a mode or size boundary can reuse the previous `MobileFrame` instead of
    * recomputing the fit — the offset only changes when the window does.
    */
-  const mobileOffset = useRef<MobileOffsetState>({ mode: null, w: 0, h: 0, headerBottom: 0 });
+  const mobileOffset = useRef<MobileOffsetState>({
+    mode: null,
+    w: 0,
+    h: 0,
+    headerBottom: 0,
+  })
   /** The `controls.maxDistance` this module last wrote, so it writes only on a change. */
-  const maxDistanceWritten = useRef<number | null>(null);
-  const mobileCache = useRef<MobileFrame | null>(null);
+  const maxDistanceWritten = useRef<number | null>(null)
+  const mobileCache = useRef<MobileFrame | null>(null)
   /** True while THIS module is writing, so its own `change` events are ignored. */
-  const writing = useRef(false);
+  const writing = useRef(false)
   /** Last distance this module itself wrote — the "outside the director's own writes" test. */
-  const ownDistance = useRef<number | null>(null);
+  const ownDistance = useRef<number | null>(null)
 
   /** Apply a camera write with the "our own change events are not user input" guard held. */
   const withOwnWrite = (fn: () => void): void => {
-    writing.current = true;
+    writing.current = true
     try {
-      fn();
+      fn()
     } finally {
-      writing.current = false;
+      writing.current = false
     }
-  };
+  }
 
   /** Dispatch one machine event and record the resulting context. */
   const dispatch = (event: FocusEvent): void => {
-    machine.current = stepFocus(machine.current, event);
-  };
+    machine.current = stepFocus(machine.current, event)
+  }
 
   /* ------------------------------------------------------------------- intents */
 
@@ -838,13 +946,17 @@ export function CameraDirector({
     registerCameraIntents({
       setPose: (pose: CameraPose) => {
         withOwnWrite(() => {
-          camera.position.set(pose.position[0], pose.position[1], pose.position[2]);
-          camera.lookAt(pose.target[0], pose.target[1], pose.target[2]);
-          camera.updateMatrixWorld(true);
-        });
+          camera.position.set(
+            pose.position[0],
+            pose.position[1],
+            pose.position[2],
+          )
+          camera.lookAt(pose.target[0], pose.target[1], pose.target[2])
+          camera.updateMatrixWorld(true)
+        })
         ownDistance.current = camera.position.distanceTo(
           controlsRef.current?.target ?? new THREE.Vector3(),
-        );
+        )
         /*
          * NO `USER_ZOOM` HERE — step 3B2 reverses the 3B latch.
          *
@@ -874,20 +986,20 @@ export function CameraDirector({
          * when a region happens to be selected at the same time, since the region still owns the pause.
          */
         if (boxId === null) {
-          ninoFlight.current = null;
-          activeNinoBoxId.current = null;
+          ninoFlight.current = null
+          activeNinoBoxId.current = null
           /* B7: forget the rect too, so the next box press seeds a fresh one instead of re-arming. */
-          ninoRect.current = null;
-          syncSpinPause();
-          return;
+          ninoRect.current = null
+          syncSpinPause()
+          return
         }
-        const box = NINO_BOXES.find((b) => b.id === boxId);
+        const box = NINO_BOXES.find((b) => b.id === boxId)
         if (!box) {
-          ninoFlight.current = null;
-          activeNinoBoxId.current = null;
-          ninoRect.current = null;
-          syncSpinPause();
-          return;
+          ninoFlight.current = null
+          activeNinoBoxId.current = null
+          ninoRect.current = null
+          syncSpinPause()
+          return
         }
         /*
          * NINO-HARDEN B3a (A2d): a box flight TAKES OVER from a region flight.
@@ -914,8 +1026,8 @@ export function CameraDirector({
          * the machine is already `idle`, and `closeOrStay(idle)` is a no-op — so the two mechanisms
          * agree instead of fighting.
          */
-        machine.current = initialFocus(machine.current.context.poseRef);
-        targetRegion.current = null;
+        machine.current = initialFocus(machine.current.context.poseRef)
+        targetRegion.current = null
         /*
          * NINO-HARDEN B4: PAUSE THE SPIN, then aim — in that order.
          *
@@ -946,19 +1058,19 @@ export function CameraDirector({
          * `spin.current.y` about Y is the matrix transform, exactly, and not an approximation of it.
          * `earthGroupTransform.test.ts` now fails if that ever stops being true.
          */
-        activeNinoBoxId.current = boxId;
+        activeNinoBoxId.current = boxId
         /*
          * Addendum (2): the pause is DERIVED. Set the selection first, then sync — a bare
          * `paused = true` here would be a SECOND writer of the same boolean, and it re-paused after a
          * clear whenever no region happened to be selected.
          */
-        syncSpinPause();
+        syncSpinPause()
         /*
          * The resolution is shared with the resize path (B7) — see `ninoFlightTarget`. Called with no
          * free-rect override, so it reads `getInsets()` exactly as the inline code here did before:
          * press-time behaviour is unchanged.
          */
-        ninoFlight.current = ninoFlightTarget(box, camera, spin.current.y);
+        ninoFlight.current = ninoFlightTarget(box, camera, spin.current.y)
         /*
          * ADDENDUM (3) + B7. One `getInsets()` read serves two jobs:
          *
@@ -974,15 +1086,18 @@ export function CameraDirector({
          * `has('debug')` check `main.tsx:23` uses to install the e2e hooks.
          */
         {
-          const pressInsets = getInsets();
-          const vw = window.innerWidth || 0;
-          const vh = window.innerHeight || 0;
+          const pressInsets = getInsets()
+          const vw = window.innerWidth || 0
+          const vh = window.innerHeight || 0
           ninoRect.current =
             vw > 0 && vh > 0
               ? { wf: pressInsets.free.w / vw, hf: pressInsets.free.h / vh }
-              : null;
-          if (import.meta.env.VITE_E2E === '1' && new URLSearchParams(window.location.search).has('debug')) {
-            (window as unknown as Record<string, unknown>).__ninoPress = {
+              : null
+          if (
+            import.meta.env.VITE_E2E === "1" &&
+            new URLSearchParams(window.location.search).has("debug")
+          ) {
+            ;(window as unknown as Record<string, unknown>).__ninoPress = {
               boxId,
               t: performance.now(),
               innerW: vw,
@@ -992,27 +1107,39 @@ export function CameraDirector({
               aspect: camera.aspect,
               fov: camera.fov,
               distance: ninoFlight.current.distance,
-            };
+            }
           }
         }
       },
-    });
+    })
     /*
      * `spin` joined this list in NINO-HARDEN B3a: `focusNinoBox` now unpauses the globe when a box
      * flight takes over from a region flight, so the callback closes over `spin` and the effect must
      * re-register when it changes. `spin` is a stable ref from `useRef`, so this cannot loop — the
      * entry is correctness for the linter and documentation for a reader, not a re-run.
      */
-    return () => registerCameraIntents(null);
-  }, [camera, controlsRef, spin, syncSpinPause]);
+    return () => registerCameraIntents(null)
+  }, [camera, controlsRef, spin, syncSpinPause])
 
   /* -------------------------------------------------- OrbitControls as an input device */
 
   useEffect(() => {
-    const controls = controlsRef.current;
-    if (!controls) return undefined;
+    const controls = controlsRef.current
+    if (!controls) return undefined
 
     const onStart = (): void => {
+      /*
+       * A pin click fires pointerdown, which immediately raises OrbitControls' 'start' event.
+       * If a region is actively being selected or targeted, do NOT let OrbitControls cancel
+       * the focus transition by dispatching USER_ORBIT_START.
+       */
+      if (activeRegion !== null || targetRegion.current !== null) {
+        if (ninoFlight.current) {
+          ninoFlight.current = null
+        }
+        return
+      }
+
       /* A drag the user started during a fly-to cancels it; the machine knows the rule. */
       /*
        * NINO-HARDEN B3b (A2b and A2c): user input CANCELS a Niño box flight.
@@ -1033,7 +1160,7 @@ export function CameraDirector({
        * highlighted, because the user interrupted the CAMERA, not the selection.
        */
       if (ninoFlight.current) {
-        ninoFlight.current = null;
+        ninoFlight.current = null
         /*
          * NINO-HARDEN B7 + ADDENDUM (1): the SELECTION is deliberately NOT cleared here.
          *
@@ -1052,10 +1179,10 @@ export function CameraDirector({
          * "the user owns the distance", and it is the same event the wheel path dispatches, so this
          * does not invent a second meaning for `userZoomed`.
          */
-        dispatch({ type: 'USER_ZOOM' });
+        dispatch({ type: "USER_ZOOM" })
       }
-      dispatch({ type: 'USER_ORBIT_START' });
-    };
+      dispatch({ type: "USER_ORBIT_START" })
+    }
 
     const onChange = (): void => {
       /*
@@ -1063,38 +1190,39 @@ export function CameraDirector({
        * dispatch one on every internal damping step, and treating those as user input would latch
        * `userZoomed` on the very first frame and switch the fit's distance channel off forever.
        */
-      if (writing.current) return;
-      const controls2 = controlsRef.current;
-      if (!controls2) return;
-      const d = camera.position.distanceTo(controls2.target);
-      const previous = lastSeenDistance.current;
-      lastSeenDistance.current = d;
-      if (previous === null) return;
+      if (writing.current) return
+      const controls2 = controlsRef.current
+      if (!controls2) return
+      const d = camera.position.distanceTo(controls2.target)
+      const previous = lastSeenDistance.current
+      lastSeenDistance.current = d
+      if (previous === null) return
       /*
        * `> LAST_FIT_EPSILON` (0.002), the prompt's threshold. A rotation changes the distance by ~0,
        * a one-notch wheel changes it by ~0.01 at this distance, so the test separates them.
        */
-      if (Math.abs(d - previous) > LAST_FIT_EPSILON) dispatch({ type: 'USER_ZOOM' });
-    };
+      if (Math.abs(d - previous) > LAST_FIT_EPSILON)
+        dispatch({ type: "USER_ZOOM" })
+    }
 
-    controls.addEventListener('start', onStart);
-    controls.addEventListener('change', onChange);
+    controls.addEventListener("start", onStart)
+    controls.addEventListener("change", onChange)
     return () => {
-      controls.removeEventListener('start', onStart);
-      controls.removeEventListener('change', onChange);
-    };
-  }, [camera, controlsRef]);
+      controls.removeEventListener("start", onStart)
+      controls.removeEventListener("change", onChange)
+    }
+  }, [camera, controlsRef, activeRegion])
 
   /* ------------------------------------------- selection -> machine (replaces CameraRig's effect) */
 
   useEffect(() => {
     if (activeRegion) {
-      dispatch({ type: 'SELECT', regionId: activeRegion });
-      targetRegion.current = activeRegion;
-    } else if (machine.current.state !== 'idle') {
+      dispatch({ type: "SELECT", regionId: activeRegion })
+      targetRegion.current = activeRegion
+    } else if (machine.current.state !== "idle") {
       /* Deselecting is the CLOSE rule; `SELECT(null)` is routed there by the machine itself. */
-      dispatch({ type: 'SELECT', regionId: null });
-      targetRegion.current = null;
+      dispatch({ type: "SELECT", regionId: null })
+      targetRegion.current = null
     }
     /*
      * NINO-HARDEN-ADDENDUM (2): the pause is DERIVED, not written per branch.
@@ -1113,9 +1241,9 @@ export function CameraDirector({
      * `syncSpinPause` reads the two SELECTION refs (`targetRegion`, `activeNinoBoxId`), so the pause
      * lasts exactly as long as a region OR a box is selected, whatever the flight happens to be doing.
      */
-    syncSpinPause();
-    travelling.current = true;
-  }, [activeRegion, focusNonce, spin, syncSpinPause]);
+    syncSpinPause()
+    travelling.current = true
+  }, [activeRegion, focusNonce, spin, syncSpinPause])
 
   /* --------------------------------------------------- the Reset View button's channel */
 
@@ -1127,12 +1255,12 @@ export function CameraDirector({
    * `returning` by the time the click handler returns.
    */
   useEffect(() => {
-    let seen = getResetRequest();
+    let seen = getResetRequest()
     return subscribeResetRequest(() => {
-      const now = getResetRequest();
-      if (now === seen) return;
-      seen = now;
-      dispatch({ type: 'RESET' });
+      const now = getResetRequest()
+      if (now === seen) return
+      seen = now
+      dispatch({ type: "RESET" })
       /*
        * RESET is the "back to the default view" intent, which is a running-planet intent — and it also
        * ENDS any Niño selection, so the derived pause must see that.
@@ -1144,20 +1272,20 @@ export function CameraDirector({
        * AFTER that clear is visible — which it is not on this line. Hence the explicit both-clears here
        * rather than a bare `syncSpinPause()` that would still read the stale region.
        */
-      targetRegion.current = null;
-      activeNinoBoxId.current = null;
-      syncSpinPause();
-    });
-  }, [spin, syncSpinPause]);
+      targetRegion.current = null
+      activeNinoBoxId.current = null
+      syncSpinPause()
+    })
+  }, [spin, syncSpinPause])
 
   /* ------------------------------------------------------------------------ the frame */
 
   useFrame((_, delta) => {
-    const controls = controlsRef.current;
-    if (!controls) return;
+    const controls = controlsRef.current
+    if (!controls) return
 
-    const stepDt = Math.min(delta, 1 / 30);
-    const state = machine.current.state;
+    const stepDt = Math.min(delta, 1 / 30)
+    const state = machine.current.state
 
     /* ============================================================ 1. the focus policy ====
      *
@@ -1179,7 +1307,7 @@ export function CameraDirector({
       ninoFlight,
       withOwnWrite,
       dispatch,
-    };
+    }
 
     /*
      * NINO-HARDEN B3a: the BOX flight is checked FIRST.
@@ -1200,19 +1328,19 @@ export function CameraDirector({
        * not drive the focus machine: the machine stays `idle` and the controls own the camera during
        * the tween, so the flight has to be its own gate rather than a machine state.
        */
-      runNinoFlyTo(ctx);
+      runNinoFlyTo(ctx)
     } else if (isTravelling(state)) {
       if (IS_LOCKED) {
-        runLockedFlyTo(ctx);
+        runLockedFlyTo(ctx)
       } else {
-        runLiveFlyTo(ctx);
+        runLiveFlyTo(ctx)
       }
     } else {
       /*
        * Not travelling: the controls own the camera. `update()` still has to run every frame because
        * that is what applies OrbitControls' own damping to the user's wheel/pinch/rotate input.
        */
-      withOwnWrite(() => controls.update());
+      withOwnWrite(() => controls.update())
     }
 
     /* ============================================================== 2. the frame ====
@@ -1221,8 +1349,8 @@ export function CameraDirector({
      * and leaves `camera.view` null, which is what keeps `ref.spec.ts` at strict 0.
      */
     if (IS_LOCKED) {
-      noteLocked();
-    } else if (getLayoutSignal().mode !== 'desktop') {
+      noteLocked()
+    } else if (getLayoutSignal().mode !== "desktop") {
       /*
        * ===================================================== 2a. THE MOBILE BRANCH ====
        *
@@ -1240,33 +1368,39 @@ export function CameraDirector({
        * Everything else — the fit's distance channel, `userZoomed`, the probe — is the desktop code, moved
        * wholesale rather than reimplemented.
        */
-      const w = size.width;
-      const h = size.height;
-      const signal = getLayoutSignal();
-      const mode = signal.mode;
+      const w = size.width
+      const h = size.height
+      const signal = getLayoutSignal()
+      const mode = signal.mode
 
       /* One fit per layout change, reused for both the offset and the distance. */
-      const fit = computeMobileFit(mode, w, h, signal.headerBottom);
-      const mobile = applyMobileOffset(camera, mobileOffset.current, mode, w, h, signal.headerBottom, () =>
-        asMobileFrame(fit, w, h),
-      );
-      const frame = mobile ?? asMobileFrame(fit, w, h);
-      mobileCache.current = frame;
+      const fit = computeMobileFit(mode, w, h, signal.headerBottom)
+      const mobile = applyMobileOffset(
+        camera,
+        mobileOffset.current,
+        mode,
+        w,
+        h,
+        signal.headerBottom,
+        () => asMobileFrame(fit, w, h),
+      )
+      const frame = mobile ?? asMobileFrame(fit, w, h)
+      mobileCache.current = frame
 
       /*
        * THE CEILING. Written every mobile frame, and cleared back to 5 on the desktop branch below — so a rotation
        * to desktop cannot leave a mobile `maxDistance` behind.
        */
-      applyMaxDistance(controls, maxDistanceWritten, fit.dMaxMode);
+      applyMaxDistance(controls, maxDistanceWritten, fit.dMaxMode)
 
-      const offset = camera.position.clone().sub(controls.target);
-      const currentDistance = offset.length();
+      const offset = camera.position.clone().sub(controls.target)
+      const currentDistance = offset.length()
 
-      if (lastFit.current === null) lastFit.current = currentDistance;
-      lastSeenDistance.current = currentDistance;
+      if (lastFit.current === null) lastFit.current = currentDistance
+      lastSeenDistance.current = currentDistance
 
-      const userZoomedMobile = machine.current.context.userZoomed;
-      rigOwnsDistance.current = !userZoomedMobile;
+      const userZoomedMobile = machine.current.context.userZoomed
+      rigOwnsDistance.current = !userZoomedMobile
       /*
        * A MODE CHANGE re-fits with no animation, and resets the "the user owns the distance" latch.
        *
@@ -1276,7 +1410,7 @@ export function CameraDirector({
        * on that frame the fit takes the distance even if the user had zoomed, because a distance chosen for a
        * 390x844 portrait band is meaningless at 844x390.
        */
-      const reFit = mobile !== null;
+      const reFit = mobile !== null
       /*
        * NINO-HARDEN B7: a mode/size change while a Niño box is framed RE-FLIES to the new free rect.
        *
@@ -1314,58 +1448,70 @@ export function CameraDirector({
         spinY: spin.current.y,
         free: frame.free,
         viewport: { w, h },
-      });
-      const frameWantsDistance = (!userZoomedMobile || reFit) && !ninoRefit;
-      if (frameWantsDistance && Math.abs(frame.dTarget - currentDistance) > 1e-6) {
-        const k = reFit || prefersReducedMotion() ? 1 : 1 - Math.exp(-stepDt / FRAME_TIME_CONSTANT_S);
-        const wanted = THREE.MathUtils.clamp(frame.dTarget, controls.minDistance, controls.maxDistance);
-        const eased = THREE.MathUtils.lerp(currentDistance, wanted, k);
-        const nextDistance = Math.abs(wanted - eased) < 1e-5 ? wanted : eased;
+      })
+      const frameWantsDistance = (!userZoomedMobile || reFit) && !ninoRefit
+      if (
+        frameWantsDistance &&
+        Math.abs(frame.dTarget - currentDistance) > 1e-6
+      ) {
+        const k =
+          reFit || prefersReducedMotion()
+            ? 1
+            : 1 - Math.exp(-stepDt / FRAME_TIME_CONSTANT_S)
+        const wanted = THREE.MathUtils.clamp(
+          frame.dTarget,
+          controls.minDistance,
+          controls.maxDistance,
+        )
+        const eased = THREE.MathUtils.lerp(currentDistance, wanted, k)
+        const nextDistance = Math.abs(wanted - eased) < 1e-5 ? wanted : eased
         withOwnWrite(() => {
-          camera.position.copy(controls.target).add(offset.setLength(nextDistance));
-          controls.update();
-        });
-        lastFit.current = nextDistance;
-        lastSeenDistance.current = nextDistance;
+          camera.position
+            .copy(controls.target)
+            .add(offset.setLength(nextDistance))
+          controls.update()
+        })
+        lastFit.current = nextDistance
+        lastSeenDistance.current = nextDistance
       }
-      if (reFit) dispatch({ type: 'USER_ZOOM_RESET' });
+      if (reFit) dispatch({ type: "USER_ZOOM_RESET" })
 
       {
-        const dir = orbitDirection(camera, controls);
-        const d = orbitDistance(camera, controls);
+        const dir = orbitDirection(camera, controls)
+        const d = orbitDistance(camera, controls)
         const viewIsDefault =
-          state === 'idle' &&
+          state === "idle" &&
           !userZoomedMobile &&
           angleDegBetween(dir, DEFAULT_DIRECTION) <= VIEW_DEFAULT_ANGLE_DEG &&
-          Math.abs(d - frame.dTarget) <= VIEW_DEFAULT_DISTANCE;
+          Math.abs(d - frame.dTarget) <= VIEW_DEFAULT_DISTANCE
         publishViewState({
           viewIsDefault,
           spinning: !spin.current.paused,
           hasRegion: machine.current.context.regionId !== null,
-        });
+        })
       }
 
       if (probe) {
-        const camDistance = camera.position.distanceTo(controls.target);
-        const recent = recentDistances.current;
-        recent.push(camDistance);
-        if (recent.length > 4) recent.shift();
-        let lo = Infinity;
-        let hi = -Infinity;
+        const camDistance = camera.position.distanceTo(controls.target)
+        const recent = recentDistances.current
+        recent.push(camDistance)
+        if (recent.length > 4) recent.shift()
+        let lo = Infinity
+        let hi = -Infinity
         for (const v of recent) {
-          if (v < lo) lo = v;
-          if (v > hi) hi = v;
+          if (v < lo) lo = v
+          if (v > hi) hi = v
         }
-        const spread = recent.length < 4 ? Infinity : hi - lo;
-        const distanceQuiet = spread < 2e-4;
-        const distanceArrived = Math.abs(frame.dTarget - camDistance) < 0.0005;
+        const spread = recent.length < 4 ? Infinity : hi - lo
+        const distanceQuiet = spread < 2e-4
+        const distanceArrived = Math.abs(frame.dTarget - camDistance) < 0.0005
         const distanceSettled = rigOwnsDistance.current
           ? distanceArrived && distanceQuiet
-          : distanceQuiet;
+          : distanceQuiet
 
         probe.current = {
           state: {
-            mode: 'live',
+            mode: "live",
             insets: {
               left: frame.free.x,
               right: w - (frame.free.x + frame.free.w),
@@ -1377,14 +1523,15 @@ export function CameraDirector({
             current: { dx: frame.dx, dy: frame.dy, d: camDistance },
             settled: distanceSettled,
             degenerate: frame.degenerate,
-            cameraViewIsNull: camera.view === null || camera.view.enabled === false,
+            cameraViewIsNull:
+              camera.view === null || camera.view.enabled === false,
             focus: machine.current.state,
             userZoomed: userZoomedMobile,
             regionId: machine.current.context.regionId,
             viewIsDefault: getViewState().viewIsDefault,
             spinning: getViewState().spinning,
             hasRegion: getViewState().hasRegion,
-            focusPolicy: 'live',
+            focusPolicy: "live",
             layoutMode: mode,
             viewOffsetY: frame.viewOffsetY,
             viewOffsetX: frame.viewOffsetX,
@@ -1394,12 +1541,12 @@ export function CameraDirector({
             radiusBudget: fit.rect.radiusBudget,
             headerBottom: signal.headerBottom,
           },
-        };
+        }
       }
     } else {
-      const w = size.width;
-      const h = size.height;
-      const insets = getInsets();
+      const w = size.width
+      const h = size.height
+      const insets = getInsets()
 
       /*
        * Any frame at desktop size CLEARS a mobile offset this module installed earlier. Idempotent: the
@@ -1407,14 +1554,22 @@ export function CameraDirector({
        * `clearViewOffset` when `camera.view` is actually non-null — so on an ordinary desktop frame this is
        * one comparison and nothing else, which is what keeps `cameraViewIsNull` true and S1 at 0.
        */
-      applyMobileOffset(camera, mobileOffset.current, 'desktop', w, h, 0, () => mobileCache.current as MobileFrame);
-      mobileCache.current = null;
+      applyMobileOffset(
+        camera,
+        mobileOffset.current,
+        "desktop",
+        w,
+        h,
+        0,
+        () => mobileCache.current as MobileFrame,
+      )
+      mobileCache.current = null
       /*
        * THE CEILING, restored. A page that was a phone keeps `max(5, 1.25·dContain)` in `controls.maxDistance`
        * until this runs, and leaving it would let a desktop user zoom out past the design ceiling — a desktop
        * behaviour change, which is exactly what this step must not cause. Same constant the JSX prop holds.
        */
-      applyMaxDistance(controls, maxDistanceWritten, MAX_DISTANCE);
+      applyMaxDistance(controls, maxDistanceWritten, MAX_DISTANCE)
 
       const frame = computeFrame({
         viewport: { w, h },
@@ -1423,36 +1578,39 @@ export function CameraDirector({
         d0: D0,
         dMax: MAX_DISTANCE,
         re: PIN_ENVELOPE,
-      });
+      })
 
       /* ------------------------------------------------------------------ offset */
 
-      const reduced = prefersReducedMotion();
-      const first = !hasApplied.current;
-      const snap = first || reduced || frame.degenerate;
+      const reduced = prefersReducedMotion()
+      const first = !hasApplied.current
+      const snap = first || reduced || frame.degenerate
 
-      let nextDx = frame.dx;
-      let nextDy = frame.dy;
+      let nextDx = frame.dx
+      let nextDy = frame.dy
       if (!snap) {
-        const k = 1 - Math.exp(-stepDt / FRAME_TIME_CONSTANT_S);
-        nextDx = easedOffset.current.dx + (frame.dx - easedOffset.current.dx) * k;
-        nextDy = easedOffset.current.dy + (frame.dy - easedOffset.current.dy) * k;
-        if (Math.abs(frame.dx - nextDx) < OFFSET_EPSILON_PX) nextDx = frame.dx;
-        if (Math.abs(frame.dy - nextDy) < OFFSET_EPSILON_PX) nextDy = frame.dy;
+        const k = 1 - Math.exp(-stepDt / FRAME_TIME_CONSTANT_S)
+        nextDx =
+          easedOffset.current.dx + (frame.dx - easedOffset.current.dx) * k
+        nextDy =
+          easedOffset.current.dy + (frame.dy - easedOffset.current.dy) * k
+        if (Math.abs(frame.dx - nextDx) < OFFSET_EPSILON_PX) nextDx = frame.dx
+        if (Math.abs(frame.dy - nextDy) < OFFSET_EPSILON_PX) nextDy = frame.dy
       }
-      easedOffset.current = { dx: nextDx, dy: nextDy };
+      easedOffset.current = { dx: nextDx, dy: nextDy }
 
       const moved =
         Math.abs(nextDx - appliedOffset.current.dx) > OFFSET_EPSILON_PX ||
-        Math.abs(nextDy - appliedOffset.current.dy) > OFFSET_EPSILON_PX;
-      const resized = appliedSize.current.w !== w || appliedSize.current.h !== h;
+        Math.abs(nextDy - appliedOffset.current.dy) > OFFSET_EPSILON_PX
+      const resized =
+        appliedSize.current.w !== w || appliedSize.current.h !== h
 
       if (moved || resized || first) {
         /* NEGATIVE offsets: a negative window offset moves the content right/down. */
-        camera.setViewOffset(w, h, -nextDx, -nextDy, w, h);
-        appliedOffset.current = { dx: nextDx, dy: nextDy };
-        appliedSize.current = { w, h };
-        hasApplied.current = true;
+        camera.setViewOffset(w, h, -nextDx, -nextDy, w, h)
+        appliedOffset.current = { dx: nextDx, dy: nextDy }
+        appliedSize.current = { w, h }
+        hasApplied.current = true
       }
 
       /* ---------------------------------------------------------------- distance */
@@ -1468,14 +1626,14 @@ export function CameraDirector({
        *
        * When `userZoomed` is true the fit writes nothing here and containment is not asserted.
        */
-      const offset = camera.position.clone().sub(controls.target);
-      const currentDistance = offset.length();
+      const offset = camera.position.clone().sub(controls.target)
+      const currentDistance = offset.length()
 
-      if (lastFit.current === null) lastFit.current = currentDistance;
-      lastSeenDistance.current = currentDistance;
+      if (lastFit.current === null) lastFit.current = currentDistance
+      lastSeenDistance.current = currentDistance
 
-      const userZoomed = machine.current.context.userZoomed;
-      rigOwnsDistance.current = !userZoomed;
+      const userZoomed = machine.current.context.userZoomed
+      rigOwnsDistance.current = !userZoomed
       /*
        * NINO-HARDEN B7 on DESKTOP. The mobile branch had a re-fit and this one had none, so a desktop
        * resize while a box was framed left the box at the previous viewport's distance (A4 measured
@@ -1494,18 +1652,29 @@ export function CameraDirector({
         spinY: spin.current.y,
         free: frame.free,
         viewport: { w, h },
-      });
-      if (!userZoomed && !ninoRefitDesktop && Math.abs(frame.dTarget - currentDistance) > 1e-6) {
-        const k = first || reduced ? 1 : 1 - Math.exp(-stepDt / FRAME_TIME_CONSTANT_S);
-        const wanted = THREE.MathUtils.clamp(frame.dTarget, controls.minDistance, controls.maxDistance);
-        const eased = THREE.MathUtils.lerp(currentDistance, wanted, k);
-        const nextDistance = Math.abs(wanted - eased) < 1e-5 ? wanted : eased;
+      })
+      if (
+        !userZoomed &&
+        !ninoRefitDesktop &&
+        Math.abs(frame.dTarget - currentDistance) > 1e-6
+      ) {
+        const k =
+          first || reduced ? 1 : 1 - Math.exp(-stepDt / FRAME_TIME_CONSTANT_S)
+        const wanted = THREE.MathUtils.clamp(
+          frame.dTarget,
+          controls.minDistance,
+          controls.maxDistance,
+        )
+        const eased = THREE.MathUtils.lerp(currentDistance, wanted, k)
+        const nextDistance = Math.abs(wanted - eased) < 1e-5 ? wanted : eased
         withOwnWrite(() => {
-          camera.position.copy(controls.target).add(offset.setLength(nextDistance));
-          controls.update();
-        });
-        lastFit.current = nextDistance;
-        lastSeenDistance.current = nextDistance;
+          camera.position
+            .copy(controls.target)
+            .add(offset.setLength(nextDistance))
+          controls.update()
+        })
+        lastFit.current = nextDistance
+        lastSeenDistance.current = nextDistance
       }
 
       /* ----------------------------------------------------- viewIsDefault and spin */
@@ -1518,13 +1687,13 @@ export function CameraDirector({
        * write, so the header only re-renders when one of the two booleans actually moves.
        */
       {
-        const dir = orbitDirection(camera, controls);
-        const d = orbitDistance(camera, controls);
+        const dir = orbitDirection(camera, controls)
+        const d = orbitDistance(camera, controls)
         const viewIsDefault =
-          state === 'idle' &&
+          state === "idle" &&
           !userZoomed &&
           angleDegBetween(dir, DEFAULT_DIRECTION) <= VIEW_DEFAULT_ANGLE_DEG &&
-          Math.abs(d - frame.dTarget) <= VIEW_DEFAULT_DISTANCE;
+          Math.abs(d - frame.dTarget) <= VIEW_DEFAULT_DISTANCE
         /*
          * `hasRegion` is carried from the machine so this frame's publish cannot CLEAR a selection flag
          * that `GlobeScene` set a moment earlier (step 3B2-FIX1 B). It reads the SAME fact the app's
@@ -1535,42 +1704,48 @@ export function CameraDirector({
           viewIsDefault,
           spinning: !spin.current.paused,
           hasRegion: machine.current.context.regionId !== null,
-        });
+        })
       }
 
       /* ------------------------------------------------------------------- probe */
 
       if (probe) {
-        const camDistance = camera.position.distanceTo(controls.target);
-        const dx = easedOffset.current.dx;
-        const dy = easedOffset.current.dy;
-        const pxError = Math.max(Math.abs(frame.dx - dx), Math.abs(frame.dy - dy));
+        const camDistance = camera.position.distanceTo(controls.target)
+        const dx = easedOffset.current.dx
+        const dy = easedOffset.current.dy
+        const pxError = Math.max(
+          Math.abs(frame.dx - dx),
+          Math.abs(frame.dy - dy),
+        )
 
-        const recent = recentDistances.current;
-        recent.push(camDistance);
-        if (recent.length > 4) recent.shift();
+        const recent = recentDistances.current
+        recent.push(camDistance)
+        if (recent.length > 4) recent.shift()
         /* A fold, not `Math.max(...recent)`: the source guard forbids an unbounded spread. */
-        let lo = Infinity;
-        let hi = -Infinity;
+        let lo = Infinity
+        let hi = -Infinity
         for (const v of recent) {
-          if (v < lo) lo = v;
-          if (v > hi) hi = v;
+          if (v < lo) lo = v
+          if (v > hi) hi = v
         }
-        const spread = recent.length < 4 ? Infinity : hi - lo;
-        const distanceQuiet = spread < 2e-4;
-        const distanceArrived = Math.abs(frame.dTarget - camDistance) < 0.0005;
-        const distanceSettled = rigOwnsDistance.current ? distanceArrived && distanceQuiet : distanceQuiet;
+        const spread = recent.length < 4 ? Infinity : hi - lo
+        const distanceQuiet = spread < 2e-4
+        const distanceArrived = Math.abs(frame.dTarget - camDistance) < 0.0005
+        const distanceSettled = rigOwnsDistance.current
+          ? distanceArrived && distanceQuiet
+          : distanceQuiet
 
         probe.current = {
           state: {
-            mode: 'live',
+            mode: "live",
             insets: { ...insets },
             free: { ...frame.free },
             target: { dx: frame.dx, dy: frame.dy, d: frame.dTarget },
             current: { dx, dy, d: camDistance },
             settled: pxError < 0.05 && distanceSettled,
             degenerate: frame.degenerate,
-            cameraViewIsNull: camera.view === null || camera.view.enabled === false,
+            cameraViewIsNull:
+              camera.view === null || camera.view.enabled === false,
             /* Step 3B additions — the machine's state, visible so a spec can poll it. */
             focus: machine.current.state,
             userZoomed,
@@ -1579,14 +1754,14 @@ export function CameraDirector({
             viewIsDefault: getViewState().viewIsDefault,
             spinning: getViewState().spinning,
             hasRegion: getViewState().hasRegion,
-            focusPolicy: 'live',
+            focusPolicy: "live",
             /** Desktop's ceiling, reported so LM8 can assert 5 without reading the controls. */
             dMax: controls.maxDistance,
           },
-        };
+        }
       }
     }
-  });
+  })
 
-  return null;
+  return null
 }
