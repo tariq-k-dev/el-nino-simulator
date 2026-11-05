@@ -1344,7 +1344,24 @@ export function CameraDirector({
           if (downAt !== null && onSelectRegion) {
             const hit = screenSpacePinAt(downAt.x, downAt.y)
             if (hit !== null) {
+              /*
+               * Clear the Niño SELECTION, not only the flight.
+               *
+               * `onSelectRegion` reaches `App.selectRegion`, which does clear the box — but only a render
+               * later, and only when `NINO_UI` is on. Until that render the director's own refs still say
+               * "a box is selected", so `refitNinoForRect` would re-arm a flight for a box the user has
+               * just navigated away from, and `syncSpinPause` would keep the planet frozen under a region
+               * that is about to be focused. Clearing here makes the director's state agree with the
+               * intent on the same frame the press is honoured.
+               *
+               * `ninoRect` goes with it: it is the record of which free rect the box distance was
+               * resolved against, and leaving it set would let the next box press compare against a stale
+               * rect instead of seeding a fresh one.
+               */
               ninoFlight.current = null
+              activeNinoBoxId.current = null
+              ninoRect.current = null
+              syncSpinPause()
               onSelectRegion(hit)
               return
             }
@@ -1405,7 +1422,7 @@ export function CameraDirector({
       dom.removeEventListener("pointerup", onPointerEnd)
       dom.removeEventListener("pointercancel", onPointerEnd)
     }
-  }, [camera, controlsRef, activeRegion, onSelectRegion, spin])
+  }, [camera, controlsRef, activeRegion, onSelectRegion, spin, syncSpinPause])
 
   /* ------------------------------------------- selection -> machine (replaces CameraRig's effect) */
 
