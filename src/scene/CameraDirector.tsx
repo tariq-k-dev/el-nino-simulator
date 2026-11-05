@@ -1534,17 +1534,17 @@ export function CameraDirector({
 
     controls.addEventListener("start", onStart)
     controls.addEventListener("change", onChange)
-    dom.addEventListener("pointerdown", onPointerDownCapture, true)
-    dom.addEventListener("pointermove", onPointerMoveCheck)
-    dom.addEventListener("pointerup", onPointerEnd)
-    dom.addEventListener("pointercancel", onPointerEnd)
+    dom?.addEventListener("pointerdown", onPointerDownCapture, true)
+    dom?.addEventListener("pointermove", onPointerMoveCheck)
+    dom?.addEventListener("pointerup", onPointerEnd)
+    dom?.addEventListener("pointercancel", onPointerEnd)
     return () => {
       controls.removeEventListener("start", onStart)
       controls.removeEventListener("change", onChange)
-      dom.removeEventListener("pointerdown", onPointerDownCapture, true)
-      dom.removeEventListener("pointermove", onPointerMoveCheck)
-      dom.removeEventListener("pointerup", onPointerEnd)
-      dom.removeEventListener("pointercancel", onPointerEnd)
+      dom?.removeEventListener("pointerdown", onPointerDownCapture, true)
+      dom?.removeEventListener("pointermove", onPointerMoveCheck)
+      dom?.removeEventListener("pointerup", onPointerEnd)
+      dom?.removeEventListener("pointercancel", onPointerEnd)
     }
   }, [camera, controlsRef, activeRegion, onSelectRegion, spin, syncSpinPause])
 
