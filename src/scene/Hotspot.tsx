@@ -518,6 +518,19 @@ export function Hotspot({
         No `stopPropagation` on the globe: a pointer-miss still has to close the drawer, so nothing here
         may swallow the "clicked empty globe" case. A back-facing pin returns no intersection at all and
         therefore already IS the empty-globe case.
+
+        ## Selection happens on POINTERDOWN, and there is deliberately NO `onClick`
+
+        R3F fires `onClick` only when the SAME object is hit at both pointerdown and pointerup. A pin
+        moves while the camera flies — measured at 74.6 px of drift between the two events against a
+        14 px hit radius — so the object under the pointer at pointerup is frequently not the object that
+        was pressed. The click is then dropped entirely: the flight is cancelled by the press, nothing is
+        selected, and the box stays latched. Committing the selection on pointerdown removes the second
+        hit test from the decision, so a press that lands is a press that selects.
+
+        The label button below already works this way (see its `onDown`), which is why the two targets
+        now agree about what a press means. Keyboard activation is unaffected: it goes through the label
+        button's `click`, which has no preceding pointerdown.
       */}
       <mesh
         ref={proxyRef}
@@ -525,14 +538,6 @@ export function Hotspot({
         position={headPosition}
         scale={[2.2, 2.2, 2.2]}
         raycast={proxyRaycast}
-        onClick={
-          dotOnly
-            ? undefined
-            : (e) => {
-                e.stopPropagation()
-                onSelect(region.id)
-              }
-        }
         onPointerDown={
           dotOnly
             ? undefined
