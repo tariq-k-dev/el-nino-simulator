@@ -195,8 +195,10 @@ export function Hotspot({
       const focalPx =
         state.size.height / 2 / Math.tan(((cam.fov ?? 42) * Math.PI) / 360)
       const dist = cam.position.distanceTo(SCRATCH_PROXY)
-      const worldR = focalPx > 0 ? (hitPx * dist) / focalPx : PIN_HIT_CLAMP_R
-      proxy.scale.setScalar(Math.min(worldR, PIN_HIT_CLAMP_R))
+      const effectiveHitPx = hitPx * 2.5
+      const worldR =
+        focalPx > 0 ? (effectiveHitPx * dist) / focalPx : PIN_HIT_CLAMP_R
+      proxy.scale.setScalar(Math.min(worldR, PIN_HIT_CLAMP_R * 2.5))
     }
 
     // Fade labels that face away from the camera.
@@ -331,8 +333,9 @@ export function Hotspot({
       const proxy = proxyRef.current
       if (!proxy) return
       const earth = earthRef.current
-      /* Fresh world matrices: a raycast can land between two renders, after the spin moved the group. */
-      if (earth) earth.updateWorldMatrix(true, false)
+
+      /* Fresh world matrices: update proxy and all ancestors (including earth) */
+      proxy.updateWorldMatrix(true, false)
 
       SCRATCH_NORMAL.copy(baseNormal)
       const carrier = earth ?? proxy.parent
@@ -351,6 +354,7 @@ export function Hotspot({
         )
       )
         return
+
       THREE.Mesh.prototype.raycast.call(proxy, raycaster, intersects)
     },
     [baseNormal, earthRef],
@@ -400,20 +404,22 @@ export function Hotspot({
         ref={proxyRef}
         name={`pin-hit-${region.id}`}
         position={headPosition}
+        scale={[2.2, 2.2, 2.2]}
         raycast={proxyRaycast}
-        visible={false}
-        /*
-         * `dotOnly` pins get NO hit proxy: they are visual markers with no click handler, so there is
-         * nothing to raycast against. The handlers below are the whole of what makes a pin
-         * interactive — R3F only pushes an object onto its interaction list when it has BOTH a
-         * `raycast` and handlers (events-*.esm.js:308-311), so handing `undefined` for all three
-         * removes the pin from that list entirely and it cannot intercept a pointer event anywhere.
-         */
         onClick={
           dotOnly
             ? undefined
             : (e) => {
                 e.stopPropagation()
+                onSelect(region.id)
+              }
+        }
+        onPointerDown={
+          dotOnly
+            ? undefined
+            : (e) => {
+                e.stopPropagation()
+                e.nativeEvent?.stopImmediatePropagation?.()
                 onSelect(region.id)
               }
         }
@@ -436,7 +442,7 @@ export function Hotspot({
         }
       >
         <sphereGeometry args={[1, 12, 8]} />
-        <meshBasicMaterial />
+        <meshBasicMaterial transparent opacity={0} depthWrite={false} />
       </mesh>
 
       {/* Pin stem + head.
@@ -530,51 +536,57 @@ export function Hotspot({
 
           `dotOnly` pins render no label at all — they are dots. */}
       {dotOnly ? null : (
-      <Html
-        position={[
-          position[0] * 1.1,
-          position[1] * 1.1 + 0.045,
-          position[2] * 1.1,
-        ]}
-        center
-        distanceFactor={1.55}
-        zIndexRange={[40, 30]}
-        style={{ pointerEvents: "auto" }}
-      >
-        <div ref={labelWrapRef} style={{ transition: "opacity 120ms linear" }}>
-          <button
-            type="button"
-            onClick={() => onSelect(region.id)}
-            onPointerEnter={() => setHovered(true)}
-            onPointerLeave={() => setHovered(false)}
-            className={[
-              "group flex -translate-y-1 items-center gap-1.5 whitespace-nowrap rounded-full border px-2 py-[3px]",
-              "font-mono text-[9px] font-medium uppercase tracking-[0.14em] transition-all duration-200",
-              active
-                ? "border-[rgba(255,255,255,0.38)] text-white"
-                : "border-[rgba(255,255,255,0.15)] text-[rgba(226,238,255,0.92)] hover:border-[rgba(255,255,255,0.34)] hover:text-white",
-            ].join(" ")}
-            style={{
-              // Solid enough to guarantee contrast over white cloud or sun glint.
-              background: "rgba(10, 15, 25, 0.85)",
-              backdropFilter: "blur(8px)",
-              WebkitBackdropFilter: "blur(8px)",
-              // Two-layer shadow: a dark halo for contrast, a warm bloom when active.
-              boxShadow: active
-                ? `0 1px 2px rgba(0,0,0,0.9), 0 4px 14px rgba(0,0,0,0.55), 0 0 18px -4px ${glowCss}`
-                : "0 1px 2px rgba(0,0,0,0.9), 0 4px 12px rgba(0,0,0,0.45)",
-              textShadow: "0 1px 2px rgba(0,0,0,0.95)",
-            }}
-            title={`${region.name} — ${headline}`}
+        <Html
+          position={[
+            position[0] * 1.1,
+            position[1] * 1.1 + 0.045,
+            position[2] * 1.1,
+          ]}
+          center
+          distanceFactor={1.55}
+          zIndexRange={[40, 30]}
+          style={{ pointerEvents: "auto" }}
+        >
+          <div
+            ref={labelWrapRef}
+            style={{ transition: "opacity 120ms linear" }}
           >
-            <span
-              className="h-1.5 w-1.5 shrink-0 rounded-full transition-colors"
-              style={{ background: glowCss, boxShadow: `0 0 8px ${glowCss}` }}
-            />
-            {region.shortName}
-          </button>
-        </div>
-      </Html>
+            <button
+              type="button"
+              onClick={() => onSelect(region.id)}
+              onPointerEnter={() => setHovered(true)}
+              onPointerLeave={() => setHovered(false)}
+              className={[
+                "group flex -translate-y-1 items-center gap-1.5 whitespace-nowrap rounded-full border px-2 py-[3px]",
+                "font-mono text-[9px] font-medium uppercase tracking-[0.14em] transition-all duration-200",
+                active
+                  ? "border-[rgba(255,255,255,0.38)] text-white"
+                  : "border-[rgba(255,255,255,0.15)] text-[rgba(226,238,255,0.92)] hover:border-[rgba(255,255,255,0.34)] hover:text-white",
+              ].join(" ")}
+              style={{
+                // Solid enough to guarantee contrast over white cloud or sun glint.
+                background: "rgba(10, 15, 25, 0.85)",
+                backdropFilter: "blur(8px)",
+                WebkitBackdropFilter: "blur(8px)",
+                // Two-layer shadow: a dark halo for contrast, a warm bloom when active.
+                boxShadow: active
+                  ? `0 1px 2px rgba(0,0,0,0.9), 0 4px 14px rgba(0,0,0,0.55), 0 0 18px -4px ${glowCss}`
+                  : "0 1px 2px rgba(0,0,0,0.9), 0 4px 12px rgba(0,0,0,0.45)",
+                textShadow: "0 1px 2px rgba(0,0,0,0.95)",
+              }}
+              title={`${region.name} — ${headline}`}
+            >
+              <span
+                className="h-1.5 w-1.5 shrink-0 rounded-full transition-colors"
+                style={{
+                  background: glowCss,
+                  boxShadow: `0 0 8px ${glowCss}`,
+                }}
+              />
+              {region.shortName}
+            </button>
+          </div>
+        </Html>
       )}
     </group>
   )
