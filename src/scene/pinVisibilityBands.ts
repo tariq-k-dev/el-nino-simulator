@@ -53,11 +53,17 @@ export const BACK_EDGE = 0;
  */
 export const PIN_HIT_GATE = (FRONT_EDGE + BACK_EDGE) / 2;
 
-/** Projected radius of a pin's hit proxy, in CSS px, on a fine pointer. */
-export const HIT_PX = 14;
+/**
+ * Projected radius of a pin's hit proxy, in CSS px, on a fine pointer.
+ *
+ * NOTE: `Hotspot`'s frame loop multiplies this by 2.5 before converting to a world radius, so the
+ * radius actually drawn is 2.5x this value. The multiplier is there to absorb aim error during a
+ * camera flight; it is not reflected in the number here.
+ */
+export const HIT_PX = 18;
 
 /** Same, on `pointer: coarse` — a thumb is wider than a cursor tip. */
-export const HIT_PX_COARSE = 22;
+export const HIT_PX_COARSE = 28;
 
 /**
  * Nearest pin pair, spin-invariant, measured over all six pairs (audit, `probe-geometry.mjs`):
@@ -67,7 +73,7 @@ export const NEAREST_PIN_PAIR_R = 0.89532;
 
 /**
  * Ceiling on the proxy's world radius: half the nearest pin pair, so two proxies can never overlap and
- * one pin can never swallow its neighbour's click. At `d_fit` a 14 px proxy is 0.04513 R — 9.9x under
+ * one pin can never swallow its neighbour's click. At `d_fit` an 18 px proxy is 0.05803 R — 7.7x under
  * this — so the clamp only ever binds at absurd camera distances.
  */
 export const PIN_HIT_CLAMP_R = NEAREST_PIN_PAIR_R / 2;
