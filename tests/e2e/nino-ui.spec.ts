@@ -57,7 +57,7 @@ const LABEL_NINO4 = 'NIÑO 4';
  * Record a measurement in the report without failing the test.
  *
  * Used for every number an amendment requires to be *printed* (M3's arrival triple, M6's toggle-off trace)
- * rather than asserted. An annotation is the only channel Playwright reports that cannot be mistaken for a
+ * rather than asserted. An annotation is the only channel Playwright reports that cannot be mistaken for an
  * assertion, which is why these numbers do not get `expect` calls around them.
  */
 function annotate(type: string, description: string): void {
@@ -2525,6 +2525,60 @@ async function reachablePin(
   return null;
 }
 
+/**
+ * Click a front region pin while the camera is moving, aimed where the pin will be when pointerdown lands.
+ *
+ * A pin sampled before a click is stale by the CDP round trips between sample and pointerdown (pacific
+ * moves ~160 px/s early in a box flight against a 35 px proxy). So: sample twice on animation frames in ONE
+ * evaluate (page-clock stamped, with the canvas hit-test done in the same trip), derive a velocity, then
+ * extrapolate by the time already elapsed plus ~1.5 round trips (move + down).
+ *
+ * `rttMs` is the caller's measured round-trip time. It is calibrated on an idle page, so it is a LOWER bound
+ * for the in-flight cost — which is the safe direction: under-leading leaves the aim short of the pin, and the
+ * annotation prints the lead so a shortfall is visible as a number rather than as a mystery failure.
+ */
+async function clickPinLeading(
+  page: Page,
+  exclude: string | null,
+  rttMs: number,
+): Promise<{ id: string; x: number; y: number; leadMs: number; leadPx: number } | null> {
+  const s = await page.evaluate(async () => {
+    const sample = () =>
+      new Promise<{ t: number; pins: Array<{ id: string; x: number; y: number; ok: boolean }> }>((res) =>
+        requestAnimationFrame(() =>
+          res({
+            t: performance.timeOrigin + performance.now(),
+            pins: window.__globe!.pins().map((p) => {
+              const el = document.elementFromPoint(p.x, p.y);
+              return { id: p.id, x: p.x, y: p.y, ok: !p.behind && !!p.facing && el?.tagName === 'CANVAS' };
+            }),
+          }),
+        ),
+      );
+    const a = await sample();
+    await new Promise((r) => setTimeout(r, 80));
+    const b = await sample();
+    return { a, b };
+  });
+
+  const pb = s.b.pins.find((p) => p.ok && p.id !== exclude);
+  const pa = pb ? s.a.pins.find((p) => p.id === pb.id) : undefined;
+  if (!pb || !pa) return null;
+
+  const dt = Math.max(1, s.b.t - s.a.t);
+  const vx = (pb.x - pa.x) / dt; // px per ms
+  const vy = (pb.y - pa.y) / dt;
+  const leadMs = Math.min(600, Math.max(0, Date.now() - s.b.t) + 1.5 * rttMs);
+  const vp = page.viewportSize()!;
+  const x = Math.min(vp.width - 1, Math.max(0, pb.x + vx * leadMs));
+  const y = Math.min(vp.height - 1, Math.max(0, pb.y + vy * leadMs));
+
+  await page.mouse.move(x, y);
+  await page.mouse.down();
+  await page.mouse.up();
+  return { id: pb.id, x, y, leadMs, leadPx: Math.hypot(x - pb.x, y - pb.y) };
+}
+
 /** The canvas' centre, and the topmost node there. */
 async function canvasCentre(page: Page): Promise<{ x: number; y: number; top: string }> {
   const c = await page.evaluate(() => {
@@ -2634,6 +2688,15 @@ test.describe('G3: the box flight survives what the user does to the globe', () 
    *
    * So the product cancels without deciding, leaving a stranded box: flight stopped, nothing chosen, the card
    * still claiming to be active. Per R7/M7 this test encodes that and is left failing rather than softened.
+   *
+   * ## The aim is now led, and the two halves of the old failure are separated
+   *
+   * The 74.6 px drift above is a HARNESS cost, not a product one: the sample, the `elementFromPoint` guard and
+   * the `mouse.move`/`down` are three to four CDP round trips, and on software WebGL each one is slow enough
+   * for the pin to travel tens of px. `clickPinLeading` removes that term by sampling velocity in one trip and
+   * extrapolating. What remains after the lead is the product question the paragraph above describes, so a
+   * failure here now means "the product cancels without deciding" rather than "the test aimed at yesterday's
+   * pixel". The lead is annotated, so the two are distinguishable in the report.
    */
   test('G3(a): a region pin clicked 300 ms into a box flight cancels it and takes the camera', async ({ page }) => {
     const errs = watchErrors(page);
@@ -2643,13 +2706,39 @@ test.describe('G3: the box flight survives what the user does to the globe', () 
     await page.evaluate(() => window.__globe!.setSpin(true, 0));
     await page.waitForTimeout(600);
 
+    /*
+     * Calibrate the round-trip time BEFORE the press, on an idle page.
+     *
+     * `clickPinLeading` needs to know how long a `mouse.move` + `mouse.down` pair takes, because that is the
+     * window the pin keeps moving in after the sample. Measured here rather than assumed, because the cost is
+     * dominated by software WebGL and varies with the machine. Three probes, and the largest is used: the lead
+     * should err long, since over-leading by a few px is still inside the 35 px proxy while under-leading is not.
+     *
+     * A loop rather than `Math.max(...rtts)`: `source-guards.test.ts` forbids spreading an array into
+     * Math.min/max as a PATTERN (see G3(b)'s note), and the guard names this file.
+     */
+    const rtts: number[] = [];
+    for (let i = 0; i < 3; i++) {
+      const t0 = Date.now();
+      await page.evaluate(() => 0);
+      rtts.push(Date.now() - t0);
+    }
+    let rtt = 0;
+    for (const v of rtts) if (v > rtt) rtt = v;
+
     await pressCardWithMouse(page, 'nino4');
     await page.waitForTimeout(300);
 
-    /* Read the pin NOW: the camera is already travelling (d 3.8935 -> 2.6996 in the first 300 ms). */
-    const pin = await reachablePin(page, null);
+    /*
+     * Read the pin NOW, and aim where it will be when pointerdown lands: the camera is already travelling
+     * (d 3.8935 -> 2.6996 in the first 300 ms), so a bare sample is stale by the round trips that follow it.
+     */
+    const pin = await clickPinLeading(page, null, rtt);
     expect(pin, 'a front region pin must be geometrically in front 300 ms into the flight').not.toBeNull();
-    await page.mouse.click(pin!.x, pin!.y);
+    annotate(
+      'R2a',
+      `lead ${pin!.leadMs.toFixed(0)} ms (rtt ${rtt} ms) = ${pin!.leadPx.toFixed(1)} px ahead of the sample`,
+    );
 
     await page.waitForTimeout(4000);
 
