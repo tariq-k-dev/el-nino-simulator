@@ -2537,15 +2537,31 @@ async function reachablePin(
  * `rttMs` is the caller's measured round-trip time. It is calibrated on an idle page, so it is a LOWER bound
  * for the in-flight cost — which is the safe direction: under-leading leaves the aim short of the pin, and the
  * annotation prints the lead so a shortfall is visible as a number rather than as a mystery failure.
+ *
+ * ## The elapsed time is measured on the PAGE's clock, not the test process's
+ *
+ * `s.b.t` is `performance.timeOrigin + performance.now()` read inside the page. Subtracting `Date.now()` from
+ * it mixes two unrelated origins, so the difference was negative and `Math.max(0, …)` clamped it to zero —
+ * which is why the printed lead was always exactly `1.5 × rtt` and never reflected the real gap. `pageNow` is
+ * the same clock read one round trip later, so the elapsed term is now a real measurement.
+ *
+ * ## `hit` is the diagnostic half of the sample
+ *
+ * `ok` is the decision (front-facing and not covered by a panel); `hit` is the evidence for it — the topmost
+ * node at the pin's own pixel, named. A press that lands on a drei `<Html>` label instead of the canvas looks
+ * identical to a press the product ignored, and only `hit` distinguishes them.
  */
 async function clickPinLeading(
   page: Page,
   exclude: string | null,
   rttMs: number,
-): Promise<{ id: string; x: number; y: number; leadMs: number; leadPx: number } | null> {
+): Promise<{ id: string; x: number; y: number; leadMs: number; leadPx: number; hit: string } | null> {
   const s = await page.evaluate(async () => {
     const sample = () =>
-      new Promise<{ t: number; pins: Array<{ id: string; x: number; y: number; ok: boolean }> }>((res) =>
+      new Promise<{
+        t: number;
+        pins: Array<{ id: string; x: number; y: number; ok: boolean; hit: string }>;
+      }>((res) =>
         requestAnimationFrame(() =>
           res({
             t: performance.timeOrigin + performance.now(),
@@ -2553,7 +2569,13 @@ async function clickPinLeading(
               const el = document.elementFromPoint(p.x, p.y);
               const blocked =
                 el === null || !!el.closest('[data-occluder], aside, nav, header, [role="dialog"]');
-              return { id: p.id, x: p.x, y: p.y, ok: !p.behind && !!p.facing && !blocked };
+              const hit =
+                el === null
+                  ? '(none)'
+                  : el.tagName === 'CANVAS'
+                    ? 'CANVAS'
+                    : `${el.tagName}.${el.getAttribute('class') ?? ''}`;
+              return { id: p.id, x: p.x, y: p.y, ok: !p.behind && !!p.facing && !blocked, hit };
             }),
           }),
         ),
@@ -2564,6 +2586,9 @@ async function clickPinLeading(
     return { a, b };
   });
 
+  /* The page's own clock, read AFTER the sample — see the docstring. */
+  const pageNow = await page.evaluate(() => performance.timeOrigin + performance.now());
+
   const pb = s.b.pins.find((p) => p.ok && p.id !== exclude);
   const pa = pb ? s.a.pins.find((p) => p.id === pb.id) : undefined;
   if (!pb || !pa) return null;
@@ -2571,7 +2596,7 @@ async function clickPinLeading(
   const dt = Math.max(1, s.b.t - s.a.t);
   const vx = (pb.x - pa.x) / dt; // px per ms
   const vy = (pb.y - pa.y) / dt;
-  const leadMs = Math.min(600, Math.max(0, Date.now() - s.b.t) + 1.5 * rttMs);
+  const leadMs = Math.min(600, Math.max(0, pageNow - s.b.t) + 1.5 * rttMs);
   const vp = page.viewportSize()!;
   const x = Math.min(vp.width - 1, Math.max(0, pb.x + vx * leadMs));
   const y = Math.min(vp.height - 1, Math.max(0, pb.y + vy * leadMs));
@@ -2579,7 +2604,7 @@ async function clickPinLeading(
   await page.mouse.move(x, y);
   await page.mouse.down();
   await page.mouse.up();
-  return { id: pb.id, x, y, leadMs, leadPx: Math.hypot(x - pb.x, y - pb.y) };
+  return { id: pb.id, x, y, leadMs, leadPx: Math.hypot(x - pb.x, y - pb.y), hit: pb.hit };
 }
 
 /** The canvas' centre, and the topmost node there. */
@@ -2733,6 +2758,41 @@ test.describe('G3: the box flight survives what the user does to the globe', () 
     await page.waitForTimeout(300);
 
     /*
+     * TEMPORARY DIAGNOSTIC — `__pinAtDown`.
+     *
+     * Records the topmost node at the pointerdown's own coordinates, captured in the CAPTURE phase on the
+     * canvas (or on the document, if the canvas is gone). This is the only witness that says what the browser
+     * actually hit, as opposed to what the test aimed at: `clickPinLeading` extrapolates, so a press that lands
+     * on a drei `<Html>` label instead of the canvas looks identical to a press the product ignored.
+     *
+     * The listener removes itself on the first pointerdown, so it cannot leak into the later presses in this
+     * test. Remove with the rest of the instrumentation.
+     */
+    await page.evaluate(() => {
+      const w = window as unknown as Record<string, unknown>;
+      w.__pinAtDown = null;
+      const canvas = document.querySelector('#globe-canvas canvas');
+      const target: EventTarget = canvas ?? document;
+      const onDown = (e: Event) => {
+        const pe = e as PointerEvent;
+        const el = document.elementFromPoint(pe.clientX, pe.clientY);
+        w.__pinAtDown = {
+          x: +pe.clientX.toFixed(1),
+          y: +pe.clientY.toFixed(1),
+          target:
+            el === null
+              ? '(none)'
+              : el.tagName === 'CANVAS'
+                ? 'CANVAS'
+                : `${el.tagName}.${el.getAttribute('class') ?? ''}`,
+          t: +(performance.timeOrigin + performance.now()).toFixed(1),
+        };
+        target.removeEventListener('pointerdown', onDown, true);
+      };
+      target.addEventListener('pointerdown', onDown, true);
+    });
+
+    /*
      * Read the pin NOW, and aim where it will be when pointerdown lands: the camera is already travelling
      * (d 3.8935 -> 2.6996 in the first 300 ms), so a bare sample is stale by the round trips that follow it.
      */
@@ -2740,7 +2800,44 @@ test.describe('G3: the box flight survives what the user does to the globe', () 
     expect(pin, 'a front region pin must be geometrically in front 300 ms into the flight').not.toBeNull();
     annotate(
       'R2a',
-      `lead ${pin!.leadMs.toFixed(0)} ms (rtt ${rtt} ms) = ${pin!.leadPx.toFixed(1)} px ahead of the sample`,
+      `lead ${pin!.leadMs.toFixed(0)} ms (rtt ${rtt} ms) = ${pin!.leadPx.toFixed(1)} px ahead of the sample; ` +
+        `hit at the sample ${pin!.hit}`,
+    );
+
+    /*
+     * TEMPORARY DIAGNOSTIC — `R2a-diag`.
+     *
+     * Three questions the failing run could not answer from the existing annotations:
+     *
+     *   1. Is the scene still alive? A lost WebGL context would explain BOTH the null outline opacity and a
+     *      `d` that never moves, and neither would be a product defect.
+     *   2. Did the camera move at all after the press? Two reads 500 ms apart, printed as a delta.
+     *   3. Did the press reach a pin handler, and what did the browser hit? `__pinDown` and `__pinAtDown`
+     *      answer those; `__pinRay` shows the last few gate verdicts.
+     *
+     * Remove with the rest of the instrumentation.
+     */
+    const dA = await page.evaluate(() => window.__globe!.distance());
+    await page.waitForTimeout(500);
+    const dB = await page.evaluate(() => window.__globe!.distance());
+    const diag = await page.evaluate(() => {
+      const w = window as unknown as Record<string, unknown>;
+      const gl = w.__gl as { getContext?: () => WebGLRenderingContext | null } | undefined;
+      const ctx = gl?.getContext?.() ?? null;
+      return {
+        glLost: ctx ? ctx.isContextLost() : null,
+        canvases: document.querySelectorAll('canvas').length,
+        pinDown: (w.__pinDown as number | undefined) ?? 0,
+        pinAtDown: w.__pinAtDown ?? null,
+        pinRay: (w.__pinRay as unknown[] | undefined)?.slice(-6) ?? null,
+      };
+    });
+    annotate(
+      'R2a-diag',
+      `d at annotation ${dA.toFixed(5)}, 500 ms later ${dB.toFixed(5)} (moved ${(dB - dA).toFixed(5)}); ` +
+        `glLost ${String(diag.glLost)}; canvases ${diag.canvases}; __pinDown ${diag.pinDown}; ` +
+        `atDown ${JSON.stringify(diag.pinAtDown)}; last rays ${JSON.stringify(diag.pinRay)}; ` +
+        `consoleErrors ${JSON.stringify(errs.consoleErrors)}; pageErrors ${JSON.stringify(errs.pageErrors)}`,
     );
 
     await page.waitForTimeout(4000);
