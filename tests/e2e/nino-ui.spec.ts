@@ -2737,18 +2737,27 @@ test.describe('G3: the box flight survives what the user does to the globe', () 
     /*
      * Calibrate the round-trip time BEFORE the press, on an idle page.
      *
-     * `clickPinLeading` needs to know how long a `mouse.move` + `mouse.down` pair takes, because that is the
-     * window the pin keeps moving in after the sample. Measured here rather than assumed, because the cost is
-     * dominated by software WebGL and varies with the machine. Three probes, and the largest is used: the lead
-     * should err long, since over-leading by a few px is still inside the 35 px proxy while under-leading is not.
+     * MEASURED BUG, and it is why an earlier run printed `lead 0 ms`: this used to time
+     * `page.evaluate(() => 0)`, which is not the cost the lead is meant to cover. `Date.now()` has 1 ms
+     * resolution and a trivial evaluate returns inside one tick, so `rtt` came out as 0-1 and `1.5 * rtt`
+     * contributed nothing. The lead then collapsed to `pageNow - s.b.t` — one round trip — and printed as 0
+     * after `toFixed(0)`.
      *
-     * A loop rather than `Math.max(...rtts)`: `source-guards.test.ts` forbids spreading an array into
-     * Math.min/max as a PATTERN (see G3(b)'s note), and the guard names this file.
+     * What the lead must cover is the wall time from the sample to the pointerdown actually landing: the
+     * evaluate's return trip, the `mouse.move`, and the `mouse.down`. So the probe is a real `mouse.move` over
+     * the canvas, timed end to end. A move is used rather than a down/up pair because a move has no side
+     * effects at all: it raises no OrbitControls `start`, and it cannot fire `onPointerMissed`. The move is
+     * over the canvas rather than over a panel because the canvas path includes R3F's raycast, which is the
+     * expensive part on software WebGL and therefore the part the lead has to cover.
+     *
+     * The raw samples are printed in the `R2a-diag` annotation, so the number is auditable rather than
+     * trusted.
      */
+    const calib = await canvasCentre(page);
     const rtts: number[] = [];
     for (let i = 0; i < 3; i++) {
       const t0 = Date.now();
-      await page.evaluate(() => 0);
+      await page.mouse.move(calib.x + i, calib.y);
       rtts.push(Date.now() - t0);
     }
     let rtt = 0;
@@ -2758,38 +2767,93 @@ test.describe('G3: the box flight survives what the user does to the globe', () 
     await page.waitForTimeout(300);
 
     /*
-     * TEMPORARY DIAGNOSTIC — `__pinAtDown`.
+     * TEMPORARY DIAGNOSTIC — `__pinAtDown` / `__pinAtUp` / `__pinAtClick`.
      *
-     * Records the topmost node at the pointerdown's own coordinates, captured in the CAPTURE phase on the
-     * canvas (or on the document, if the canvas is gone). This is the only witness that says what the browser
-     * actually hit, as opposed to what the test aimed at: `clickPinLeading` extrapolates, so a press that lands
-     * on a drei `<Html>` label instead of the canvas looks identical to a press the product ignored.
+     * Records the topmost node at each of the three events, captured in the CAPTURE phase on the canvas (or on
+     * the document, if the canvas is gone). This is the only witness that says what the browser actually hit,
+     * as opposed to what the test aimed at: `clickPinLeading` extrapolates, so a press that lands on a drei
+     * `<Html>` label instead of the canvas looks identical to a press the product ignored.
      *
-     * The listener removes itself on the first pointerdown, so it cannot leak into the later presses in this
+     * ## Why the pin snapshot is here
+     *
+     * The earlier version recorded only the pointer's own coordinates and the topmost node, so a
+     * `pinDown 0 / CANVAS` result could not be told apart from "the aim was stale": that diagnosis needs the
+     * pin's position AT THE PRESS to compare against the press point, and nothing else in the page records it.
+     * `__globe.pins()` is the same source `clickPinLeading` samples, so the two are directly comparable.
+     *
+     * ## Why all three events
+     *
+     * `pointerup` and `click` are attached to the CANVAS, so if the press never reached the canvas they stay
+     * null — which is itself the answer. `__pinAtUp` also carries `pinDown` and the ray tail, read at the
+     * moment the press completed rather than four seconds later.
+     *
+     * Each listener removes itself on its first event, so none of them can leak into the later presses in this
      * test. Remove with the rest of the instrumentation.
      */
     await page.evaluate(() => {
       const w = window as unknown as Record<string, unknown>;
       w.__pinAtDown = null;
+      w.__pinAtUp = null;
+      w.__pinAtClick = null;
+
+      const name = (el: Element | null): string =>
+        el === null
+          ? '(none)'
+          : el.tagName === 'CANVAS'
+            ? 'CANVAS'
+            : `${el.tagName}.${el.getAttribute('class') ?? ''}`;
+
+      const pins = () =>
+        window.__globe!.pins().map((p) => ({
+          id: p.id,
+          x: +p.x.toFixed(1),
+          y: +p.y.toFixed(1),
+          behind: p.behind,
+          facing: p.facing,
+        }));
+
       const canvas = document.querySelector('#globe-canvas canvas');
       const target: EventTarget = canvas ?? document;
+
       const onDown = (e: Event) => {
         const pe = e as PointerEvent;
-        const el = document.elementFromPoint(pe.clientX, pe.clientY);
         w.__pinAtDown = {
           x: +pe.clientX.toFixed(1),
           y: +pe.clientY.toFixed(1),
-          target:
-            el === null
-              ? '(none)'
-              : el.tagName === 'CANVAS'
-                ? 'CANVAS'
-                : `${el.tagName}.${el.getAttribute('class') ?? ''}`,
+          target: name(document.elementFromPoint(pe.clientX, pe.clientY)),
+          pins: pins(),
           t: +(performance.timeOrigin + performance.now()).toFixed(1),
         };
         target.removeEventListener('pointerdown', onDown, true);
       };
+      const onUp = (e: Event) => {
+        const pe = e as PointerEvent;
+        w.__pinAtUp = {
+          x: +pe.clientX.toFixed(1),
+          y: +pe.clientY.toFixed(1),
+          target: name(document.elementFromPoint(pe.clientX, pe.clientY)),
+          pins: pins(),
+          pinDown: (w.__pinDown as number | undefined) ?? 0,
+          rays: (w.__pinRay as unknown[] | undefined)?.slice(-8) ?? null,
+          t: +(performance.timeOrigin + performance.now()).toFixed(1),
+        };
+        target.removeEventListener('pointerup', onUp, true);
+      };
+      const onClick = (e: Event) => {
+        const pe = e as MouseEvent;
+        w.__pinAtClick = {
+          x: +pe.clientX.toFixed(1),
+          y: +pe.clientY.toFixed(1),
+          target: name(document.elementFromPoint(pe.clientX, pe.clientY)),
+          pinDown: (w.__pinDown as number | undefined) ?? 0,
+          t: +(performance.timeOrigin + performance.now()).toFixed(1),
+        };
+        target.removeEventListener('click', onClick, true);
+      };
+
       target.addEventListener('pointerdown', onDown, true);
+      target.addEventListener('pointerup', onUp, true);
+      target.addEventListener('click', onClick, true);
     });
 
     /*
@@ -2815,6 +2879,10 @@ test.describe('G3: the box flight survives what the user does to the globe', () 
      *   3. Did the press reach a pin handler, and what did the browser hit? `__pinDown` and `__pinAtDown`
      *      answer those; `__pinRay` shows the last few gate verdicts.
      *
+     * The `nearest` figure below is the one the cause table needs: with `pinDown 0` and `CANVAS` at the press,
+     * "the aim was stale" and "the gate refused the pin" are only distinguishable by how far the pin was from
+     * the pointer when the press landed.
+     *
      * Remove with the rest of the instrumentation.
      */
     const dA = await page.evaluate(() => window.__globe!.distance());
@@ -2829,14 +2897,39 @@ test.describe('G3: the box flight survives what the user does to the globe', () 
         canvases: document.querySelectorAll('canvas').length,
         pinDown: (w.__pinDown as number | undefined) ?? 0,
         pinAtDown: w.__pinAtDown ?? null,
+        pinAtUp: w.__pinAtUp ?? null,
+        pinAtClick: w.__pinAtClick ?? null,
         pinRay: (w.__pinRay as unknown[] | undefined)?.slice(-6) ?? null,
       };
     });
+
+    const atDown = diag.pinAtDown as
+      | {
+          x: number;
+          y: number;
+          pins: Array<{ id: string; x: number; y: number; behind: boolean; facing: boolean }>;
+        }
+      | null;
+    let nearest: { id: string; px: number; facing: boolean; behind: boolean } | null = null;
+    if (atDown?.pins) {
+      for (const p of atDown.pins) {
+        const dist = Math.hypot(p.x - atDown.x, p.y - atDown.y);
+        if (!nearest || dist < nearest.px) nearest = { id: p.id, px: dist, facing: p.facing, behind: p.behind };
+      }
+    }
+
     annotate(
       'R2a-diag',
       `d at annotation ${dA.toFixed(5)}, 500 ms later ${dB.toFixed(5)} (moved ${(dB - dA).toFixed(5)}); ` +
         `glLost ${String(diag.glLost)}; canvases ${diag.canvases}; __pinDown ${diag.pinDown}; ` +
-        `atDown ${JSON.stringify(diag.pinAtDown)}; last rays ${JSON.stringify(diag.pinRay)}; ` +
+        `rtts ${JSON.stringify(rtts)} -> rtt ${rtt} ms; ` +
+        `nearest pin at the press ${
+          nearest
+            ? `${nearest.id} ${nearest.px.toFixed(1)} px away (facing ${nearest.facing}, behind ${nearest.behind})`
+            : '(no pin snapshot)'
+        }; ` +
+        `atDown ${JSON.stringify(diag.pinAtDown)}; atUp ${JSON.stringify(diag.pinAtUp)}; ` +
+        `atClick ${JSON.stringify(diag.pinAtClick)}; last rays ${JSON.stringify(diag.pinRay)}; ` +
         `consoleErrors ${JSON.stringify(errs.consoleErrors)}; pageErrors ${JSON.stringify(errs.pageErrors)}`,
     );
 
