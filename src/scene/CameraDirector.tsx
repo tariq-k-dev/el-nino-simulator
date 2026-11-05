@@ -875,6 +875,15 @@ export function CameraDirector({
   const camera = useThree((state) => state.camera) as THREE.PerspectiveCamera
   const size = useThree((state) => state.size)
   /**
+   * The renderer, for its `domElement` — the canvas the pointer events actually land on.
+   *
+   * `controls.domElement` is normally the same node, but it is whatever the controls were constructed
+   * with, and a canvas that is re-created (a context loss, a remount) leaves the controls holding the
+   * old node. Reading the renderer's canvas first means the listeners are attached to the element the
+   * user is actually pressing, with the controls' node as the fallback.
+   */
+  const gl = useThree((state) => state.gl)
+  /**
    * The canvas size, readable from the pointer handlers.
    *
    * A ref rather than a dependency: `size` changes on every resize, and putting it in the
@@ -1208,7 +1217,15 @@ export function CameraDirector({
     const controls = controlsRef.current
     if (!controls) return undefined
 
-    const dom = controls.domElement as HTMLElement
+    /*
+     * The canvas, preferring the renderer's own element over the controls' — see `gl` above. `undefined`
+     * rather than a cast, so a renderer that has not produced a canvas yet skips the listeners instead of
+     * throwing on `addEventListener`.
+     */
+    const dom = (gl.domElement ?? controls.domElement) as
+      | HTMLElement
+      | undefined
+    if (!dom) return undefined
     /* Where the current pointer press began; null when no pointer is down (so a `start` with null = wheel). */
     let downAt: { x: number; y: number } | null = null
     /**
@@ -1277,7 +1294,17 @@ export function CameraDirector({
      * runs, or `onStart` cannot tell a pointer press from a wheel.
      */
     const onPointerDownCapture = (e: PointerEvent): void => {
-      downAt = { x: e.clientX, y: e.clientY }
+      /*
+       * CANVAS-relative, not viewport-relative.
+       *
+       * `screenSpacePinAt` compares against `size.width`/`size.height`, which are the canvas's CSS size,
+       * and projects into that same space. `clientX`/`clientY` are viewport coordinates, so on a canvas
+       * that does not start at (0, 0) — a header above it, a sidebar beside it — the two disagree by the
+       * canvas's offset and the fallback tests the wrong point. Subtracting the rect's origin puts the
+       * press in the space the projection uses.
+       */
+      const rect = dom.getBoundingClientRect()
+      downAt = { x: e.clientX - rect.left, y: e.clientY - rect.top }
       /*
        * Resolve a potential pin hit NOW, at the press, and hold it until the release decides.
        *
@@ -1546,7 +1573,15 @@ export function CameraDirector({
       dom?.removeEventListener("pointerup", onPointerEnd)
       dom?.removeEventListener("pointercancel", onPointerEnd)
     }
-  }, [camera, controlsRef, activeRegion, onSelectRegion, spin, syncSpinPause])
+  }, [
+    camera,
+    controlsRef,
+    activeRegion,
+    onSelectRegion,
+    spin,
+    syncSpinPause,
+    gl,
+  ])
 
   /* ------------------------------------------- selection -> machine (replaces CameraRig's effect) */
 
