@@ -289,11 +289,12 @@ test.describe('drawer region switcher', () => {
 
       for (const target of REGIONS.slice(1)) {
         const chip = await clickChip(page, target.id);
+        await expect.poll(() => page.evaluate(() => window.__frame!.regionId)).toBe(target.id);
 
         /* (1) it reaches the FOCUSING state, i.e. a flight really started. */
         await expect
           .poll(() => page.evaluate(() => window.__frame!.focus), { timeout: 15_000, intervals: [80] })
-          .not.toBe('idle');
+          .toBe('focusing');
         /* (2) and it lands. */
         await expect
           .poll(() => page.evaluate(() => window.__frame!.focus), { timeout: 25_000, intervals: [150] })
