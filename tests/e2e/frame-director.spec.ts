@@ -65,9 +65,9 @@ async function selectRegion(page: Page): Promise<void> {
   const card = await page.evaluate(() => {
     const panel = document.querySelector('[data-occluder="right-panel"]');
     if (!panel) return null;
-    /* Match the card label exactly: the old alternation also matched neighbouring regions. */
+    /* Match either label variant: the card renders "US West", but the region name may read "California". */
     const btn = [...panel.querySelectorAll('button, [role="button"]')].find((b) =>
-      /\bUS West\b/i.test(b.textContent ?? ''),
+      /California|\bUS West\b/i.test(b.textContent ?? ''),
     );
     if (!btn) return null;
     const r = btn.getBoundingClientRect();
