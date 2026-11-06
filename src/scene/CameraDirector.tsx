@@ -1494,7 +1494,20 @@ export function CameraDirector({
            * camera flies once.
            */
           if (downAt !== null && onSelectRegion) {
-            const hit = screenSpacePinAt(downAt.x, downAt.y)
+            /*
+             * `pinHit` first: it was resolved at POINTERDOWN with the widened flight radius, against
+             * the pose the user actually aimed at. Re-projecting here would test the pin's CURRENT
+             * position, which the flight has already moved (74.6 px of drift, `Hotspot.tsx`), so the
+             * press-time hit is both cheaper and the more faithful answer. The projection is the
+             * fallback for a press whose capture-phase resolution found nothing.
+             */
+            const hit =
+              pinHit ??
+              screenSpacePinAt(
+                downAt.x,
+                downAt.y,
+                SCREEN_HIT_FALLBACK_FLIGHT_PX,
+              )
             if (hit !== null) {
               /*
                * Clear the Niño SELECTION, and let the region selection own the camera.
@@ -1521,7 +1534,24 @@ export function CameraDirector({
               onSelectRegion(hit)
               return
             }
+            /*
+             * DEFER — the RELEASE decides (G3(a)/G3(b)).
+             *
+             * A pointer press that resolved no pin is not yet a decision: it may still become a drag
+             * (which must cancel the flight) or a bare tap (which must not). Cancelling here is what
+             * made a press 300 ms into a flight freeze the camera mid-tween and leave the box
+             * selected — "cancels without deciding" — and what made G3(h)'s zero-movement tap cancel a
+             * flight it must not touch.
+             *
+             * So nothing is written and nothing is dispatched: `onPointerMoveCheck` cancels once the
+             * press travels past `BOX_CANCEL_DRAG_PX`, and `onPointerEnd` commits a held `pinHit` only
+             * for a click/tap. `ninoFlight` is left alone for the same reason the hit branch leaves it
+             * alone — `submitNinoFocus(null)` inside `selectRegion` is the one place that knows how to
+             * cancel a box flight.
+             */
+            return
           }
+          /* No pointer is down (or no selection path): a wheel/keyboard gesture cancels immediately. */
           ninoFlight.current = null
         }
         return
