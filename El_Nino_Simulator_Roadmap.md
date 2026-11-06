@@ -1,4 +1,4 @@
-# El Niño Global Impact Simulator: Project Roadmap
+# I aEl Niño Global Impact Simulator: Project Roadmap
 
 ### Phase 1: Core Stability & Test Hardening
 
@@ -16,17 +16,17 @@ This phase prepares the DuckDB-WASM engine and 3D globe to support the expanded 
 
 | Step | Strategic Objective | Est. Time |
 | :---- | :---- | :---- |
-| **2.1 Schema & Coordinates** | Define the DuckDB schema for the expanded datasets. Map the precise GeoJSON vectors and 3D camera angles for the two new regions (Amazon Basin & Gulf Coast). | **1–2 hours** |
+| **2.1 Schema & Coordinates (Current)** | Define the DuckDB schema for the expanded datasets. Map the precise GeoJSON vectors and 3D camera angles for the two new regions (Amazon Basin & Gulf Coast). | **1–2 hours** |
 | **2.2 Historical Data Load** | Ingest the expanded historical NOAA datasets (ERSSTv5, PRISM, etc.) as optimized Parquet files. Validate DuckDB query performance for the historical scenario engine. | **2–3 hours** |
-| **2.3 UI Component Wiring (Current)** | Expand the `RegionCards` and mobile drawer to handle 6 regions. Wire the new DuckDB historical queries to the existing UI sliders and UI charts. | **2–4 hours** |
+| **2.3 UI Component Wiring** | Expand the `RegionCards` and mobile drawer to handle 6 regions. Wire the new DuckDB historical queries to the existing UI sliders and UI charts. | **2–4 hours** |
 
-### Phase 3: Real-Time NOAA Telemetry Integration
+### Phase 3: Real-Time NOAA Telemetry Integration (Current)
 
 With the structure in place, we swap static placeholders for live data feeds.
 
 | Step | Strategic Objective | Est. Time |
 | :---- | :---- | :---- |
-| **3.1 Ingestion Pipeline Strategy** | Design the architecture for fetching live NOAA data (Cloudflare Workers with Cron Triggers to fetch, parse, and cache feeds into Parquet/KV to avoid CORS and rate limits). | **2–3 hours** |
+| **3.1 Ingestion Pipeline Strategy (Current)** | Design the architecture for fetching live NOAA data (Cloudflare Workers with Cron Triggers to fetch, parse, and cache feeds into Parquet/KV to avoid CORS and rate limits). | **2–3 hours** |
 | **3.2 Pipeline Implementation** | Build the integration for TAO/TRITON buoys, CPC precipitation, and NWS atmospheric river feeds. | **3–5 hours** |
 | **3.3 Client Hydration** | Update the DuckDB-WASM queries to seamlessly merge historical baselines with the newly cached real-time telemetry upon app load. | **2–3 hours** |
 
