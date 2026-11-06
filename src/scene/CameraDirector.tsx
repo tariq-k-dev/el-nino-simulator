@@ -362,16 +362,22 @@ const BOX_CANCEL_DRAG_PX = 6
  * The same `BOX_CANCEL_DRAG_PX` threshold the drag-cancel uses, so "a drag" means exactly one thing in
  * this file: a press that travels further than this cancels the flight, and a press that does not is a
  * decision the pointerup is allowed to commit.
+ *
+ * `downAt` is CANVAS-relative (`onPointerDownCapture` subtracts the canvas rect's origin), while
+ * `e.clientX`/`e.clientY` are VIEWPORT coordinates. The event is converted into the same space before
+ * the comparison, or a canvas that does not start at (0, 0) — a header above it, a sidebar beside it —
+ * would measure the press against the wrong origin and read a click as a drag.
  */
 function isClick(
   downAt: { x: number; y: number } | null,
   e: PointerEvent,
+  dom?: HTMLElement,
 ): boolean {
-  return (
-    downAt !== null &&
-    Math.hypot(e.clientX - downAt.x, e.clientY - downAt.y) <=
-      BOX_CANCEL_DRAG_PX
-  )
+  if (downAt === null) return false
+  const rect = dom ? dom.getBoundingClientRect() : { left: 0, top: 0 }
+  const curX = e.clientX - rect.left
+  const curY = e.clientY - rect.top
+  return Math.hypot(curX - downAt.x, curY - downAt.y) <= BOX_CANCEL_DRAG_PX
 }
 
 /**
@@ -1215,14 +1221,18 @@ export function CameraDirector({
 
   useEffect(() => {
     const controls = controlsRef.current
-    if (!controls) return undefined
 
     /*
      * The canvas, preferring the renderer's own element over the controls' — see `gl` above. `undefined`
      * rather than a cast, so a renderer that has not produced a canvas yet skips the listeners instead of
      * throwing on `addEventListener`.
+     *
+     * The controls are NOT required for the pointer listeners: those are attached to the canvas, and a
+     * frame in which the controls have not been constructed yet (or have been torn down by a remount)
+     * must still be able to resolve a press. Only the `start`/`change` subscriptions need the controls,
+     * and those are guarded at the bottom of this effect.
      */
-    const dom = (gl.domElement ?? controls.domElement) as
+    const dom = (gl.domElement ?? controls?.domElement) as
       | HTMLElement
       | undefined
     if (!dom) return undefined
@@ -1325,9 +1335,13 @@ export function CameraDirector({
     }
     const onPointerMoveCheck = (e: PointerEvent): void => {
       if (!downAt || !ninoFlight.current) return
+      /* Canvas-relative, matching `onPointerDownCapture` — see `isClick`. */
+      const rect = dom.getBoundingClientRect()
       if (
-        Math.hypot(e.clientX - downAt.x, e.clientY - downAt.y) >
-        BOX_CANCEL_DRAG_PX
+        Math.hypot(
+          e.clientX - rect.left - downAt.x,
+          e.clientY - rect.top - downAt.y,
+        ) > BOX_CANCEL_DRAG_PX
       ) {
         /* A drag is not a decision: drop the held hit so the release cannot commit it. */
         pinHit = null
@@ -1347,7 +1361,7 @@ export function CameraDirector({
       if (
         e.type === "pointerup" &&
         pinHit !== null &&
-        isClick(downAt, e) &&
+        isClick(downAt, e, dom) &&
         onSelectRegion
       ) {
         const hit = pinHit
@@ -1559,19 +1573,19 @@ export function CameraDirector({
         dispatch({ type: "USER_ZOOM" })
     }
 
-    controls.addEventListener("start", onStart)
-    controls.addEventListener("change", onChange)
-    dom?.addEventListener("pointerdown", onPointerDownCapture, true)
-    dom?.addEventListener("pointermove", onPointerMoveCheck)
-    dom?.addEventListener("pointerup", onPointerEnd)
-    dom?.addEventListener("pointercancel", onPointerEnd)
+    controls?.addEventListener("start", onStart)
+    controls?.addEventListener("change", onChange)
+    dom.addEventListener("pointerdown", onPointerDownCapture, true)
+    dom.addEventListener("pointermove", onPointerMoveCheck)
+    dom.addEventListener("pointerup", onPointerEnd)
+    dom.addEventListener("pointercancel", onPointerEnd)
     return () => {
-      controls.removeEventListener("start", onStart)
-      controls.removeEventListener("change", onChange)
-      dom?.removeEventListener("pointerdown", onPointerDownCapture, true)
-      dom?.removeEventListener("pointermove", onPointerMoveCheck)
-      dom?.removeEventListener("pointerup", onPointerEnd)
-      dom?.removeEventListener("pointercancel", onPointerEnd)
+      controls?.removeEventListener("start", onStart)
+      controls?.removeEventListener("change", onChange)
+      dom.removeEventListener("pointerdown", onPointerDownCapture, true)
+      dom.removeEventListener("pointermove", onPointerMoveCheck)
+      dom.removeEventListener("pointerup", onPointerEnd)
+      dom.removeEventListener("pointercancel", onPointerEnd)
     }
   }, [
     camera,
