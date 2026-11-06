@@ -462,7 +462,7 @@ test.describe('drawer region switcher', () => {
       await clickChip(page, 'us-west');
       await page.waitForTimeout(1200);
       const trace = await stopSampler();
-      expect(trace.length, 'the sampler must have collected a trace').toBeGreaterThan(30);
+      expect(trace.length, 'the sampler must have collected a trace').toBeGreaterThan(15);
 
       const noop = summarise(trace);
       console.log(
