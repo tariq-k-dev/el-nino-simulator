@@ -183,6 +183,12 @@ def enrich(df: pl.DataFrame, since: int) -> pl.DataFrame:
         # Horn of Africa
         (20.0 + anomaly * 25.0 + JET * -4.0).alias("precip_anomaly_africa"),
         (anomaly * 2.8).clip(0.0, 10.0).alias("flood_index_horn"),
+        # Amazon Basin - SST-only, matching model.ts: the teleconnection is not
+        # routed through the subtropical jet, so there is deliberately no JET term.
+        (-8.0 - anomaly * 16.0).alias("amazon_precip"),
+        (anomaly * 2.4).clip(0.0, 10.0).alias("amazon_drought"),
+        # Gulf Coast
+        (10.0 + anomaly * 14.0).alias("gulf_precip"),
         # Pacific basin precipitation proxy, kept for parity with the brief.
         (anomaly * 15.0).alias("precip_anomaly_pacific"),
     )
@@ -241,6 +247,9 @@ def enrich(df: pl.DataFrame, since: int) -> pl.DataFrame:
         "drought_index_se_asia",
         "precip_anomaly_africa",
         "flood_index_horn",
+        "amazon_precip",
+        "amazon_drought",
+        "gulf_precip",
         "agriculture_exposure",
         "risk_tier_pacific",
         "source",
