@@ -538,6 +538,7 @@ export function Hotspot({
         position={headPosition}
         scale={[2.2, 2.2, 2.2]}
         raycast={proxyRaycast}
+        visible={false}
         onPointerDown={
           dotOnly
             ? undefined
