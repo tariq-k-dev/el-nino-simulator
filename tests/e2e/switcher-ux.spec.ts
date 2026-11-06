@@ -45,6 +45,8 @@ const REGIONS = [
   { id: 'us-west', card: /California/i, chip: 'us-west' },
   { id: 'se-asia', card: /Indonesia|Asia/i, chip: 'se-asia' },
   { id: 'horn-africa', card: /Africa|Horn/i, chip: 'horn-africa' },
+  { id: 'amazon-basin', card: /Amazon/i, chip: 'amazon-basin' },
+  { id: 'gulf-coast', card: /Gulf/i, chip: 'gulf-coast' },
 ] as const;
 
 const FOV = 42;
@@ -607,7 +609,7 @@ test.describe('drawer region switcher', () => {
       });
       let landedOnChip = 0;
       let landedInDrawer = 0;
-      for (let i = 0; i < 28; i += 1) {
+      for (let i = 0; i < 32; i += 1) {
         await page.keyboard.press('Tab');
         const hit = await page.evaluate((sel) => {
           const el = document.activeElement;
