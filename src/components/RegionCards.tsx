@@ -37,10 +37,10 @@ interface RegionCardsProps {
  */
 export function RegionCards({ metrics, activeRegion, onSelect }: RegionCardsProps) {
   return (
-    <div className="pointer-events-auto grid w-[268px] grid-cols-2 gap-2">
-      <div className="col-span-full mb-0.5 flex items-center justify-between px-1">
-        <span className="text-[8.5px] uppercase tracking-[0.2em] text-slate-500">Impact Zones</span>
-        <span className="num text-[8.5px] text-slate-600">{ORDER.length} active</span>
+    <div className="pointer-events-auto grid w-[320px] grid-cols-2 gap-3">
+      <div className="col-span-full mb-1 flex items-center justify-between px-1.5">
+        <span className="text-[9px] uppercase tracking-[0.2em] text-slate-500">Impact Zones</span>
+        <span className="num text-[9px] text-slate-600">{ORDER.length} active</span>
       </div>
 
       {ORDER.map((id) => {
@@ -58,7 +58,7 @@ export function RegionCards({ metrics, activeRegion, onSelect }: RegionCardsProp
               // Solid dark fill, not bg-black/35: these cards float over the
               // brightest part of the day side, and a translucent panel there
               // drops the body copy below a readable contrast ratio.
-              'group relative overflow-hidden rounded-xl border px-3 py-2.5 text-left backdrop-blur-md transition-all duration-300',
+              'group relative overflow-hidden rounded-xl border px-3.5 py-3 text-left backdrop-blur-md transition-all duration-300',
               active
                 ? 'border-[rgba(255,255,255,0.22)] bg-[rgba(10,15,25,0.88)] shadow-[0_10px_30px_-12px_rgba(0,0,0,0.95)]'
                 : 'border-[rgba(255,255,255,0.12)] bg-[rgba(10,15,25,0.82)] hover:border-[rgba(255,255,255,0.24)] hover:bg-[rgba(14,20,32,0.9)]',
