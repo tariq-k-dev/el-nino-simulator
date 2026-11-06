@@ -56,20 +56,29 @@ async function settle(page: Page): Promise<void> {
   await page.evaluate(() => {
     delete (window as unknown as Record<string, unknown>).__directorSettleKey;
   });
-  await page.waitForFunction(
-    () => {
-      const f = window.__frame!;
-      const key = [f.insets.left, f.insets.right, f.free.x, f.free.y, f.free.w, f.free.h, f.target.d]
-        .map((n) => n.toFixed(3))
-        .join('|');
-      const store = window as unknown as Record<string, unknown>;
-      const previous = store.__directorSettleKey;
-      store.__directorSettleKey = key;
-      return f.settled && previous === key;
-    },
-    undefined,
-    { timeout: 20_000, polling: 100 },
-  );
+  await expect
+    .poll(
+      () =>
+        page.evaluate(() => {
+          const f = window.__frame!;
+          const key = [f.insets.left, f.insets.right, f.free.x, f.free.y, f.free.w, f.free.h, f.target.d]
+            .map((n) => n.toFixed(3))
+            .join('|');
+          const store = window as unknown as Record<string, unknown>;
+          const previous = store.__directorSettleKey;
+          store.__directorSettleKey = key;
+          /*
+           * `stable` is the same-key-twice test, carried out of the page rather than folded into the
+           * predicate: `expect.poll` retries until the MATCHER passes, so returning `settled` alone would
+           * pass on the first frame where it is true — the "compare against one reading" bug this helper
+           * exists to avoid. The key is written on every poll, so `previous === key` means two consecutive
+           * polls agreed.
+           */
+          return { settled: f.settled, stable: previous === key };
+        }),
+      { timeout: 20_000, intervals: [100], message: 'waiting for the frame state to stop changing' },
+    )
+    .toMatchObject({ settled: true, stable: true });
 }
 
 /** Click the Impact Zones card for US West (the same trigger F8 uses). */
