@@ -90,7 +90,7 @@ describe('parseDataset — rejects malformed input loudly', () => {
   });
 
   it('rejects a header with the wrong column count', () => {
-    expect(() => parseDataset('date,year\n2020-01-01,2020\n')).toThrow(/has 2 columns; expected 25/);
+    expect(() => parseDataset('date,year\n2020-01-01,2020\n')).toThrow(/has 2 columns; expected 28/);
   });
 
   it('rejects a RENAMED column (the dangerous silent case)', () => {
