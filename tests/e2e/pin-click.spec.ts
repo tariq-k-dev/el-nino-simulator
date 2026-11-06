@@ -229,7 +229,7 @@ async function readPins(
 }
 
 function bandOf(facing: number): 'front' | 'grazing' | 'back' {
-  if (facing < BACK_EDGE) return 'back';
+  if (facing <= BACK_EDGE) return 'back';
   return facing >= FRONT_EDGE ? 'front' : 'grazing';
 }
 
@@ -541,6 +541,8 @@ test.describe('pin click — measurement and acceptance', () => {
       facing: number;
       band: 'front' | 'grazing' | 'back';
       selected: boolean;
+      /** The region active AFTER the click, so a failure can name what the click actually hit. */
+      selectedRegion: string | null;
       closed: boolean;
       behind: boolean;
       topHit: string | null;
@@ -566,12 +568,28 @@ test.describe('pin click — measurement and acceptance', () => {
         await page.waitForTimeout(160);
         const outcome = await readClickOutcome(page, { region: before });
 
+        /*
+         * Fail at the offending row, not only in the aggregate below.
+         *
+         * Keyed on the BAND, not on `pin.behind`: `behind` is the projection's behind-camera flag, which is a
+         * different quantity from the facing value the bands are defined on — a pin at f = -0.25 is routinely
+         * `behind: false`, so a guard on `behind` would not fire on the row this sweep exists to catch.
+         */
+        if (b === 'back') {
+          expect(
+            outcome.selected,
+            `pin ${pin.id} at az ${deg} is back-facing (f ${pin.facing.toFixed(4)}, behind ${pin.behind}) ` +
+              `and must not select; it selected ${outcome.region ?? '(none)'}`,
+          ).toBe(false);
+        }
+
         rows.push({
           az: deg,
           id: pin.id,
           facing: Number(pin.facing.toFixed(4)),
           band: b,
           selected: outcome.selected,
+          selectedRegion: outcome.region,
           closed: outcome.closed,
           behind: pin.behind,
           topHit: hits.length ? `${hits[0].name}/${hits[0].type}@${hits[0].distance.toFixed(3)}` : null,
@@ -584,12 +602,12 @@ test.describe('pin click — measurement and acceptance', () => {
     console.log(
       `[D1] ${rows.length} clicks; FRONT_EDGE ${FRONT_EDGE} BACK_EDGE ${BACK_EDGE} PIN_HIT_GATE ${PIN_HIT_GATE}`,
     );
-    console.log('[D1] az  region        facing  band     selected closed behind  top raycast hit');
+    console.log('[D1] az  region        facing  band     selected closed behind  selected-region  top raycast hit');
     for (const r of rows) {
       console.log(
         `[D1] ${String(r.az).padStart(3)} ${r.id.padEnd(13)} ${String(r.facing).padStart(7)} ` +
           `${r.band.padEnd(8)} ${String(r.selected).padEnd(8)} ${String(r.closed).padEnd(6)} ` +
-          `${String(r.behind).padEnd(7)} ${r.topHit ?? '(none)'}`,
+          `${String(r.behind).padEnd(7)} ${String(r.selectedRegion ?? '-').padEnd(16)} ${r.topHit ?? '(none)'}`,
       );
     }
 
@@ -637,7 +655,39 @@ test.describe('pin click — measurement and acceptance', () => {
     const backSelected = back.rows.filter((r) => r.selected);
     expect(
       backSelected,
-      `back rows must select 0 %: ${backSelected.map((r) => `az ${r.az} ${r.id} f ${r.facing}`).join('; ')}`,
+      `back rows must select 0 %: ${backSelected
+        .map(
+          (r) =>
+            `az ${r.az} ${r.id} f ${r.facing.toFixed(4)}${r.behind ? ' (behind)' : ''} ` +
+            `-> selected ${r.selectedRegion ?? '(none)'}; top hit ${r.topHit ?? '(none)'}`,
+        )
+        .join('; ')}`,
+    ).toEqual([]);
+
+    /*
+     * A back row that "selected" has two very different causes, and the message above must not conflate them:
+     *
+     *   - the back pin's OWN proxy fired — a gate defect, and the only one this band is about;
+     *   - the click landed on a FRONT pin's proxy whose projection overlaps this back pin's head — a sampling
+     *     artefact of the sweep, since the proxy is a 14 px disc and two pins can project within 28 px of each
+     *     other at the limb.
+     *
+     * `selectedRegion` and `topHit` name which. The second is reported here rather than silently failing the
+     * band, so a future run says "the sweep aimed at an occluded point" instead of "the gate is broken".
+     */
+    const backSelfSelected = back.rows.filter((r) => r.selectedRegion === r.id);
+    const backOccluded = back.rows.filter((r) => r.selected && r.selectedRegion !== r.id);
+    if (backOccluded.length) {
+      console.log(
+        `[D1] back rows whose point was covered by another pin's proxy (reported, not a gate failure): ` +
+          `${backOccluded.map((r) => `${r.id}@${r.az} -> ${r.selectedRegion} (${r.topHit})`).join(', ')}`,
+      );
+    }
+    expect(
+      backSelfSelected,
+      `a back pin must never select ITSELF: ${backSelfSelected
+        .map((r) => `az ${r.az} ${r.id} f ${r.facing.toFixed(4)}`)
+        .join('; ')}`,
     ).toEqual([]);
   });
 
