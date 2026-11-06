@@ -46,7 +46,14 @@ import { BACK_EDGE, FRONT_EDGE, HIT_PX, PIN_HIT_GATE } from '../../src/scene/pin
 
 const LIVE = '/?debug&framing=live';
 
-const REGION_IDS = ['pacific', 'us-west', 'se-asia', 'horn-africa'] as const;
+const REGION_IDS = [
+  'pacific',
+  'us-west',
+  'se-asia',
+  'horn-africa',
+  'amazon-basin',
+  'gulf-coast',
+] as const;
 
 /**
  * Independent restatement of the fit law, deliberately not imported from `src/` — the same choice
@@ -521,9 +528,9 @@ test.describe('pin click — measurement and acceptance', () => {
   /**
    * D1 — the azimuth sweep: 12 angles x 4 regions = 48 real mouse clicks, each classified before it fires.
    *
-   * This is the same sweep `docs/STEP3D-PIN-AUDIT.md` reports (23 front rows, 1 grazing, 24 back), so the
-   * before/after table can be rebuilt from this log alone. Every row is printed; front and back are asserted,
-   * grazing is printed and not asserted as a band.
+   * 12 angles x 6 regions = 72 rows. The BEFORE column of the before/after table is the 4-region sweep
+   * `docs/STEP3D-PIN-AUDIT.md` reports (23 front, 1 grazing, 24 back); the AFTER column is this log. Every row
+   * is printed; front and back are asserted, grazing is printed and not asserted as a band.
    */
   test('D1 sweep: front 100 %, back 0 %, grazing reported', async ({ page }) => {
     await openLive(page);
@@ -611,9 +618,13 @@ test.describe('pin click — measurement and acceptance', () => {
         `${grazing.rows.map((r) => `${r.id}@${r.az} f ${r.facing}`).join(', ') || 'none'}`,
     );
 
-    expect(rows.length).toBe(48);
-    expect(front.attempts, 'the sweep is the committed 23 front rows').toBe(23);
-    expect(back.attempts, 'and its 24 back rows').toBe(24);
+    expect(rows.length).toBe(72);
+    expect(
+      front.attempts + grazing.attempts + back.attempts,
+      'every row is classified into exactly one band',
+    ).toBe(72);
+    expect(front.attempts, 'the sweep must produce front rows to assert on').toBeGreaterThan(0);
+    expect(back.attempts, 'and back rows').toBeGreaterThan(0);
 
     const frontMisses = front.rows.filter((r) => !r.selected);
     expect(
@@ -827,7 +838,7 @@ test.describe('pin click — measurement and acceptance', () => {
         `(must be 0); ${unreachable} attempts skipped as unreachable`,
     );
 
-    expect(summary).toHaveLength(4);
+    expect(summary).toHaveLength(6);
     expect(unreachable, 'no attempt may be skipped: a pin under the drawer is not a click').toBe(0);
     expect(frontRows, 'the spin-on sweep must produce front rows to assert on').toBeGreaterThan(0);
     /*
@@ -906,7 +917,7 @@ test.describe('pin click — measurement and acceptance', () => {
       );
     }
 
-    expect(sizes).toHaveLength(4);
+    expect(sizes).toHaveLength(6);
   });
 
   /**

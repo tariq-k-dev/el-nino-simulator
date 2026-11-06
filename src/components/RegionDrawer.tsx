@@ -127,6 +127,42 @@ function buildHud(id: RegionId, m: ScenarioMetrics, units: 'metric' | 'imperial'
             : 'Moisture flux is above normal but within the range dryland infrastructure can usually absorb.',
         footprint: m.africaFlood * 10,
       };
+    case 'amazon-basin':
+      return {
+        headline: { label: 'Precip Change', value: formatDelta(m.amazonPrecip, '%'), unit: '' },
+        stats: [
+          { label: 'Drought Index', value: fixed(m.amazonDrought, 2), unit: '/10', accent: '#22c55e' },
+          { label: 'Rainfall Deficit', value: `${fixed(Math.min(100, Math.abs(m.amazonPrecip)), 0)}`, unit: '%', accent: '#22c55e' },
+          { label: 'Fire Weather', value: m.amazonDrought > 5 ? 'Extreme' : m.amazonDrought > 2.5 ? 'Elevated' : 'Normal', unit: '', accent: '#16a34a' },
+        ],
+        bars: [
+          { label: 'Precipitation anomaly', value: m.amazonPrecip, accent: '#22c55e', divergent: true },
+          { label: 'Drought severity', value: (m.amazonDrought / 10) * 100, accent: '#16a34a' },
+        ],
+        narrative:
+          m.amazonDrought > 5
+            ? 'Rainfall deficits are deep enough to push the canopy past its buffering capacity. Fire risk and carbon loss climb together.'
+            : 'Throughfall is suppressed but the forest is still drawing on stored soil moisture.',
+        footprint: Math.abs(m.amazonPrecip),
+      };
+    case 'gulf-coast':
+      return {
+        headline: { label: 'Precip Change', value: formatDelta(m.gulfPrecip, '%'), unit: '' },
+        stats: [
+          { label: 'Winter Surplus', value: `+${fixed(Math.max(0, m.gulfPrecip), 0)}`, unit: '%', accent: '#0ea5e9' },
+          { label: 'Wind Shear', value: m.gulfPrecip > 20 ? 'Strong' : m.gulfPrecip > 12 ? 'Moderate' : 'Weak', unit: '', accent: '#0ea5e9' },
+          { label: 'Flood Risk', value: m.gulfPrecip > 25 ? 'High' : m.gulfPrecip > 15 ? 'Moderate' : 'Low', unit: '', accent: '#0284c7' },
+        ],
+        bars: [
+          { label: 'Precipitation anomaly', value: m.gulfPrecip, accent: '#0ea5e9', divergent: true },
+          { label: 'Hurricane suppression proxy', value: Math.min(100, Math.max(0, m.gulfPrecip * 2)), accent: '#0284c7' },
+        ],
+        narrative:
+          m.gulfPrecip > 25
+            ? 'A strengthened subtropical jet is delivering repeated winter rain events while shear keeps tropical systems from organising.'
+            : 'Winter rainfall is running above normal, with a corresponding drop in tropical cyclone activity.',
+        footprint: Math.abs(m.gulfPrecip),
+      };
   }
 }
 
