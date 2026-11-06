@@ -429,6 +429,10 @@ test.describe('drawer region switcher', () => {
        */
       await startSampler();
       await clickChip(page, 'horn-africa');
+      /* The click must have registered before "focused" means anything: it is already "focused" here. */
+      await expect
+        .poll(() => page.evaluate(() => window.__frame!.regionId), { timeout: 25_000, intervals: [150] })
+        .toBe('horn-africa');
       await expect
         .poll(() => page.evaluate(() => window.__frame!.focus), { timeout: 25_000, intervals: [150] })
         .toBe('focused');
@@ -447,6 +451,10 @@ test.describe('drawer region switcher', () => {
       await page.waitForTimeout(700);
       await settleStable(page);
       await clickChip(page, 'us-west');
+      /* Same sequencing as the control: the region must change before the focus poll can be trusted. */
+      await expect
+        .poll(() => page.evaluate(() => window.__frame!.regionId), { timeout: 25_000, intervals: [150] })
+        .toBe('us-west');
       await expect
         .poll(() => page.evaluate(() => window.__frame!.focus), { timeout: 25_000, intervals: [150] })
         .toBe('focused');
