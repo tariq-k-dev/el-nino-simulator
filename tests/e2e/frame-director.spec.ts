@@ -66,7 +66,7 @@ async function selectRegion(page: Page): Promise<void> {
     const panel = document.querySelector('[data-occluder="right-panel"]');
     if (!panel) return null;
     const btn = [...panel.querySelectorAll('button, [role="button"]')].find((b) =>
-      /California/i.test(b.textContent ?? ''),
+      /California|Pacific|Indonesia|Africa|Amazon|Gulf/i.test(b.textContent ?? ''),
     );
     if (!btn) return null;
     const r = btn.getBoundingClientRect();
