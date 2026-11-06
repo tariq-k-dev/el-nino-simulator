@@ -55,6 +55,17 @@ describe('computeMetrics — brief specification', () => {
     expect(m.africaPrecip).toBeCloseTo(20 + 1.5 * 25, 1);
     expect(m.africaFlood).toBeCloseTo(1.5 * 2.8, 2);
   });
+
+  it('applies the Amazon precip and drought equations', () => {
+    const m = computeMetrics({ ...baseline, sstAnomaly: 1.5 });
+    expect(m.amazonPrecip).toBeCloseTo(-8 - 1.5 * 16, 1);
+    expect(m.amazonDrought).toBeCloseTo(1.5 * 2.4, 2);
+  });
+
+  it('applies the Gulf Coast precip equation', () => {
+    const m = computeMetrics({ ...baseline, sstAnomaly: 1.5 });
+    expect(m.gulfPrecip).toBeCloseTo(10 + 1.5 * 14, 1);
+  });
 });
 
 describe('secondary levers', () => {
@@ -71,6 +82,18 @@ describe('secondary levers', () => {
     const equatorward = computeMetrics({ ...baseline, jetStreamShift: -1 });
     expect(equatorward.usPrecip).toBeLessThan(neutral.usPrecip);
     expect(equatorward.asiaPrecip).toBeGreaterThan(neutral.asiaPrecip);
+  });
+
+  // The Amazon and Gulf Coast teleconnections are not routed through the
+  // subtropical jet, so the lever must leave them untouched. If a future edit
+  // adds a jet term to either, this fails rather than silently shifting the
+  // headline on two cards the user did not expect to move.
+  it('the jet lever does not touch the Amazon or Gulf Coast', () => {
+    const poleward = computeMetrics({ ...baseline, jetStreamShift: 1 });
+    const equatorward = computeMetrics({ ...baseline, jetStreamShift: -1 });
+    expect(poleward.amazonPrecip).toBe(equatorward.amazonPrecip);
+    expect(poleward.amazonDrought).toBe(equatorward.amazonDrought);
+    expect(poleward.gulfPrecip).toBe(equatorward.gulfPrecip);
   });
 
   it('agriculture weight never changes the climate signal, only exposure', () => {
@@ -96,6 +119,21 @@ describe('derived indices', () => {
       expect(m.globalImpactIndex).toBeGreaterThanOrEqual(0);
       expect(m.globalImpactIndex).toBeLessThanOrEqual(100);
     }
+  });
+
+  // The composites are calibrated against the original four regions and the
+  // golden fixture. Adding regions must not move them, or every historical
+  // number in the dataset shifts for no physical reason.
+  it('ignores the Amazon and Gulf Coast terms', () => {
+    const m = computeMetrics({ ...baseline, sstAnomaly: 1.5 });
+    const expected = Math.min(
+      100,
+      Math.max(
+        0,
+        ((Math.abs(m.usPrecip) + Math.abs(m.asiaPrecip) + Math.abs(m.africaPrecip)) / 3 / 60) * 100,
+      ),
+    );
+    expect(m.globalImpactIndex).toBeCloseTo(expected, 1);
   });
 
   it('rises monotonically with the anomaly', () => {

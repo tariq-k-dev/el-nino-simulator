@@ -251,7 +251,11 @@ base AS (
     (-10.0 - sst * 22.0) - jet * 9.0        AS asia_precip,
     least(10.0, greatest(0.0, sst * 3.2 * (1.0 + jet * 0.15))) AS asia_drought,
     (20.0 + sst * 25.0) + jet * -4.0        AS africa_precip,
-    least(10.0, greatest(0.0, sst * 2.8))   AS africa_flood
+    least(10.0, greatest(0.0, sst * 2.8))   AS africa_flood,
+    -- Amazon and Gulf Coast are SST-only: no jet coupling, by design.
+    (-8.0 - sst * 16.0)                     AS amazon_precip,
+    least(10.0, greatest(0.0, sst * 2.4))   AS amazon_drought,
+    (10.0 + sst * 14.0)                     AS gulf_precip
   FROM params
 )
 SELECT
@@ -267,6 +271,9 @@ SELECT
   round(asia_drought, 2)       AS asia_drought,
   round(africa_precip, 1)      AS africa_precip,
   round(africa_flood, 2)       AS africa_flood,
+  round(amazon_precip, 1)      AS amazon_precip,
+  round(amazon_drought, 2)     AS amazon_drought,
+  round(gulf_precip, 1)        AS gulf_precip,
   round(
     least(100.0, greatest(0.0,
       ((abs(us_precip) + abs(asia_precip) + abs(africa_precip)) / 3.0 / 60.0) * 100.0)),
@@ -647,6 +654,9 @@ const rowsToMetrics = (row: Row, state: { sstAnomaly: number; jetStreamShift: nu
   asiaDrought: num(row.asia_drought),
   africaPrecip: num(row.africa_precip),
   africaFlood: num(row.africa_flood),
+  amazonPrecip: num(row.amazon_precip),
+  amazonDrought: num(row.amazon_drought),
+  gulfPrecip: num(row.gulf_precip),
   globalImpactIndex: num(row.global_impact_index),
   agricultureExposure: num(row.agriculture_exposure),
   riskTier: 'pending',
