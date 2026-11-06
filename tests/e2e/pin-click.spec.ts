@@ -1031,6 +1031,20 @@ test.describe('pin click — measurement and acceptance', () => {
     await page.evaluate(() => window.__globe!.setSpin(true, 0));
     await page.waitForTimeout(150);
 
+    /*
+     * Open the drawer FIRST, then choose the miss point.
+     *
+     * The drawer changes the free rect, so it changes d_fit, the camera's distance and the disc's centre and
+     * radius — every projection this point is chosen from. A point chosen with the drawer closed and clicked
+     * with it open is aimed at where the globe used to be, so it can land under the drawer or off the disc
+     * entirely. The point must be chosen in the pose it is clicked in.
+     */
+    await selectFromCard(page, /California/i);
+    await settleStable(page);
+    await page.waitForTimeout(700);
+    await settleStable(page);
+    await waitCameraStill(page);
+
     /* (a) a point inside the disc but at least 2 proxy radii from EVERY pin head. */
     const spot = await page.evaluate(
       ({ minPx }) => {
@@ -1060,10 +1074,6 @@ test.describe('pin click — measurement and acceptance', () => {
         `nearest pin ${spot!.nearest.toFixed(1)} px away (>= ${2 * HIT_PX})`,
     );
 
-    await selectFromCard(page, /California/i);
-    await settleStable(page);
-    await page.waitForTimeout(700);
-    await settleStable(page);
     const opened = await readState(page, vp);
     expect(opened.regionId).toBe('us-west');
     expect(opened.drawerAriaHidden).toBe('false');
@@ -1130,12 +1140,25 @@ test.describe('pin click — measurement and acceptance', () => {
       await page.evaluate((angle) => window.__globe!.setSpin(true, angle), (deg * Math.PI) / 180);
       await page.waitForTimeout(120);
       await waitCameraStill(page);
-      const hit = (await readPins(page)).pins.find((p) => p.facing > PIN_HIT_GATE && p.facing < 0.26);
+      const { pins } = await readPins(page);
+      /*
+       * A limb pin whose head is covered by ANOTHER pin's proxy is not a test of this gate: the click would
+       * land on the nearer proxy and select that region instead, failing the `region === pin.id` assertion for
+       * a reason that has nothing to do with the limb band. So a candidate must be the only proxy within two
+       * hit radii of its own projection — checked against every pin whose proxy raycasts at all, i.e. every
+       * pin above the gate, not just the front ones.
+       */
+      const hit = pins.find((p) => {
+        if (p.facing <= PIN_HIT_GATE || p.facing >= 0.26) return false;
+        return !pins.some(
+          (o) => o.id !== p.id && o.facing > PIN_HIT_GATE && Math.hypot(o.x - p.x, o.y - p.y) < 2 * HIT_PX,
+        );
+      });
       if (hit) found = { id: hit.id, facing: hit.facing, az: deg };
     }
     expect(
       found,
-      `at least one sweep pose must place a pin at ${PIN_HIT_GATE} < f < 0.26 (the limb band)`,
+      `at least one sweep pose must place an UNOCCLUDED pin at ${PIN_HIT_GATE} < f < 0.26 (the limb band)`,
     ).not.toBeNull();
 
     await page.evaluate((angle) => window.__globe!.setSpin(true, angle), (found!.az * Math.PI) / 180);
