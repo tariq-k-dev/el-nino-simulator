@@ -300,6 +300,10 @@ SELECT
   precip_anomaly_us,
   precip_anomaly_se_asia,
   precip_anomaly_africa,
+  -- Named amazon_precip / gulf_precip in the CSV schema, unlike the
+  -- precip_anomaly_* columns above. Do not "tidy" these to match.
+  amazon_precip,
+  gulf_precip,
   drought_index_se_asia,
   risk_tier_pacific
 FROM enso_historical
@@ -746,6 +750,8 @@ export async function runScenario(
     precipUs: num(r.precip_anomaly_us),
     precipSeAsia: num(r.precip_anomaly_se_asia),
     precipAfrica: num(r.precip_anomaly_africa),
+    precipAmazon: num(r.amazon_precip),
+    precipGulf: num(r.gulf_precip),
     droughtIndex: num(r.drought_index_se_asia),
     riskTier: str(r.risk_tier_pacific, 'Unknown'),
   }));

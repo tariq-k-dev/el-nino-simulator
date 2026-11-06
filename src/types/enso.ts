@@ -63,6 +63,13 @@ export interface AnalogMonth {
   precipUs: number;
   precipSeAsia: number;
   precipAfrica: number;
+  /**
+   * Amazon and Gulf Coast anomalies. Optional because the columns were added to
+   * the dataset after the first fixtures were written; the drawer does not read
+   * them, but the analog query returns them so a future panel can.
+   */
+  precipAmazon?: number;
+  precipGulf?: number;
   droughtIndex: number;
   riskTier: string;
 }
