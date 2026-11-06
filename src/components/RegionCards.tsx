@@ -1,4 +1,4 @@
-import { CloudRain, Droplets, Flame, Waves, ChevronRight } from 'lucide-react';
+import { ChevronRight, CloudRain, Droplets, Flame, TreePine, Waves, Wind } from 'lucide-react';
 import type { RegionId, ScenarioMetrics } from '@/types/enso';
 import { REGION_MAP } from '@/lib/regions';
 import { regionHeadline } from '@/lib/model';
@@ -8,9 +8,18 @@ const ICONS: Record<RegionId, typeof Waves> = {
   'us-west': CloudRain,
   'se-asia': Flame,
   'horn-africa': Droplets,
+  'amazon-basin': TreePine,
+  'gulf-coast': Wind,
 };
 
-const ORDER: RegionId[] = ['pacific', 'us-west', 'se-asia', 'horn-africa'];
+const ORDER: RegionId[] = [
+  'pacific',
+  'us-west',
+  'se-asia',
+  'horn-africa',
+  'amazon-basin',
+  'gulf-coast',
+];
 
 interface RegionCardsProps {
   metrics: ScenarioMetrics;
@@ -28,8 +37,8 @@ interface RegionCardsProps {
  */
 export function RegionCards({ metrics, activeRegion, onSelect }: RegionCardsProps) {
   return (
-    <div className="pointer-events-auto flex w-[268px] flex-col gap-2">
-      <div className="mb-0.5 flex items-center justify-between px-1">
+    <div className="pointer-events-auto grid w-[268px] grid-cols-2 gap-2">
+      <div className="col-span-full mb-0.5 flex items-center justify-between px-1">
         <span className="text-[8.5px] uppercase tracking-[0.2em] text-slate-500">Impact Zones</span>
         <span className="num text-[8.5px] text-slate-600">{ORDER.length} active</span>
       </div>
