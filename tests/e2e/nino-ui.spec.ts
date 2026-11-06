@@ -2862,6 +2862,25 @@ test.describe('G3: the box flight survives what the user does to the globe', () 
      */
     const pin = await clickPinLeading(page, null, rtt);
     expect(pin, 'a front region pin must be geometrically in front 300 ms into the flight').not.toBeNull();
+
+    /*
+     * THE OCCLUSION GUARD, asserted at the SAMPLE rather than at a coordinate captured before the press.
+     *
+     * `clickPinLeading` already refuses a pin whose pixel is covered by a panel, header, nav or dialog, and
+     * reports the topmost node there as `hit`. Asserting it turns "the press was intercepted by the UI" into a
+     * named failure at the moment the aim was chosen, instead of a downstream `regionId` mismatch that reads
+     * like a product defect.
+     *
+     * The panel is deliberately NOT hidden to make this pass. `[data-occluder="right-panel"]` is part of the
+     * layout the fit law reads, so `display: none` would change the free rect and the flight would be measured
+     * against a page state no user can reach — the R2 distance assertions below would then describe a
+     * different product.
+     */
+    expect(
+      pin!.hit,
+      `the pin's own pixel must be the canvas, not ${pin!.hit} — a covered pin cannot be pressed`,
+    ).toBe('CANVAS');
+
     annotate(
       'R2a',
       `lead ${pin!.leadMs.toFixed(0)} ms (rtt ${rtt} ms) = ${pin!.leadPx.toFixed(1)} px ahead of the sample; ` +
