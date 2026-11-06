@@ -41,3 +41,4 @@ dist-e2e/
 .cache/
 test-results/
 playwright-report/
+.aider*
