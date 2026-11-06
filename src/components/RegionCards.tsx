@@ -37,7 +37,7 @@ interface RegionCardsProps {
  */
 export function RegionCards({ metrics, activeRegion, onSelect }: RegionCardsProps) {
   return (
-    <div className="pointer-events-auto grid w-[316px] grid-cols-2 gap-2">
+    <div className="pointer-events-auto grid w-[268px] grid-cols-2 gap-2">
       <div className="col-span-full mb-1 flex items-center justify-between px-1">
         <span className="text-[9px] uppercase tracking-[0.2em] text-slate-500">Impact Zones</span>
         <span className="num text-[9px] text-slate-600">{ORDER.length} active</span>
