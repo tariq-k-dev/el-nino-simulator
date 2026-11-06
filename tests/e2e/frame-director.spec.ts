@@ -42,27 +42,34 @@ async function openLive(page: Page): Promise<void> {
   await settle(page);
 }
 
-/** The same-key-twice stability test `frame.spec.ts` uses, reduced to what these cases need. */
+/**
+ * The same-key-twice stability test `frame.spec.ts` uses, reduced to what these cases need.
+ *
+ * The previous version compared a POLLED value against a snapshot taken once, before the poll started
+ * (`.toBe(await page.evaluate(...))` evaluates its argument immediately). That is not a stability test: it
+ * waits for the state to return to its FIRST reading, which after a resize or a select is a value the state
+ * has legitimately left and will never come back to — so the case either times out or passes on a frame that
+ * happens to match the initial one. The key is now stored in the page and compared with itself one poll
+ * later, which is what "stopped changing" actually means.
+ */
 async function settle(page: Page): Promise<void> {
-  await expect
-    .poll(
-      () =>
-        page.evaluate(() => {
-          const f = window.__frame!;
-          return JSON.stringify([f.insets, f.free, f.target.d, f.settled]);
-        }),
-      { timeout: 20_000, intervals: [200], message: 'waiting for the frame state to settle' },
-    )
-    .toBe(await page.evaluate(() => {
+  await page.evaluate(() => {
+    delete (window as unknown as Record<string, unknown>).__directorSettleKey;
+  });
+  await page.waitForFunction(
+    () => {
       const f = window.__frame!;
-      return JSON.stringify([f.insets, f.free, f.target.d, f.settled]);
-    }));
-  await expect
-    .poll(() => page.evaluate(() => window.__frame!.settled), {
-      timeout: 20_000,
-      message: 'waiting for the probe to report settled',
-    })
-    .toBe(true);
+      const key = [f.insets.left, f.insets.right, f.free.x, f.free.y, f.free.w, f.free.h, f.target.d]
+        .map((n) => n.toFixed(3))
+        .join('|');
+      const store = window as unknown as Record<string, unknown>;
+      const previous = store.__directorSettleKey;
+      store.__directorSettleKey = key;
+      return f.settled && previous === key;
+    },
+    undefined,
+    { timeout: 20_000, polling: 100 },
+  );
 }
 
 /** Click the Impact Zones card for US West (the same trigger F8 uses). */
