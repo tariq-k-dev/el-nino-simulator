@@ -1752,7 +1752,7 @@ async function cardText(page: Page, boxId: 'nino12' | 'nino4'): Promise<string> 
 }
 
 /**
- * The old region list — the four locked regions, which Part Q requires to survive the flag.
+ * The old region list — the six locked regions, which Part Q requires to survive the flag.
  *
  * Selected by `button[data-region-id]`, NOT by role. Both lists carry that attribute
  * (`RegionDrawer.tsx:296`, `SheetBody.tsx:171`), and on desktop the drawer is never unmounted but sits
@@ -1787,7 +1787,7 @@ test.describe('G1: the flag gates the Nino UI and leaves the old region list int
       expect(await announced(page), `${size}: nothing announced`).toBeNull();
 
       const regions = await regionButtons(page).count();
-      expect(regions, `${size}: the four locked regions must still be listed`).toBe(4);
+      expect(regions, `${size}: the six locked regions must still be listed`).toBe(6);
       annotate('G1a', `${size}: cards 0, press buttons 0, live 0, regions ${regions}`);
     }
     errs.assertClean();
@@ -1800,7 +1800,7 @@ test.describe('G1: the flag gates the Nino UI and leaves the old region list int
     await openLive(page, DESKTOP);
 
     const regions = await regionButtons(page).count();
-    expect(regions, 'the four locked regions must survive the flag').toBe(4);
+    expect(regions, 'the six locked regions must survive the flag').toBe(6);
 
     await expect(page.locator('[data-testid="nino-cards"]')).toHaveCount(1);
     await expect(page.locator('[data-testid="nino-card-nino12"]')).toHaveCount(1);

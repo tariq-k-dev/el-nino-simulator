@@ -481,7 +481,7 @@ test.describe('globe look', () => {
   test('3.6 rings: no light cast on the surface around a pin', async ({ page }) => {
     const { results } = await measureRingCast(page);
 
-    expect(results.length, 'no pins were measured for ring cast').toBe(4);
+    expect(results.length, 'no pins were measured for ring cast').toBe(6);
 
     console.log(
       `[ring-cast] annulus r 30..60px, rings/atmosphere/stars/clouds OFF, clock frozen\n` +
