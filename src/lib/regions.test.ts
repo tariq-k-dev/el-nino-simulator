@@ -39,15 +39,27 @@ const box = (id: 'nino12' | 'nino4' | 'nino34'): NinoBox => {
 };
 
 describe('the region list is unchanged by the box schema', () => {
-  it('still has exactly the four shipped entries, in order', () => {
-    expect(REGIONS).toHaveLength(4);
-    expect(REGIONS.map((r) => r.id)).toEqual(['pacific', 'us-west', 'se-asia', 'horn-africa']);
+  it('still has exactly the six shipped entries, in order', () => {
+    expect(REGIONS).toHaveLength(6);
+    expect(REGIONS.map((r) => r.id)).toEqual([
+      'pacific',
+      'us-west',
+      'se-asia',
+      'horn-africa',
+      'amazon-basin',
+      'gulf-coast',
+    ]);
   });
 
-  it('still has exactly those four ids in the lookup map', () => {
-    expect(Object.keys(REGION_MAP).sort()).toEqual(
-      ['horn-africa', 'pacific', 'se-asia', 'us-west'],
-    );
+  it('still has exactly those six ids in the lookup map', () => {
+    expect(Object.keys(REGION_MAP).sort()).toEqual([
+      'amazon-basin',
+      'gulf-coast',
+      'horn-africa',
+      'pacific',
+      'se-asia',
+      'us-west',
+    ]);
   });
 
   it('keeps NINO_BOXES out of the region list entirely', () => {
@@ -66,6 +78,8 @@ describe('the region list is unchanged by the box schema', () => {
       [37, -120, 2.6],
       [-3, 112, 2.7],
       [8, 42, 2.7],
+      [-3.46, -62.21, 2.7],
+      [28.5, -90, 2.6],
     ]);
   });
 });

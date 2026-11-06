@@ -40,6 +40,11 @@ export interface ScenarioMetrics {
   africaPrecip: number;
   africaFlood: number;
 
+  amazonPrecip: number;
+  amazonDrought: number;
+
+  gulfPrecip: number;
+
   globalImpactIndex: number;
   agricultureExposure: number;
   riskTier: string;

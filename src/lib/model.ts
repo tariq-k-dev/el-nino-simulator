@@ -133,6 +133,15 @@ export function computeMetrics(state: ScenarioState): ScenarioMetrics {
   const africaPrecip = 20 + sst * 25 + jet * JET_AFRICA_COUPLING;
   const africaFlood = clamp(sst * 2.8, 0, 10);
 
+  // --- Amazon Basin ---
+  // SST-only: the teleconnection is not routed through the subtropical jet, so
+  // there is no `jet` term here. model.test.ts pins that.
+  const amazonPrecip = -8 - sst * 16;
+  const amazonDrought = clamp(sst * 2.4, 0, 10);
+
+  // --- Gulf Coast ---
+  const gulfPrecip = 10 + sst * 14;
+
   // --- Composite indices ---
   // Mean absolute regional precipitation anomaly, normalised against a 60% swing.
   const globalImpactIndex = round(
@@ -165,6 +174,9 @@ export function computeMetrics(state: ScenarioState): ScenarioMetrics {
     asiaDrought: round(asiaDrought, 2),
     africaPrecip: round(africaPrecip, 1),
     africaFlood: round(africaFlood, 2),
+    amazonPrecip: round(amazonPrecip, 1),
+    amazonDrought: round(amazonDrought, 2),
+    gulfPrecip: round(gulfPrecip, 1),
     globalImpactIndex,
     agricultureExposure,
     riskTier: riskTier(sst),
@@ -185,5 +197,9 @@ export function regionHeadline(metrics: ScenarioMetrics, region: RegionId): stri
       return `${fixed(metrics.asiaPrecip, 1)}% precip`;
     case 'horn-africa':
       return `${signed(metrics.africaPrecip, 1)}% precip`;
+    case 'amazon-basin':
+      return `${fixed(metrics.amazonPrecip, 1)}% precip`;
+    case 'gulf-coast':
+      return `${signed(metrics.gulfPrecip, 1)}% precip`;
   }
 }
