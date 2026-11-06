@@ -60,19 +60,20 @@ async function settle(page: Page): Promise<void> {
   await expect.poll(() => page.evaluate(() => window.__frame!.settled), { timeout: 20_000 }).toBe(true);
 }
 
-/** Click the Impact Zones card for California (the same trigger F8 uses). */
+/** Click the Impact Zones card for US West (the same trigger F8 uses). */
 async function selectRegion(page: Page): Promise<void> {
   const card = await page.evaluate(() => {
     const panel = document.querySelector('[data-occluder="right-panel"]');
     if (!panel) return null;
+    /* Match the card label exactly: the old alternation also matched neighbouring regions. */
     const btn = [...panel.querySelectorAll('button, [role="button"]')].find((b) =>
-      /California|Pacific|Indonesia|Africa|Amazon|Gulf/i.test(b.textContent ?? ''),
+      /\bUS West\b/i.test(b.textContent ?? ''),
     );
     if (!btn) return null;
     const r = btn.getBoundingClientRect();
     return { x: r.x + r.width / 2, y: r.y + r.height / 2 };
   });
-  expect(card, 'the California card must exist').not.toBeNull();
+  expect(card, 'the US West card must exist').not.toBeNull();
   await page.mouse.click(card!.x, card!.y);
 }
 
