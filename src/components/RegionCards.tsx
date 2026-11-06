@@ -37,8 +37,8 @@ interface RegionCardsProps {
  */
 export function RegionCards({ metrics, activeRegion, onSelect }: RegionCardsProps) {
   return (
-    <div className="pointer-events-auto grid w-[268px] grid-cols-2 gap-2">
-      <div className="col-span-full mb-1 flex items-center justify-between px-1">
+    <div className="pointer-events-auto flex w-[268px] flex-col gap-2">
+      <div className="mb-1 flex items-center justify-between px-1">
         <span className="text-[9px] uppercase tracking-[0.2em] text-slate-500">Impact Zones</span>
         <span className="num text-[9px] text-slate-600">{ORDER.length} active</span>
       </div>
@@ -58,7 +58,7 @@ export function RegionCards({ metrics, activeRegion, onSelect }: RegionCardsProp
               // Solid dark fill, not bg-black/35: these cards float over the
               // brightest part of the day side, and a translucent panel there
               // drops the body copy below a readable contrast ratio.
-              'group relative overflow-hidden rounded-xl border px-2.5 py-2.5 text-left backdrop-blur-md transition-all duration-300',
+              'group relative flex w-full items-center gap-3.5 overflow-hidden rounded-xl border px-4 py-3 text-left backdrop-blur-md transition-all duration-300',
               active
                 ? 'border-[rgba(255,255,255,0.22)] bg-[rgba(10,15,25,0.88)] shadow-[0_10px_30px_-12px_rgba(0,0,0,0.95)]'
                 : 'border-[rgba(255,255,255,0.12)] bg-[rgba(10,15,25,0.82)] hover:border-[rgba(255,255,255,0.24)] hover:bg-[rgba(14,20,32,0.9)]',
@@ -73,42 +73,39 @@ export function RegionCards({ metrics, activeRegion, onSelect }: RegionCardsProp
               }}
             />
 
-            <div className="flex items-start justify-between gap-2">
-              <div className="flex items-start gap-2">
-                <span
-                  className="mt-[1px] flex h-6 w-6 shrink-0 items-center justify-center rounded-lg transition-colors"
-                  style={{
-                    background: active ? `${region.accent}22` : 'rgba(255,255,255,0.04)',
-                    color: active ? region.accent : 'rgba(148,163,184,0.85)',
-                  }}
-                >
-                  <Icon size={12} />
-                </span>
-                <div className="min-w-0">
-                  <div className="truncate text-[11.5px] font-medium leading-tight text-slate-100">
-                    {region.name}
-                  </div>
-                  <div className="num mt-0.5 text-[10px] font-medium" style={{ color: region.accent }}>
-                    {headline}
-                  </div>
-                </div>
+            <span
+              className="flex h-6 w-6 shrink-0 items-center justify-center rounded-lg transition-colors"
+              style={{
+                background: active ? `${region.accent}22` : 'rgba(255,255,255,0.04)',
+                color: active ? region.accent : 'rgba(148,163,184,0.85)',
+              }}
+            >
+              <Icon size={12} />
+            </span>
+
+            <div className="min-w-0 flex-1">
+              <div className="truncate text-xs font-medium leading-tight text-slate-100">
+                {region.name}
               </div>
-              <ChevronRight
-                size={11}
-                className={`mt-1 shrink-0 transition-all duration-300 ${
-                  active ? 'translate-x-0 text-slate-300' : '-translate-x-1 text-slate-600 group-hover:translate-x-0 group-hover:text-slate-400'
-                }`}
-              />
+              <div className="num mt-0.5 text-[10px] font-medium" style={{ color: region.accent }}>
+                {headline}
+              </div>
+              <p
+                className={[
+                  'overflow-hidden text-[9.5px] leading-snug text-slate-500 transition-all duration-300',
+                  active ? 'mt-1 max-h-16 opacity-100' : 'max-h-0 opacity-0 group-hover:mt-1 group-hover:max-h-16 group-hover:opacity-100',
+                ].join(' ')}
+              >
+                {region.summary}
+              </p>
             </div>
 
-            <p
-              className={[
-                'overflow-hidden pl-8 text-[9.5px] leading-snug text-slate-500 transition-all duration-300',
-                active ? 'mt-1 max-h-16 opacity-100' : 'max-h-0 opacity-0 group-hover:mt-1 group-hover:max-h-16 group-hover:opacity-100',
-              ].join(' ')}
-            >
-              {region.summary}
-            </p>
+            <ChevronRight
+              size={11}
+              className={`shrink-0 transition-all duration-300 ${
+                active ? 'translate-x-0 text-slate-300' : '-translate-x-1 text-slate-600 group-hover:translate-x-0 group-hover:text-slate-400'
+              }`}
+            />
           </button>
         );
       })}
