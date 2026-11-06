@@ -545,6 +545,8 @@ test.describe('pin click — measurement and acceptance', () => {
       selectedRegion: string | null;
       closed: boolean;
       behind: boolean;
+      /** True when another pin's proxy covers this pin's projected head — see the note in the loop. */
+      occluded: boolean;
       topHit: string | null;
     }> = [];
 
@@ -561,6 +563,21 @@ test.describe('pin click — measurement and acceptance', () => {
       const pins = (await readPins(page)).pins;
       for (const pin of pins) {
         const b = bandOf(pin.facing);
+        /*
+         * Is this pin's projected head covered by ANOTHER pin's proxy?
+         *
+         * The proxy is a 14 px disc, so two pins projecting within 28 px of each other at the limb overlap and
+         * a click aimed at the farther one lands on the nearer one. That is a property of the sweep's sampling,
+         * not of the gate, so the row is still measured and printed but excluded from the front/back
+         * assertions — the same distinction `backOccluded` already draws below. Skipping the row outright
+         * would break the 72-row invariant and the "every row is printed" contract this case is built on.
+         */
+        const occluded = pins.some(
+          (other) =>
+            other.id !== pin.id &&
+            other.facing > PIN_HIT_GATE &&
+            Math.hypot(other.x - pin.x, other.y - pin.y) < 2 * HIT_PX,
+        );
         const hits = await raycastAt(page, pin.x, pin.y);
         const before = await page.evaluate(() => window.__frame!.regionId);
 
@@ -592,6 +609,7 @@ test.describe('pin click — measurement and acceptance', () => {
           selectedRegion: outcome.region,
           closed: outcome.closed,
           behind: pin.behind,
+          occluded,
           topHit: hits.length ? `${hits[0].name}/${hits[0].type}@${hits[0].distance.toFixed(3)}` : null,
         });
 
@@ -602,12 +620,15 @@ test.describe('pin click — measurement and acceptance', () => {
     console.log(
       `[D1] ${rows.length} clicks; FRONT_EDGE ${FRONT_EDGE} BACK_EDGE ${BACK_EDGE} PIN_HIT_GATE ${PIN_HIT_GATE}`,
     );
-    console.log('[D1] az  region        facing  band     selected closed behind  selected-region  top raycast hit');
+    console.log(
+      '[D1] az  region        facing  band     selected closed behind  occl   selected-region  top raycast hit',
+    );
     for (const r of rows) {
       console.log(
         `[D1] ${String(r.az).padStart(3)} ${r.id.padEnd(13)} ${String(r.facing).padStart(7)} ` +
           `${r.band.padEnd(8)} ${String(r.selected).padEnd(8)} ${String(r.closed).padEnd(6)} ` +
-          `${String(r.behind).padEnd(7)} ${String(r.selectedRegion ?? '-').padEnd(16)} ${r.topHit ?? '(none)'}`,
+          `${String(r.behind).padEnd(7)} ${String(r.occluded).padEnd(6)} ` +
+          `${String(r.selectedRegion ?? '-').padEnd(16)} ${r.topHit ?? '(none)'}`,
       );
     }
 
@@ -623,13 +644,15 @@ test.describe('pin click — measurement and acceptance', () => {
     const front = tally('front');
     const grazing = tally('grazing');
     const back = tally('back');
+    const occludedRows = rows.filter((r) => r.occluded);
     const pct = (n: number, d: number) => (d === 0 ? 'n/a' : ((n / d) * 100).toFixed(1));
 
     console.log(
       `[D1] BEFORE (Step3D pin audit): FRONT 9/23 = 39.1 %, BACK 13/24 = 54.2 %\n` +
         `[D1] AFTER  FRONT ${front.selected}/${front.attempts} = ${pct(front.selected, front.attempts)} %, ` +
         `BACK ${back.selected}/${back.attempts} = ${pct(back.selected, back.attempts)} %, ` +
-        `GRAZE ${grazing.selected}/${grazing.attempts} selected`,
+        `GRAZE ${grazing.selected}/${grazing.attempts} selected; ` +
+        `${occludedRows.length} rows occluded by another proxy (printed, excluded from the front/back assertions)`,
     );
     console.log(
       `[D1] grazing rows (reported, not asserted): ` +
@@ -644,7 +667,7 @@ test.describe('pin click — measurement and acceptance', () => {
     expect(front.attempts, 'the sweep must produce front rows to assert on').toBeGreaterThan(0);
     expect(back.attempts, 'and back rows').toBeGreaterThan(0);
 
-    const frontMisses = front.rows.filter((r) => !r.selected);
+    const frontMisses = front.rows.filter((r) => !r.selected && !r.occluded);
     expect(
       frontMisses,
       `front rows must select 100 %: ${frontMisses.map((r) => `az ${r.az} ${r.id} f ${r.facing}`).join('; ')}`,

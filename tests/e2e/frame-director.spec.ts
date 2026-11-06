@@ -51,13 +51,18 @@ async function settle(page: Page): Promise<void> {
           const f = window.__frame!;
           return JSON.stringify([f.insets, f.free, f.target.d, f.settled]);
         }),
-      { timeout: 20_000, intervals: [200] },
+      { timeout: 20_000, intervals: [200], message: 'waiting for the frame state to settle' },
     )
     .toBe(await page.evaluate(() => {
       const f = window.__frame!;
       return JSON.stringify([f.insets, f.free, f.target.d, f.settled]);
     }));
-  await expect.poll(() => page.evaluate(() => window.__frame!.settled), { timeout: 20_000 }).toBe(true);
+  await expect
+    .poll(() => page.evaluate(() => window.__frame!.settled), {
+      timeout: 20_000,
+      message: 'waiting for the probe to report settled',
+    })
+    .toBe(true);
 }
 
 /** Click the Impact Zones card for US West (the same trigger F8 uses). */
