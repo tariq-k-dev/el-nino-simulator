@@ -1,6 +1,12 @@
 /** Shared domain types for the simulation. */
 
-export type RegionId = 'pacific' | 'us-west' | 'se-asia' | 'horn-africa';
+export type RegionId =
+  | 'pacific'
+  | 'us-west'
+  | 'se-asia'
+  | 'horn-africa'
+  | 'amazon-basin'
+  | 'gulf-coast';
 
 export interface RegionDefinition {
   id: RegionId;

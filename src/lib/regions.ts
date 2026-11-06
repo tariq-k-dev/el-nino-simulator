@@ -54,6 +54,32 @@ export const REGIONS: RegionDefinition[] = [
     mechanism:
       'Cross-equatorial moisture flux intensifies during the October–December short-rains season, overwhelming normally arid catchments.',
   },
+  {
+    id: 'amazon-basin',
+    name: 'Amazon Basin',
+    shortName: 'Amazon',
+    lat: -3.46,
+    lon: -62.21,
+    zoom: 2.7,
+    accent: '#22c55e',
+    summary:
+      'Focuses on the central Amazon rainforest canopy, monitoring severe drought conditions typically induced by El Niño.',
+    mechanism:
+      'El Niño reduces rainfall across the Amazon basin, increasing drought stress on the rainforest ecosystem.',
+  },
+  {
+    id: 'gulf-coast',
+    name: 'Gulf Coast',
+    shortName: 'Gulf Coast',
+    lat: 28.5,
+    lon: -90,
+    zoom: 2.6,
+    accent: '#0ea5e9',
+    summary:
+      'Captures the Gulf of Mexico where El Niño historically increases winter precipitation and alters hurricane shear patterns.',
+    mechanism:
+      'El Niño strengthens the subtropical jet stream, bringing increased winter rainfall and reducing hurricane activity in the Gulf region.',
+  },
 ];
 
 export const REGION_MAP: Record<RegionId, RegionDefinition> = REGIONS.reduce(
