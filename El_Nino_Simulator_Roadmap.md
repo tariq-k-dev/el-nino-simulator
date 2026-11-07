@@ -29,6 +29,12 @@ With the structure in place, we swap static placeholders for live data feeds.
 | **3.1 Ingestion Pipeline Strategy (Current)** | Design the architecture for fetching live NOAA data (Cloudflare Workers with Cron Triggers to fetch, parse, and cache feeds into Parquet/KV to avoid CORS and rate limits). | **2–3 hours** |
 | **3.2 Pipeline Implementation** | Build the integration for TAO/TRITON buoys, CPC precipitation, and NWS atmospheric river feeds. | **3–5 hours** |
 | **3.3 Client Hydration** | Update the DuckDB-WASM queries to seamlessly merge historical baselines with the newly cached real-time telemetry upon app load. | **2–3 hours** |
+| **3.4 3D Atmospheric River Dynamics & Teleconnection Visualization** | Translate live Integrated Vapor Transport (IVT) telemetry and CW3E atmospheric river categories into dynamic 3D volumetric flow ribbons and anomaly shaders on the Three.js/R3F globe, visually bridging equatorial Pacific SST anomalies with West Coast teleconnection impacts. | **3–4 hours** |
+
+#### Step 3.4 Architectural Condition & Design Intent
+
+* Steps 3.1–3.3 establish the telemetry ingestion plumbing (caching live TAO buoys, CPC precipitation anomalies, and NWS IVT telemetry into Cloudflare Workers KV and hydrating DuckDB-WASM). Step 3.4 delivers the visual payoff by rendering real-time moisture transport dynamics directly on the 3D globe.  
+* All 23 Playwright E2E spec files must pass green with a clean working tree and be committed and tagged as `phase-3-telemetry-baseline` prior to introducing the new WebGL visual layer.
 
 ### Phase 4: Polish, Profiling, & Launch
 
