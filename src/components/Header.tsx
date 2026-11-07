@@ -1,28 +1,38 @@
-import { Download, Github, Globe2, Gauge } from 'lucide-react';
-import type { ScenarioMetrics, UnitSystem } from '@/types/enso';
-import { thermalColor } from '@/lib/model';
-import { EngineBadge } from '@/components/EngineBadge';
-import { ResetViewButton } from '@/components/ResetViewButton';
+import { Download, Github, Globe2, Gauge, Radio } from "lucide-react"
+import type {
+  ScenarioMetrics,
+  TelemetryBundle,
+  UnitSystem,
+} from "@/types/enso"
+import { thermalColor } from "@/lib/model"
+import { EngineBadge } from "@/components/EngineBadge"
+import { ResetViewButton } from "@/components/ResetViewButton"
 
 interface HeaderProps {
-  metrics: ScenarioMetrics;
-  units: UnitSystem;
-  onToggleUnits: () => void;
-  onExport: () => void;
-  exporting: boolean;
+  metrics: ScenarioMetrics
+  units: UnitSystem
+  onToggleUnits: () => void
+  onExport: () => void
+  exporting: boolean
   /** Clear the region selection — the drawer X / Escape path, driven by the Reset control. */
-  onClearSelection: () => void;
+  onClearSelection: () => void
+  telemetry?: TelemetryBundle | null
 }
 
-export function Header({ metrics, units, onToggleUnits, onExport, exporting, onClearSelection }: HeaderProps) {
-  const alertColor = thermalColor(metrics.sst, 0.95);
-  const isAlert = metrics.sst >= 1.5;
+export function Header({
+  metrics,
+  units,
+  onToggleUnits,
+  onExport,
+  exporting,
+  onClearSelection,
+  telemetry,
+}: HeaderProps) {
+  const alertColor = thermalColor(metrics.sst, 0.95)
+  const isAlert = metrics.sst >= 1.5
+  const isLive = telemetry?.tao.status === "active"
 
   return (
-    // z-40 so the unit toggle and Snapshot stay clickable while the region
-    // drawer (z-30) is open on the right.
-    // `data-occluder` marks the header as a top overlay for the insets registry (step C). The
-    // attribute is inert here: no class, no style, no layout change.
     <header
       data-occluder="top-panel"
       className="pointer-events-none absolute inset-x-0 top-0 z-40 flex items-start justify-between gap-4 p-4 sm:p-6"
@@ -36,7 +46,10 @@ export function Header({ metrics, units, onToggleUnits, onExport, exporting, onC
           </div>
           <div>
             <h1 className="text-[15px] font-semibold leading-none tracking-[-0.01em] text-slate-50">
-              Super El&nbsp;Niño <span className="font-normal text-slate-400">Global Impact Simulator</span>
+              Super El&nbsp;Niño{" "}
+              <span className="font-normal text-slate-400">
+                Global Impact Simulator
+              </span>
             </h1>
             <p className="mt-1 hidden text-[10px] tracking-[0.02em] text-slate-500 sm:block">
               Interactive teleconnection model · R3F + DuckDB-WASM
@@ -46,52 +59,60 @@ export function Header({ metrics, units, onToggleUnits, onExport, exporting, onC
 
         <div
           className={[
-            'pointer-events-auto inline-flex w-fit items-center gap-2 rounded-full border px-2.5 py-1 backdrop-blur-md transition-colors duration-500',
+            "pointer-events-auto inline-flex w-fit items-center gap-2 rounded-full border px-2.5 py-1 backdrop-blur-md transition-colors duration-500",
             isAlert
-              ? 'border-orange-400/30 bg-orange-500/10'
-              : 'border-sky-300/20 bg-sky-400/[0.07]',
-          ].join(' ')}
+              ? "border-orange-400/30 bg-orange-500/10"
+              : "border-sky-300/20 bg-sky-400/[0.07]",
+          ].join(" ")}
         >
           <span className="relative flex h-1.5 w-1.5">
             <span
               className="absolute inline-flex h-full w-full animate-ping rounded-full opacity-75"
               style={{ background: alertColor }}
             />
-            <span className="relative inline-flex h-1.5 w-1.5 rounded-full" style={{ background: alertColor }} />
+            <span
+              className="relative inline-flex h-1.5 w-1.5 rounded-full"
+              style={{ background: alertColor }}
+            />
           </span>
           <span className="font-mono text-[9.5px] uppercase tracking-[0.16em] text-slate-200">
             ENSO Alert: {metrics.riskTier}
           </span>
           <span className="hidden h-2.5 w-px bg-white/15 sm:block" />
-          <span className="hidden text-[9px] uppercase tracking-[0.12em] text-slate-500 sm:block">
-            NOAA Diagnostic Model
-          </span>
+          {isLive ? (
+            <span className="hidden items-center gap-1 text-[9px] uppercase tracking-[0.12em] text-emerald-400 sm:inline-flex">
+              <Radio size={9} className="animate-pulse" />
+              Live NOAA Telemetry
+            </span>
+          ) : (
+            <span className="hidden text-[9px] uppercase tracking-[0.12em] text-slate-500 sm:block">
+              NOAA Diagnostic Model
+            </span>
+          )}
         </div>
       </div>
 
       {/* Controls */}
       <div className="pointer-events-auto flex items-center gap-1.5">
-        {/* Engine state is its own component now: it owns the opt-in button,
-            the progress bar and the failed/retry affordances. */}
         <div className="hidden md:flex">
           <EngineBadge />
         </div>
 
         <div className="flex items-center overflow-hidden rounded-full border border-white/[0.08] bg-black/40 p-0.5 backdrop-blur-md">
-          {(['metric', 'imperial'] as const).map((system) => (
+          {(["metric", "imperial"] as const).map((system) => (
             <button
               key={system}
               type="button"
               onClick={onToggleUnits}
               className={[
-                'rounded-full px-2.5 py-[3px] font-mono text-[9px] uppercase tracking-[0.12em] transition-all duration-200',
+                "rounded-full px-2.5 py-[3px] font-mono text-[9px] uppercase tracking-[0.12em] transition-all duration-200",
                 units === system
-                  ? 'bg-white/12 text-slate-50 shadow-sm'
-                  : 'text-slate-500 hover:text-slate-300',
-              ].join(' ')}
+                  ? "bg-white/12 text-slate-50 shadow-sm"
+                  : "text-slate-500 hover:text-slate-300",
+              ].join(" ")}
               aria-pressed={units === system}
             >
-              {system === 'metric' ? '°C' : '°F'}
+              {system === "metric" ? "°C" : "°F"}
             </button>
           ))}
         </div>
@@ -112,15 +133,18 @@ export function Header({ metrics, units, onToggleUnits, onExport, exporting, onC
           disabled={exporting}
           className="group flex items-center gap-1.5 rounded-full border border-sky-300/25 bg-sky-400/10 px-3 py-1.5 text-[10px] font-medium uppercase tracking-[0.12em] text-sky-100 backdrop-blur-md transition-all duration-300 hover:border-sky-300/45 hover:bg-sky-400/18 disabled:opacity-50"
         >
-          {exporting ? <Gauge size={12} className="animate-pulse" /> : <Download size={12} />}
-          <span className="hidden sm:inline">{exporting ? 'Rendering…' : 'Snapshot'}</span>
+          {exporting ? (
+            <Gauge size={12} className="animate-pulse" />
+          ) : (
+            <Download size={12} />
+          )}
+          <span className="hidden sm:inline">
+            {exporting ? "Rendering…" : "Snapshot"}
+          </span>
         </button>
 
-        {/* Reset view (step 3B2) — appended LAST in the right cluster, per the design memo §1.
-            Step 3B2-FIX1 B: it now drives the whole rule (camera RESET + selection clear), so it needs
-            the app's selection clearer. */}
         <ResetViewButton onClearSelection={onClearSelection} />
       </div>
     </header>
-  );
+  )
 }
