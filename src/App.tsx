@@ -1,20 +1,29 @@
-import { useCallback, useEffect, useState, useSyncExternalStore } from 'react';
-import { GlobeScene } from '@/scene/GlobeScene';
-import { MobileShell } from '@/mobile/MobileShell';
-import { getLayoutSignal, startLayoutObserver, subscribeLayout } from '@/scene/viewStore';
-import { isMobileMode } from '@/mobile/layoutMath';
-import { Header } from '@/components/Header';
-import { ControlDeck } from '@/components/ControlDeck';
-import { RegionDrawer } from '@/components/RegionDrawer';
-import { RegionCards } from '@/components/RegionCards';
-import { NinoCards } from '@/components/NinoCards';
-import { useScenario } from '@/state/useScenario';
-import { REGION_MAP } from '@/lib/regions';
-import { buildReportHtml, captureCanvas, downloadPng, openReport } from '@/lib/report';
-import { isNinoUiEnabled } from '@/lib/ninoFlag';
-import { submitNinoFocus } from '@/scene/cameraIntents';
-import type { RegionId } from '@/types/enso';
-import { fixed } from '@/lib/format';
+import { useCallback, useEffect, useState, useSyncExternalStore } from "react";
+import { GlobeScene } from "@/scene/GlobeScene";
+import { MobileShell } from "@/mobile/MobileShell";
+import {
+  getLayoutSignal,
+  startLayoutObserver,
+  subscribeLayout,
+} from "@/scene/viewStore";
+import { isMobileMode } from "@/mobile/layoutMath";
+import { Header } from "@/components/Header";
+import { ControlDeck } from "@/components/ControlDeck";
+import { RegionDrawer } from "@/components/RegionDrawer";
+import { RegionCards } from "@/components/RegionCards";
+import { NinoCards } from "@/components/NinoCards";
+import { useScenario } from "@/state/useScenario";
+import { REGION_MAP } from "@/lib/regions";
+import {
+  buildReportHtml,
+  captureCanvas,
+  downloadPng,
+  openReport,
+} from "@/lib/report";
+import { isNinoUiEnabled } from "@/lib/ninoFlag";
+import { submitNinoFocus } from "@/scene/cameraIntents";
+import type { RegionId } from "@/types/enso";
+import { fixed } from "@/lib/format";
 
 /**
  * The `?nino=1` flag, read exactly once at module load.
@@ -25,7 +34,7 @@ import { fixed } from '@/lib/format';
  * keeps the component's hook list byte-identical whether the flag is on or off.
  */
 const NINO_UI = isNinoUiEnabled(
-  typeof location === 'undefined' ? '' : location.search,
+  typeof location === "undefined" ? "" : location.search,
 );
 
 export default function App() {
@@ -33,11 +42,13 @@ export default function App() {
     scenario,
     setScenario,
     reset,
+    applyLiveTelemetry,
     analytics,
     history,
     retryHistory,
     units,
     toggleUnits,
+    telemetry,
   } = useScenario();
 
   /**
@@ -53,7 +64,11 @@ export default function App() {
    * is the first component that can start it. It is ref-counted, so the director's own call joins this one.
    */
   useEffect(() => startLayoutObserver(), []);
-  const layout = useSyncExternalStore(subscribeLayout, getLayoutSignal, getLayoutSignal);
+  const layout = useSyncExternalStore(
+    subscribeLayout,
+    getLayoutSignal,
+    getLayoutSignal,
+  );
   const isMobile = isMobileMode(layout.mode);
 
   const [activeRegion, setActiveRegion] = useState<RegionId | null>(null);
@@ -202,14 +217,14 @@ export default function App() {
           className="absolute left-1/2 top-1/2 h-[140vh] w-[140vh] -translate-x-1/2 -translate-y-1/2 rounded-full opacity-60"
           style={{
             background:
-              'radial-gradient(circle, rgba(14,42,74,0.55) 0%, rgba(6,12,24,0.2) 42%, transparent 68%)',
+              "radial-gradient(circle, rgba(14,42,74,0.55) 0%, rgba(6,12,24,0.2) 42%, transparent 68%)",
           }}
         />
         <div
           className="absolute -bottom-1/3 left-1/2 h-[80vh] w-[120vw] -translate-x-1/2 opacity-40"
           style={{
             background:
-              'radial-gradient(ellipse at center, rgba(251,146,60,0.10) 0%, transparent 62%)',
+              "radial-gradient(ellipse at center, rgba(251,146,60,0.10) 0%, transparent 62%)",
           }}
         />
       </div>
@@ -224,7 +239,7 @@ export default function App() {
       <div
         id="globe-canvas"
         className="absolute inset-0 z-10"
-        style={{ touchAction: 'none', overscrollBehavior: 'contain' }}
+        style={{ touchAction: "none", overscrollBehavior: "contain" }}
       >
         <GlobeScene
           sst={scenario.sstAnomaly}
@@ -240,9 +255,9 @@ export default function App() {
       {/* Boot veil — fades the moment the first WebGL frame lands */}
       <div
         className={[
-          'pointer-events-none absolute inset-0 z-40 flex items-center justify-center bg-void-950 transition-opacity duration-700',
-          booted ? 'opacity-0' : 'opacity-100',
-        ].join(' ')}
+          "pointer-events-none absolute inset-0 z-40 flex items-center justify-center bg-void-950 transition-opacity duration-700",
+          booted ? "opacity-0" : "opacity-100",
+        ].join(" ")}
       >
         <div className="flex flex-col items-center gap-3">
           <div className="relative h-10 w-10">
@@ -269,6 +284,7 @@ export default function App() {
           onExport={handleExport}
           exporting={exporting}
           onClearSelection={clearSelection}
+          telemetry={telemetry}
         />
       ) : null}
 
@@ -297,10 +313,10 @@ export default function App() {
            *
            * `sm:p-6` stays: it is inside-component spacing and does not choose the shell.
            */
-          'pointer-events-none absolute bottom-0 left-0 z-20 flex flex-col gap-3 p-4 sm:p-6',
+          "pointer-events-none absolute bottom-0 left-0 z-20 flex flex-col gap-3 p-4 sm:p-6",
           /* Desktop sizes to its content; mobile is hidden, so the width never renders. */
-          isMobile ? 'hidden w-full' : 'w-auto',
-        ].join(' ')}
+          isMobile ? "hidden w-full" : "w-auto",
+        ].join(" ")}
       >
         <div className="pointer-events-auto flex flex-col gap-2">
           {/* `lg:flex` removed: this row's whole existence is desktop-only, and the parent already gates on isMobile. */}
@@ -318,6 +334,8 @@ export default function App() {
             onRetryHistory={retryHistory}
             onChange={setScenario}
             onReset={reset}
+            telemetry={telemetry}
+            onApplyLiveTelemetry={applyLiveTelemetry}
           />
         </div>
       </div>
@@ -355,11 +373,25 @@ export default function App() {
           */}
           {NINO_UI ? (
             <div className="flex max-h-[calc(100vh-3rem)] w-[268px] shrink-0 flex-col gap-2 overflow-y-auto">
-              <RegionCards metrics={analytics.metrics} activeRegion={activeRegion} onSelect={selectRegion} />
-              <NinoCards nino34Anomaly={scenario.sstAnomaly} unit={units === 'imperial' ? 'F' : 'C'} layout="desktop" onShowOnGlobe={showNinoOnGlobe} activeBoxId={activeNinoBox} />
+              <RegionCards
+                metrics={analytics.metrics}
+                activeRegion={activeRegion}
+                onSelect={selectRegion}
+              />
+              <NinoCards
+                nino34Anomaly={scenario.sstAnomaly}
+                unit={units === "imperial" ? "F" : "C"}
+                layout="desktop"
+                onShowOnGlobe={showNinoOnGlobe}
+                activeBoxId={activeNinoBox}
+              />
             </div>
           ) : (
-            <RegionCards metrics={analytics.metrics} activeRegion={activeRegion} onSelect={selectRegion} />
+            <RegionCards
+              metrics={analytics.metrics}
+              activeRegion={activeRegion}
+              onSelect={selectRegion}
+            />
           )}
         </div>
       ) : null}
@@ -370,20 +402,20 @@ export default function App() {
         registry would report an inset from a panel the mobile framing ignores.
       */}
       {!isMobile ? (
-      <RegionDrawer
-        region={activeRegion ? REGION_MAP[activeRegion] : null}
-        metrics={analytics.metrics}
-        analytics={analytics}
-        units={units}
-        onClose={() => selectRegion(null)}
-        /*
-         * The switcher retargets through the SAME path the cards use, so the drawer stays open (its
-         * open/closed state is a function of `activeRegion`) and the camera flies the same arc it would
-         * have flown from a card click. Deliberately NOT `clearSelection` + select: that would close and
-         * reopen the drawer, moving focus off the chip the user just pressed.
-         */
-        onSelect={selectRegion}
-      />
+        <RegionDrawer
+          region={activeRegion ? REGION_MAP[activeRegion] : null}
+          metrics={analytics.metrics}
+          analytics={analytics}
+          units={units}
+          onClose={() => selectRegion(null)}
+          /*
+           * The switcher retargets through the SAME path the cards use, so the drawer stays open (its
+           * open/closed state is a function of `activeRegion`) and the camera flies the same arc it would
+           * have flown from a card click. Deliberately NOT `clearSelection` + select: that would close and
+           * reopen the drawer, moving focus off the chip the user just pressed.
+           */
+          onSelect={selectRegion}
+        />
       ) : null}
 
       {/*
@@ -419,22 +451,25 @@ export default function App() {
         the breakpoint TABLET-PORTRAIT deliberately decoupled from the mode law.
       */}
       {!isMobile ? (
-      <div className="pointer-events-none absolute bottom-3 left-1/2 z-20 -translate-x-1/2 block">
-        <div className="flex items-center gap-3 rounded-full border border-white/[0.06] bg-black/30 px-3 py-1 backdrop-blur-sm">
-          {[
-            ['Drag', 'orbit'],
-            ['Scroll', 'zoom'],
-            ['Click pin', 'inspect'],
-          ].map(([k, v]) => (
-            <span key={k} className="flex items-center gap-1 text-[8.5px] uppercase tracking-[0.12em] text-slate-500">
-              <kbd className="rounded border border-white/12 bg-white/[0.06] px-1 py-[1px] font-mono text-[8px] text-slate-300">
-                {k}
-              </kbd>
-              {v}
-            </span>
-          ))}
+        <div className="pointer-events-none absolute bottom-3 left-1/2 z-20 -translate-x-1/2 block">
+          <div className="flex items-center gap-3 rounded-full border border-white/[0.06] bg-black/30 px-3 py-1 backdrop-blur-sm">
+            {[
+              ["Drag", "orbit"],
+              ["Scroll", "zoom"],
+              ["Click pin", "inspect"],
+            ].map(([k, v]) => (
+              <span
+                key={k}
+                className="flex items-center gap-1 text-[8.5px] uppercase tracking-[0.12em] text-slate-500"
+              >
+                <kbd className="rounded border border-white/12 bg-white/[0.06] px-1 py-[1px] font-mono text-[8px] text-slate-300">
+                  {k}
+                </kbd>
+                {v}
+              </span>
+            ))}
+          </div>
         </div>
-      </div>
       ) : null}
     </div>
   );
