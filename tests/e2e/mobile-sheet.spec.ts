@@ -24,10 +24,10 @@
  * which bypasses the entire touch-action machinery — so a drag driven by `page.mouse` would pass even with
  * `touch-action: auto` on the handle, which is the exact bug the sheet exists to avoid.
  */
-import { test, expect, connectionInit } from './fixtures';
-import type { Page, CDPSession } from '@playwright/test';
+import { test, expect, connectionInit } from "./fixtures";
+import type { Page, CDPSession } from "@playwright/test";
 
-const LIVE = '/?debug&framing=live';
+const LIVE = "/?debug&framing=live";
 
 /** The step's own viewport. */
 const PHONE = { width: 390, height: 844 };
@@ -42,21 +42,33 @@ const TIER_TOPS = { full: 101, half: 439, peek: 692 } as const;
  *
  * The `isMobile`/`hasTouch` context options are set by `test.use` below; this helper only drives the page.
  */
-async function open(page: Page, vp = PHONE, opts: { waitForSheet?: boolean } = {}): Promise<void> {
+async function open(
+  page: Page,
+  vp = PHONE,
+  opts: { waitForSheet?: boolean } = {},
+): Promise<void> {
   await page.setViewportSize({ width: vp.width, height: vp.height });
-  await page.addInitScript(connectionInit({ saveData: false, effectiveType: '4g', downlink: 10 }));
+  await page.addInitScript(
+    connectionInit({ saveData: false, effectiveType: "4g", downlink: 10 }),
+  );
   await page.goto(LIVE);
   await expect
-    .poll(() => page.evaluate(() => (window.__frame ? window.__frame.mode : null)), {
-      timeout: 90_000,
-      intervals: [250],
-    })
-    .toBe('live');
+    .poll(
+      () => page.evaluate(() => (window.__frame ? window.__frame.mode : null)),
+      {
+        timeout: 90_000,
+        intervals: [250],
+      },
+    )
+    .toBe("live");
   await page.waitForTimeout(2500);
   if (opts.waitForSheet !== false) {
     /* The sheet's own probe is the cheapest proof the mobile shell mounted at all. */
     await expect
-      .poll(() => page.evaluate(() => Boolean(window.__mobileSheet)), { timeout: 30_000, intervals: [200] })
+      .poll(() => page.evaluate(() => Boolean(window.__mobileSheet)), {
+        timeout: 30_000,
+        intervals: [200],
+      })
       .toBe(true);
   }
 }
@@ -81,20 +93,23 @@ async function dragTouch(
   steps = 10,
   stepMs = 16,
 ): Promise<void> {
-  await cdp.send('Input.dispatchTouchEvent', {
-    type: 'touchStart',
+  await cdp.send("Input.dispatchTouchEvent", {
+    type: "touchStart",
     touchPoints: [{ x: from.x, y: from.y, id: 1 }],
   });
   for (let i = 1; i <= steps; i += 1) {
     const x = from.x + ((to.x - from.x) * i) / steps;
     const y = from.y + ((to.y - from.y) * i) / steps;
-    await cdp.send('Input.dispatchTouchEvent', {
-      type: 'touchMove',
+    await cdp.send("Input.dispatchTouchEvent", {
+      type: "touchMove",
       touchPoints: [{ x, y, id: 1 }],
     });
     await page_wait(stepMs);
   }
-  await cdp.send('Input.dispatchTouchEvent', { type: 'touchEnd', touchPoints: [] });
+  await cdp.send("Input.dispatchTouchEvent", {
+    type: "touchEnd",
+    touchPoints: [],
+  });
 }
 
 /** A tiny sleep that does not need the page. */
@@ -103,13 +118,19 @@ async function page_wait(ms: number): Promise<void> {
 }
 
 /** One tap. */
-async function tapTouch(cdp: CDPSession, at: { x: number; y: number }): Promise<void> {
-  await cdp.send('Input.dispatchTouchEvent', {
-    type: 'touchStart',
+async function tapTouch(
+  cdp: CDPSession,
+  at: { x: number; y: number },
+): Promise<void> {
+  await cdp.send("Input.dispatchTouchEvent", {
+    type: "touchStart",
     touchPoints: [{ x: at.x, y: at.y, id: 1 }],
   });
   await page_wait(30);
-  await cdp.send('Input.dispatchTouchEvent', { type: 'touchEnd', touchPoints: [] });
+  await cdp.send("Input.dispatchTouchEvent", {
+    type: "touchEnd",
+    touchPoints: [],
+  });
 }
 
 /** The sheet's own probe state. */
@@ -209,17 +230,23 @@ async function settledRenders(page: Page): Promise<number> {
  */
 async function waitForDesktopFrame(page: Page): Promise<void> {
   await expect
-    .poll(() => page.evaluate(() => window.__frame!.layoutMode), { timeout: 20_000, intervals: [100] })
-    .toBe('desktop');
+    .poll(() => page.evaluate(() => window.__frame!.layoutMode), {
+      timeout: 20_000,
+      intervals: [100],
+    })
+    .toBe("desktop");
   /* And that a frame has run since: `settled` is only ever written by the live frame body. */
   await expect
-    .poll(() => page.evaluate(() => window.__frame!.settled), { timeout: 20_000, intervals: [100] })
+    .poll(() => page.evaluate(() => window.__frame!.settled), {
+      timeout: 20_000,
+      intervals: [100],
+    })
     .toBe(true);
 }
 
 /* ------------------------------------------------------------------------ the config */
 
-test.describe('mobile snap sheet', () => {
+test.describe("mobile snap sheet", () => {
   test.use({
     viewport: PHONE,
     hasTouch: true,
@@ -231,25 +258,31 @@ test.describe('mobile snap sheet', () => {
 
   /* ------------------------------------------------------------------ M1 layout mode */
 
-  test('M1: at 390x844 the sheet and island exist and the desktop drawer and cards do not', async ({ page }) => {
+  test("M1: at 390x844 the sheet and island exist and the desktop drawer and cards do not", async ({
+    page,
+  }) => {
     await open(page);
 
-    await expect(page.locator('[data-mobile-sheet]')).toHaveCount(1);
+    await expect(page.locator("[data-mobile-sheet]")).toHaveCount(1);
     /*
      * Step MOBILE2 B: the floating island is GONE and the ENSO chip in the compact header carries the same text.
      * The `mobile-island` testid must be absent — that is the deletion, asserted rather than assumed.
      */
-    await expect(page.getByTestId('mobile-island')).toHaveCount(0);
-    await expect(page.getByTestId('enso-chip')).toHaveCount(1);
+    await expect(page.getByTestId("mobile-island")).toHaveCount(0);
+    await expect(page.getByTestId("enso-chip")).toHaveCount(1);
     await expect(page.locator('[data-layout-mode="portrait"]')).toHaveCount(1);
-    await expect(page.locator('[data-testid="drawer-switcher"]')).toHaveCount(0);
+    await expect(page.locator('[data-testid="drawer-switcher"]')).toHaveCount(
+      0,
+    );
     await expect(page.locator('[data-occluder="right-panel"]')).toHaveCount(0);
-    await expect(page.locator('[data-occluder="right-drawer"]')).toHaveCount(0);
+    await expect(page.locator('[data-occluder="right-drawer"]')).toHaveCount(
+      0,
+    );
     /* The desktop deck is hidden by class, so it is present but invisible — assert the computed style. */
     const deckVisible = await page.evaluate(() => {
       const deck = document.querySelector('[data-occluder="left-panel"]');
       if (!deck) return null;
-      return getComputedStyle(deck).display !== 'none';
+      return getComputedStyle(deck).display !== "none";
     });
     expect(deckVisible).toBe(false);
   });
@@ -263,37 +296,55 @@ test.describe('mobile snap sheet', () => {
    * case walks is the one the law now has — 767 portrait, 768 portrait, 1023 portrait, 1024x768 desktop — and the
    * sheet's presence follows the mode rather than the old width query.
    */
-  test('M1: at 767, 768 and 1023 the sheet exists; at 1024x768 only the desktop layout does', async ({ page }) => {
+  test("M1: at 767, 768 and 1023 the sheet exists; at 1024x768 only the desktop layout does", async ({
+    page,
+  }) => {
     await open(page, { width: 767, height: 900 }, { waitForSheet: true });
-    await expect(page.locator('[data-mobile-sheet]')).toHaveCount(1);
+    await expect(page.locator("[data-mobile-sheet]")).toHaveCount(1);
 
     /* A tall viewport at each of the three widths, plus the two landscape shapes the law sends to phoneLandscape. */
-    for (const vp of [{ width: 768, height: 900 }, { width: 1023, height: 1024 }]) {
+    for (const vp of [
+      { width: 768, height: 900 },
+      { width: 1023, height: 1024 },
+    ]) {
       await page.setViewportSize(vp);
       await expect
-        .poll(() => page.evaluate(() => window.__frame!.layoutMode), { timeout: 15_000, intervals: [100] })
-        .toBe('portrait');
-      await expect(page.locator('[data-mobile-sheet]')).toHaveCount(1);
-      await expect(page.locator('[data-layout-mode="portrait"]')).toHaveCount(1);
-      await expect(page.getByTestId('enso-chip')).toHaveCount(1);
+        .poll(() => page.evaluate(() => window.__frame!.layoutMode), {
+          timeout: 15_000,
+          intervals: [100],
+        })
+        .toBe("portrait");
+      await expect(page.locator("[data-mobile-sheet]")).toHaveCount(1);
+      await expect(page.locator('[data-layout-mode="portrait"]')).toHaveCount(
+        1,
+      );
+      await expect(page.getByTestId("enso-chip")).toHaveCount(1);
     }
 
-    for (const vp of [
-      { width: 1024, height: 768 },
-    ]) {
+    for (const vp of [{ width: 1024, height: 768 }]) {
       await page.setViewportSize(vp);
       /* The mode is a media query, so it flips without a reload; give the listener + one frame to land. */
       await expect
-        .poll(() => page.evaluate(() => window.__frame!.layoutMode), { timeout: 15_000, intervals: [100] })
-        .toBe('desktop');
-      await expect(page.locator('[data-mobile-sheet]')).toHaveCount(0);
-      await expect(page.getByTestId('mobile-island')).toHaveCount(0);
-      await expect(page.getByTestId('enso-chip')).toHaveCount(0);
+        .poll(() => page.evaluate(() => window.__frame!.layoutMode), {
+          timeout: 15_000,
+          intervals: [100],
+        })
+        .toBe("desktop");
+      await expect(page.locator("[data-mobile-sheet]")).toHaveCount(0);
+      await expect(page.getByTestId("mobile-island")).toHaveCount(0);
+      await expect(page.getByTestId("enso-chip")).toHaveCount(0);
       /* No compact header and no dock on desktop either (step MOBILE2, cases LM1 and LM6 check the same thing). */
-      await expect(page.locator('[data-occluder="compact-header"]')).toHaveCount(0);
-      await expect(page.locator('[data-landscape-dock]')).toHaveCount(0);
-      await expect(page.locator('[data-layout-mode]')).toHaveAttribute('data-layout-mode', 'desktop');
-      await expect(page.locator('[data-occluder="right-panel"]')).toHaveCount(1);
+      await expect(
+        page.locator('[data-occluder="compact-header"]'),
+      ).toHaveCount(0);
+      await expect(page.locator("[data-landscape-dock]")).toHaveCount(0);
+      await expect(page.locator("[data-layout-mode]")).toHaveAttribute(
+        "data-layout-mode",
+        "desktop",
+      );
+      await expect(page.locator('[data-occluder="right-panel"]')).toHaveCount(
+        1,
+      );
       /*
        * The desktop camera left the MOBILE branch with nothing to show: the view offset is the desktop fit's own
        * (dy negated), and the probe's mobile fields are their defaults. See `waitForDesktopFrame` for why the
@@ -334,7 +385,7 @@ test.describe('mobile snap sheet', () => {
    * projected target equals THE PROBE'S OWN published centre — read from the same frame, not restated as a
    * fraction — which is what makes this case measure the pipeline rather than the constant.
    */
-  test('M2: the projected orbit target sits at the published free-rect centre, and the offset is its complement', async ({
+  test("M2: the projected orbit target sits at the published free-rect centre, and the offset is its complement", async ({
     page,
   }) => {
     await open(page);
@@ -343,7 +394,14 @@ test.describe('mobile snap sheet', () => {
       const g = window.__globe!;
       const t = g.target();
       const p = g.project(t);
-      const cam = window.__camera as { view: { offsetX: number; offsetY: number; width: number; height: number } | null };
+      const cam = window.__camera as {
+        view: {
+          offsetX: number;
+          offsetY: number;
+          width: number;
+          height: number;
+        } | null;
+      };
       const snap = window.__frame!.snapshot();
       return {
         x: p.x,
@@ -362,7 +420,10 @@ test.describe('mobile snap sheet', () => {
       };
     });
 
-    expect(measured.view, 'camera.view must be non-null on mobile').not.toBeNull();
+    expect(
+      measured.view,
+      "camera.view must be non-null on mobile",
+    ).not.toBeNull();
 
     /*
      * The centre the LAYOUT published, for this frame.
@@ -374,8 +435,14 @@ test.describe('mobile snap sheet', () => {
      */
     const cx = measured.free.x + measured.free.w / 2;
     const cy = measured.fitCy;
-    expect(Math.abs(measured.x - cx), `x ${measured.x} vs cx ${cx}`).toBeLessThanOrEqual(1);
-    expect(Math.abs(measured.y - cy), `y ${measured.y} vs cy ${cy}`).toBeLessThanOrEqual(1);
+    expect(
+      Math.abs(measured.x - cx),
+      `x ${measured.x} vs cx ${cx}`,
+    ).toBeLessThanOrEqual(1);
+    expect(
+      Math.abs(measured.y - cy),
+      `y ${measured.y} vs cy ${cy}`,
+    ).toBeLessThanOrEqual(1);
 
     /*
      * And the offset actually installed is the centre's complement — the lens shift, proven against the camera's
@@ -384,11 +451,19 @@ test.describe('mobile snap sheet', () => {
      */
     expect(measured.view!.width).toBe(measured.W);
     expect(measured.view!.height).toBe(measured.H);
-    expect(Math.abs(measured.view!.offsetX - (measured.W / 2 - cx))).toBeLessThanOrEqual(1);
-    expect(Math.abs(measured.view!.offsetY - (measured.H / 2 - cy))).toBeLessThanOrEqual(1);
+    expect(
+      Math.abs(measured.view!.offsetX - (measured.W / 2 - cx)),
+    ).toBeLessThanOrEqual(1);
+    expect(
+      Math.abs(measured.view!.offsetY - (measured.H / 2 - cy)),
+    ).toBeLessThanOrEqual(1);
     /* The probe agrees with the camera. */
-    expect(Math.abs(measured.viewOffsetX - measured.view!.offsetX)).toBeLessThanOrEqual(0.05);
-    expect(Math.abs(measured.viewOffsetY - measured.view!.offsetY)).toBeLessThanOrEqual(0.05);
+    expect(
+      Math.abs(measured.viewOffsetX - measured.view!.offsetX),
+    ).toBeLessThanOrEqual(0.05);
+    expect(
+      Math.abs(measured.viewOffsetY - measured.view!.offsetY),
+    ).toBeLessThanOrEqual(0.05);
 
     /* And the ceiling is the unclamped one, so the fit is not squashed. */
     expect(measured.dMax).toBeGreaterThanOrEqual(measured.dFit);
@@ -397,8 +472,11 @@ test.describe('mobile snap sheet', () => {
     /* Desktop: the mobile fields return to their defaults and the ceiling is 5 again. */
     await page.setViewportSize({ width: 1280, height: 800 });
     await expect
-      .poll(() => page.evaluate(() => window.__frame!.layoutMode), { timeout: 15_000, intervals: [100] })
-      .toBe('desktop');
+      .poll(() => page.evaluate(() => window.__frame!.layoutMode), {
+        timeout: 15_000,
+        intervals: [100],
+      })
+      .toBe("desktop");
     await waitForDesktopFrame(page);
 
     const after = await page.evaluate(() => {
@@ -424,7 +502,9 @@ test.describe('mobile snap sheet', () => {
 
   /* ------------------------------------------------------------- M3 raycast parity */
 
-  test('M3: every front-facing pin selects at its projected pixel; back-facing pins never do', async ({ page }) => {
+  test("M3: every front-facing pin selects at its projected pixel; back-facing pins never do", async ({
+    page,
+  }) => {
     await open(page);
     /* Stop the spin so a projected pixel cannot move between reading it and tapping it. */
     await page.evaluate(() => window.__globe!.setSpin?.(false, 0));
@@ -452,21 +532,27 @@ test.describe('mobile snap sheet', () => {
       const h = window.innerHeight;
       return rows.map((p) => ({
         ...p,
-        inViewport:
-          p.x >= 1 && p.x <= w - 1 && p.y >= 1 && p.y <= h - 1,
+        inViewport: p.x >= 1 && p.x <= w - 1 && p.y >= 1 && p.y <= h - 1,
         /* The sheet's top at peek, so a pin behind the sheet is excluded for the same reason. */
-        topAt: (document.querySelector('[data-mobile-sheet]') as HTMLElement).getBoundingClientRect().top,
+        topAt: (
+          document.querySelector("[data-mobile-sheet]") as HTMLElement
+        ).getBoundingClientRect().top,
       }));
     });
     const tappable = pins.filter((p) => p.inViewport && p.y < p.topAt);
-    const offscreen = pins.filter((p) => !p.inViewport || p.y >= p.topAt).map((p) => p.id);
+    const offscreen = pins
+      .filter((p) => !p.inViewport || p.y >= p.topAt)
+      .map((p) => p.id);
     const front = tappable.filter((p) => p.facing && !p.behind);
     const back = tappable.filter((p) => !p.facing && !p.behind);
     console.log(
-      `[M3] tappable ${tappable.length}/${pins.length} (excluded: ${offscreen.join(',') || 'none'}); ` +
+      `[M3] tappable ${tappable.length}/${pins.length} (excluded: ${offscreen.join(",") || "none"}); ` +
         `front ${front.length}, back ${back.length}`,
     );
-    expect(front.length, `no front-facing pin is on screen; excluded ${offscreen.join(',')}`).toBeGreaterThan(0);
+    expect(
+      front.length,
+      `no front-facing pin is on screen; excluded ${offscreen.join(",")}`,
+    ).toBeGreaterThan(0);
 
     const cdp = await touch(page);
     /**
@@ -481,7 +567,9 @@ test.describe('mobile snap sheet', () => {
     const clearSelection = async (): Promise<void> => {
       if ((await selected(page)) === null) return;
       await tapTouch(cdp, { x: 6, y: 6 });
-      await expect.poll(() => selected(page), { timeout: 20_000, intervals: [150] }).toBeNull();
+      await expect
+        .poll(() => selected(page), { timeout: 20_000, intervals: [150] })
+        .toBeNull();
     };
 
     let frontHits = 0;
@@ -499,12 +587,20 @@ test.describe('mobile snap sheet', () => {
     for (const id of front.map((p) => p.id)) {
       await clearSelection();
       await settleDistance(page);
-      const now = await page.evaluate((pinId) => window.__globe!.pins().find((p) => p.id === pinId)!, id);
+      const now = await page.evaluate(
+        (pinId) => window.__globe!.pins().find((p) => p.id === pinId)!,
+        id,
+      );
       await tapTouch(cdp, { x: now.x, y: now.y });
       await page.waitForTimeout(400);
-      const got = await page.evaluate(() => window.__frame!.snapshot().regionId);
+      const got = await page.evaluate(
+        () => window.__frame!.snapshot().regionId,
+      );
       if (got === id) frontHits += 1;
-      else console.log(`[M3] MISS ${id} at (${now.x.toFixed(1)},${now.y.toFixed(1)}) -> ${got}`);
+      else
+        console.log(
+          `[M3] MISS ${id} at (${now.x.toFixed(1)},${now.y.toFixed(1)}) -> ${got}`,
+        );
     }
 
     let backHits = 0;
@@ -515,75 +611,101 @@ test.describe('mobile snap sheet', () => {
        */
       await clearSelection();
       await settleDistance(page);
-      const now = await page.evaluate((pinId) => window.__globe!.pins().find((p) => p.id === pinId)!, id);
+      const now = await page.evaluate(
+        (pinId) => window.__globe!.pins().find((p) => p.id === pinId)!,
+        id,
+      );
       await tapTouch(cdp, { x: now.x, y: now.y });
       await page.waitForTimeout(400);
-      const got = await page.evaluate(() => window.__frame!.snapshot().regionId);
+      const got = await page.evaluate(
+        () => window.__frame!.snapshot().regionId,
+      );
       if (got === id) backHits += 1;
-      else console.log(`[M3] back ${id} correctly did not select (topmost was ${got})`);
+      else
+        console.log(
+          `[M3] back ${id} correctly did not select (topmost was ${got})`,
+        );
     }
 
     console.log(
       `[M3] front ${frontHits}/${front.length} selected, back ${backHits}/${back.length} selected at ` +
         `${PHONE.width}x${PHONE.height}`,
     );
-    expect(frontHits, `front-facing pins: ${frontHits}/${front.length}`).toBe(front.length);
-    expect(backHits, `back-facing pins must not select: ${backHits}/${back.length}`).toBe(0);
+    expect(frontHits, `front-facing pins: ${frontHits}/${front.length}`).toBe(
+      front.length,
+    );
+    expect(
+      backHits,
+      `back-facing pins must not select: ${backHits}/${back.length}`,
+    ).toBe(0);
   });
 
-  test('M3: a tap on the sheet does not clear the selection; a tap on empty canvas does', async ({ page }) => {
+  test("M3: a tap on the sheet does not clear the selection; a tap on empty canvas does", async ({
+    page,
+  }) => {
     await open(page);
     const cdp = await touch(page);
 
     /* Select a region through the sheet's own switcher, which is a real user path on a phone. */
     await page.evaluate(() => window.__globe!.setSpin?.(false, 0));
-    await page.getByRole('slider', { name: 'Sheet position' }).press('End');
+    await page.getByRole("slider", { name: "Sheet position" }).press("End");
     await page.waitForTimeout(500);
     await page.locator('[data-region-id="pacific"]').tap();
-    await expect.poll(() => selected(page), { timeout: 20_000, intervals: [250] }).toBe('pacific');
+    await expect
+      .poll(() => selected(page), { timeout: 20_000, intervals: [250] })
+      .toBe("pacific");
 
     /* A tap on the sheet's body. */
     const body = await page.evaluate(() => {
-      const el = document.querySelector('[data-mobile-sheet]');
+      const el = document.querySelector("[data-mobile-sheet]");
       const r = el!.getBoundingClientRect();
       return { x: r.x + r.width / 2, y: r.y + 40 };
     });
     await tapTouch(cdp, body);
     await page.waitForTimeout(500);
-    expect(await selected(page), 'a tap on the sheet must not clear the selection').toBe('pacific');
+    expect(
+      await selected(page),
+      "a tap on the sheet must not clear the selection",
+    ).toBe("pacific");
 
     /* A tap on empty canvas ABOVE the sheet, where the globe is not under the finger. */
     await tapTouch(cdp, { x: 6, y: 6 });
-    await expect.poll(() => selected(page), { timeout: 20_000, intervals: [250] }).toBeNull();
+    await expect
+      .poll(() => selected(page), { timeout: 20_000, intervals: [250] })
+      .toBeNull();
   });
 
   /* ---------------------------------------------------------------------- M4 tiers */
 
-  test('M4: the sheet top is 692 / 439 / 101 px and data-tier follows the tier', async ({ page }) => {
+  test("M4: the sheet top is 692 / 439 / 101 px and data-tier follows the tier", async ({
+    page,
+  }) => {
     await open(page);
-    const handle = page.getByRole('slider', { name: 'Sheet position' });
+    const handle = page.getByRole("slider", { name: "Sheet position" });
 
     const readTop = async () =>
       page.evaluate(() => {
-        const el = document.querySelector('[data-mobile-sheet]') as HTMLElement;
+        const el = document.querySelector(
+          "[data-mobile-sheet]",
+        ) as HTMLElement;
         return { top: el.getBoundingClientRect().top, tier: el.dataset.tier };
       });
 
     /* peek is the initial state. */
     let s = await readTop();
-    expect(s.tier).toBe('peek');
+    expect(s.tier).toBe("peek");
     expect(Math.abs(s.top - TIER_TOPS.peek)).toBeLessThanOrEqual(2);
 
-    await handle.press('ArrowUp');
+    await handle.press("ArrowUp");
     await page.waitForTimeout(600);
     s = await readTop();
-    expect(s.tier).toBe('half');
+    expect(s.tier).toBe("half");
     expect(Math.abs(s.top - TIER_TOPS.half)).toBeLessThanOrEqual(2);
 
-    await handle.press('ArrowUp');
+    await handle.press("ArrowUp");
     await page.waitForTimeout(600);
     s = await readTop();
-    expect(s.tier).toBe('full');
+    expect(s.tier).toBe("full");
     expect(Math.abs(s.top - TIER_TOPS.full)).toBeLessThanOrEqual(2);
 
     /*
@@ -596,49 +718,68 @@ test.describe('mobile snap sheet', () => {
      */
     await page.setViewportSize({ width: 320, height: 568 });
     await expect
-      .poll(() => page.evaluate(() => window.__frame!.layoutMode), { timeout: 15_000, intervals: [100] })
-      .toBe('portrait');
+      .poll(() => page.evaluate(() => window.__frame!.layoutMode), {
+        timeout: 15_000,
+        intervals: [100],
+      })
+      .toBe("portrait");
     /*
      * Back to peek EXPLICITLY. The reset-on-portrait-entry rule does NOT fire here, and must not: 390x844 ->
      * 320x568 is portrait to portrait, which is a resize rather than an entry, and resetting a reader's tier on
      * every resize would be the "sheet jumps under the thumb" defect in reverse. The rule is exercised by LM7,
      * which rotates.
      */
-    await page.getByRole('slider', { name: 'Sheet position' }).press('Home');
-    await expect.poll(async () => (await readTop()).tier, { timeout: 15_000, intervals: [100] }).toBe('peek');
+    await page.getByRole("slider", { name: "Sheet position" }).press("Home");
+    await expect
+      .poll(async () => (await readTop()).tier, {
+        timeout: 15_000,
+        intervals: [100],
+      })
+      .toBe("peek");
     /* `visualViewport.height` is the sheet's own basis; on this headless size it equals innerHeight. */
     const peeked = await page.evaluate(() => {
-      const el = document.querySelector('[data-mobile-sheet]') as HTMLElement;
+      const el = document.querySelector("[data-mobile-sheet]") as HTMLElement;
       const r = el.getBoundingClientRect();
-      return { top: r.top, H: window.innerHeight, freeBottom: window.__frame!.free.y + window.__frame!.free.h };
+      return {
+        top: r.top,
+        H: window.innerHeight,
+        freeBottom: window.__frame!.free.y + window.__frame!.free.h,
+      };
     });
     const band = peeked.H - peeked.top;
-    expect(band, `peek band ${band} at 320x568 must be the 112 px floor`).toBeCloseTo(112, 0);
+    expect(
+      band,
+      `peek band ${band} at 320x568 must be the 112 px floor`,
+    ).toBeCloseTo(112, 0);
     /* And the camera's free rectangle ends exactly at that line — the same number, one source. */
     expect(Math.abs(peeked.freeBottom - peeked.top)).toBeLessThanOrEqual(1);
   });
 
-  test('M4: at peek a canvas touch at y = 400 reaches OrbitControls', async ({ page }) => {
+  test("M4: at peek a canvas touch at y = 400 reaches OrbitControls", async ({
+    page,
+  }) => {
     await open(page);
     /* At peek the sheet top is ~692, so y = 400 is above it and must reach the canvas. */
     const owner = await page.evaluate(() => {
       const el = document.elementFromPoint(window.innerWidth / 2, 400);
       return el ? el.tagName : null;
     });
-    expect(owner, 'y = 400 at peek must be the canvas').toBe('CANVAS');
+    expect(owner, "y = 400 at peek must be the canvas").toBe("CANVAS");
   });
 
   /* ----------------------------------------------------------------------- M5 drag */
 
-  test('M5: a slow drag past the midpoint lands on half, a short drag returns, a flick lands on full', async ({
+  test("M5: a slow drag past the midpoint lands on half, a short drag returns, a flick lands on full", async ({
     page,
   }) => {
     await open(page);
     const cdp = await touch(page);
 
     const handleAt = async () => {
-      const box = await page.getByRole('slider', { name: 'Sheet position' }).boundingBox();
-      if (!box) throw new Error('the drag handle has no box');
+      const box = await page
+        .getByRole("slider", { name: "Sheet position" })
+        .boundingBox();
+      if (!box) throw new Error("the drag handle has no box");
       return { x: box.x + box.width / 2, y: box.y + box.height / 2 };
     };
 
@@ -646,53 +787,56 @@ test.describe('mobile snap sheet', () => {
     let from = await handleAt();
     await dragTouch(cdp, from, { x: from.x, y: from.y - 220 }, 24, 30);
     await page.waitForTimeout(700);
-    expect((await sheetState(page)).tier).toBe('half');
+    expect((await sheetState(page)).tier).toBe("half");
 
     /* Short drag, under 30 % of the gap: back to half, not further. */
     from = await handleAt();
     await dragTouch(cdp, from, { x: from.x, y: from.y - 40 }, 8, 40);
     await page.waitForTimeout(700);
-    expect((await sheetState(page)).tier).toBe('half');
+    expect((await sheetState(page)).tier).toBe("half");
 
     /* A flick across both gaps: half -> full. */
     from = await handleAt();
     await dragTouch(cdp, from, { x: from.x, y: from.y - 320 }, 4, 8);
     await page.waitForTimeout(700);
-    expect((await sheetState(page)).tier).toBe('full');
+    expect((await sheetState(page)).tier).toBe("full");
   });
 
-  test('M5: the render counter does not change during a drag, and exactly one render follows release', async ({
+  test("M5: the render counter does not change during a drag, and exactly one render follows release", async ({
     page,
   }) => {
     await open(page);
     const cdp = await touch(page);
-    const box = await page.getByRole('slider', { name: 'Sheet position' }).boundingBox();
-    if (!box) throw new Error('no handle box');
+    const box = await page
+      .getByRole("slider", { name: "Sheet position" })
+      .boundingBox();
+    if (!box) throw new Error("no handle box");
     const from = { x: box.x + box.width / 2, y: box.y + box.height / 2 };
 
     /*
      * Take the baseline at REST, not at `open()`: the app is still delivering its boot payload when `open`
      * returns, and the render that costs is not the drag's. See `settledRenders`.
      */
+    await page.waitForTimeout(600);
     await settledRenders(page);
     const before = await sheetState(page);
     const beforeRenders = before.renders;
 
     /* Start the drag and hold, reading the counter MID-gesture. */
-    await cdp.send('Input.dispatchTouchEvent', {
-      type: 'touchStart',
+    await cdp.send("Input.dispatchTouchEvent", {
+      type: "touchStart",
       touchPoints: [{ x: from.x, y: from.y, id: 1 }],
     });
     for (let i = 1; i <= 12; i += 1) {
-      await cdp.send('Input.dispatchTouchEvent', {
-        type: 'touchMove',
+      await cdp.send("Input.dispatchTouchEvent", {
+        type: "touchMove",
         touchPoints: [{ x: from.x, y: from.y - i * 14, id: 1 }],
       });
       await page_wait(16);
     }
 
     const during = await page.evaluate(() => {
-      const el = document.querySelector('[data-mobile-sheet]') as HTMLElement;
+      const el = document.querySelector("[data-mobile-sheet]") as HTMLElement;
       return {
         renders: window.__mobileSheet!.read().renders,
         inline: el.style.transform,
@@ -700,22 +844,33 @@ test.describe('mobile snap sheet', () => {
       };
     });
 
-    expect(during.renders, 'a drag must not re-render').toBe(beforeRenders);
-    expect(during.inline, 'the transform must be written inline during the drag').toMatch(/translate3d/);
-    expect(during.transitioning).toBe('none');
+    expect(during.renders, "a drag must not re-render").toBe(beforeRenders);
+    expect(
+      during.inline,
+      "the transform must be written inline during the drag",
+    ).toMatch(/translate3d/);
+    expect(during.transitioning).toBe("none");
 
-    await cdp.send('Input.dispatchTouchEvent', { type: 'touchEnd', touchPoints: [] });
+    await cdp.send("Input.dispatchTouchEvent", {
+      type: "touchEnd",
+      touchPoints: [],
+    });
     await page.waitForTimeout(700);
 
     const after = await sheetState(page);
-    expect(after.tier, 'the 12 x 14 px drag must resolve to a tier change, or the render count proves nothing')
-      .not.toBe(before.tier);
-    expect(after.renders - beforeRenders, 'exactly one render after release').toBe(1);
+    expect(
+      after.tier,
+      "the 12 x 14 px drag must resolve to a tier change, or the render count proves nothing",
+    ).not.toBe(before.tier);
+    expect(
+      after.renders - beforeRenders,
+      "exactly one render after release",
+    ).toBe(1);
   });
 
   /* ------------------------------------------------------------------- M6 isolation */
 
-  test('M6: a drag on the handle leaves the pose unchanged; a drag on the canvas changes it and not the sheet', async ({
+  test("M6: a drag on the handle leaves the pose unchanged; a drag on the canvas changes it and not the sheet", async ({
     page,
   }) => {
     await open(page);
@@ -727,7 +882,9 @@ test.describe('mobile snap sheet', () => {
 
     const pose = () =>
       page.evaluate(() => {
-        const cam = window.__camera as { position: { x: number; y: number; z: number } };
+        const cam = window.__camera as {
+          position: { x: number; y: number; z: number };
+        };
         const t = window.__globe!.target();
         /* The offset FROM THE TARGET, normalised — a direction, not a position. */
         const ox = cam.position.x - t[0];
@@ -738,8 +895,10 @@ test.describe('mobile snap sheet', () => {
       });
 
     const beforeHandle = await pose();
-    const box = await page.getByRole('slider', { name: 'Sheet position' }).boundingBox();
-    if (!box) throw new Error('no handle box');
+    const box = await page
+      .getByRole("slider", { name: "Sheet position" })
+      .boundingBox();
+    if (!box) throw new Error("no handle box");
     const hx = box.x + box.width / 2;
     const hy = box.y + box.height / 2;
     await dragTouch(cdp, { x: hx, y: hy }, { x: hx, y: hy - 200 }, 16, 20);
@@ -752,7 +911,10 @@ test.describe('mobile snap sheet', () => {
      * `settleDistance` the same comparison reads 0 exactly. The tolerance is stated in absolute scene units —
      * 1e-6 R is 2.5e-4 px at d_fit, far below anything a camera write of any kind could hide behind.
      */
-    expect(Math.abs(afterHandle.d - beforeHandle.d), 'a sheet drag must not move the camera').toBeLessThan(1e-6);
+    expect(
+      Math.abs(afterHandle.d - beforeHandle.d),
+      "a sheet drag must not move the camera",
+    ).toBeLessThan(1e-6);
 
     const sheetBefore = await sheetState(page);
     /*
@@ -771,7 +933,10 @@ test.describe('mobile snap sheet', () => {
      * was fine here, but the same file raised the sheet before this point, so the point is derived.
      */
     const sheetTopNow = await page.evaluate(
-      () => (document.querySelector('[data-mobile-sheet]') as HTMLElement).getBoundingClientRect().top,
+      () =>
+        (
+          document.querySelector("[data-mobile-sheet]") as HTMLElement
+        ).getBoundingClientRect().top,
     );
     const cy = Math.max(60, Math.min(200, sheetTopNow - 120));
     await dragTouch(cdp, { x: 200, y: cy }, { x: 260, y: cy + 40 }, 12, 20);
@@ -784,15 +949,23 @@ test.describe('mobile snap sheet', () => {
       afterCanvas.dir[1] * beforeHandle.dir[1] +
       afterCanvas.dir[2] * beforeHandle.dir[2];
     const angle = (Math.acos(Math.min(1, Math.max(-1, dot))) * 180) / Math.PI;
-    expect(angle, `a canvas drag must orbit the camera (${angle.toFixed(2)} deg)`).toBeGreaterThan(2);
-    expect(sheetAfter.translateY, 'a canvas drag must not move the sheet').toBe(sheetBefore.translateY);
+    expect(
+      angle,
+      `a canvas drag must orbit the camera (${angle.toFixed(2)} deg)`,
+    ).toBeGreaterThan(2);
+    expect(
+      sheetAfter.translateY,
+      "a canvas drag must not move the sheet",
+    ).toBe(sheetBefore.translateY);
   });
 
   /* ------------------------------------------------------------------ M7 body scroll */
 
-  test('M7: at full the body scrolls and the camera and transform are unchanged', async ({ page }) => {
+  test("M7: at full the body scrolls and the camera and transform are unchanged", async ({
+    page,
+  }) => {
     await open(page);
-    await page.getByRole('slider', { name: 'Sheet position' }).press('End');
+    await page.getByRole("slider", { name: "Sheet position" }).press("End");
     await page.waitForTimeout(700);
     /*
      * The fit must have ARRIVED before the baseline. Measured on the second run: the scroll moved the camera by
@@ -803,9 +976,11 @@ test.describe('mobile snap sheet', () => {
     await settleDistance(page);
 
     const before = await page.evaluate(() => {
-      const el = document.querySelector('[data-mobile-sheet]') as HTMLElement;
-      const body = el.querySelector('.overflow-y-auto') as HTMLElement;
-      const cam = window.__camera as { position: { x: number; y: number; z: number } };
+      const el = document.querySelector("[data-mobile-sheet]") as HTMLElement;
+      const body = el.querySelector(".overflow-y-auto") as HTMLElement;
+      const cam = window.__camera as {
+        position: { x: number; y: number; z: number };
+      };
       return {
         scrollTop: body.scrollTop,
         scrollable: body.scrollHeight > body.clientHeight,
@@ -816,15 +991,18 @@ test.describe('mobile snap sheet', () => {
       };
     });
 
-    expect(before.scrollable, 'the full-tier body must be scrollable for this case to mean anything').toBe(true);
-    expect(before.overscroll).toBe('contain');
-    expect(before.touchAction).toBe('pan-y');
+    expect(
+      before.scrollable,
+      "the full-tier body must be scrollable for this case to mean anything",
+    ).toBe(true);
+    expect(before.overscroll).toBe("contain");
+    expect(before.touchAction).toBe("pan-y");
 
     /* Scroll the body with a real touch drag inside it. */
     const cdp = await touch(page);
     const bodyBox = await page.evaluate(() => {
-      const el = document.querySelector('[data-mobile-sheet]') as HTMLElement;
-      const body = el.querySelector('.overflow-y-auto') as HTMLElement;
+      const el = document.querySelector("[data-mobile-sheet]") as HTMLElement;
+      const body = el.querySelector(".overflow-y-auto") as HTMLElement;
       const r = body.getBoundingClientRect();
       return { x: r.x + r.width / 2, top: r.y, h: r.height };
     });
@@ -838,9 +1016,11 @@ test.describe('mobile snap sheet', () => {
     await page.waitForTimeout(900);
 
     const after = await page.evaluate(() => {
-      const el = document.querySelector('[data-mobile-sheet]') as HTMLElement;
-      const body = el.querySelector('.overflow-y-auto') as HTMLElement;
-      const cam = window.__camera as { position: { x: number; y: number; z: number } };
+      const el = document.querySelector("[data-mobile-sheet]") as HTMLElement;
+      const body = el.querySelector(".overflow-y-auto") as HTMLElement;
+      const cam = window.__camera as {
+        position: { x: number; y: number; z: number };
+      };
       return {
         scrollTop: body.scrollTop,
         transform: el.style.transform,
@@ -848,80 +1028,100 @@ test.describe('mobile snap sheet', () => {
       };
     });
 
-    expect(after.scrollTop, 'the body must have scrolled').toBeGreaterThan(before.scrollTop);
+    expect(after.scrollTop, "the body must have scrolled").toBeGreaterThan(
+      before.scrollTop,
+    );
     expect(after.transform).toBe(before.transform);
     /* Absolute, for the reason stated in M6: an unarrived fit is what a loose relative tolerance would hide. */
-    expect(Math.abs(after.d - before.d), 'scrolling the body must not move the camera').toBeLessThan(1e-6);
+    expect(
+      Math.abs(after.d - before.d),
+      "scrolling the body must not move the camera",
+    ).toBeLessThan(1e-6);
   });
 
   /* --------------------------------------------------------------- M8 capture paths */
 
-  test('M8: a drag that leaves the handle still tracks, and a touchCancel leaves no stuck state', async ({ page }) => {
+  test("M8: a drag that leaves the handle still tracks, and a touchCancel leaves no stuck state", async ({
+    page,
+  }) => {
     await open(page);
     const cdp = await touch(page);
-    const box = await page.getByRole('slider', { name: 'Sheet position' }).boundingBox();
-    if (!box) throw new Error('no handle box');
+    const box = await page
+      .getByRole("slider", { name: "Sheet position" })
+      .boundingBox();
+    if (!box) throw new Error("no handle box");
     const from = { x: box.x + box.width / 2, y: box.y + box.height / 2 };
 
     /* Move well outside the handle AND outside the window's horizontal extent mid-drag. */
-    await cdp.send('Input.dispatchTouchEvent', {
-      type: 'touchStart',
+    await cdp.send("Input.dispatchTouchEvent", {
+      type: "touchStart",
       touchPoints: [{ x: from.x, y: from.y, id: 1 }],
     });
     for (let i = 1; i <= 10; i += 1) {
-      await cdp.send('Input.dispatchTouchEvent', {
-        type: 'touchMove',
+      await cdp.send("Input.dispatchTouchEvent", {
+        type: "touchMove",
         touchPoints: [{ x: from.x + i * 20, y: from.y - i * 20, id: 1 }],
       });
       await page_wait(16);
     }
     /* The drag must still be tracking: the transform moved from the tier's own value. */
     const mid = await page.evaluate(() => {
-      const el = document.querySelector('[data-mobile-sheet]') as HTMLElement;
+      const el = document.querySelector("[data-mobile-sheet]") as HTMLElement;
       return el.style.transform;
     });
     expect(mid).toMatch(/translate3d/);
 
-    await cdp.send('Input.dispatchTouchEvent', { type: 'touchEnd', touchPoints: [] });
+    await cdp.send("Input.dispatchTouchEvent", {
+      type: "touchEnd",
+      touchPoints: [],
+    });
     await page.waitForTimeout(700);
 
     const released = await page.evaluate(() => {
-      const el = document.querySelector('[data-mobile-sheet]') as HTMLElement;
+      const el = document.querySelector("[data-mobile-sheet]") as HTMLElement;
       return { tier: el.dataset.tier, transform: el.style.transform };
     });
     expect(Object.keys(TIER_TOPS)).toContain(released.tier);
 
     /* Now a CANCEL mid-drag: the sheet must snap to a tier, not stay wherever the finger was. */
     const beforeCancel = await sheetState(page);
-    await cdp.send('Input.dispatchTouchEvent', {
-      type: 'touchStart',
+    await cdp.send("Input.dispatchTouchEvent", {
+      type: "touchStart",
       touchPoints: [{ x: from.x, y: from.y, id: 1 }],
     });
     for (let i = 1; i <= 8; i += 1) {
-      await cdp.send('Input.dispatchTouchEvent', {
-        type: 'touchMove',
+      await cdp.send("Input.dispatchTouchEvent", {
+        type: "touchMove",
         touchPoints: [{ x: from.x, y: from.y - i * 22, id: 1 }],
       });
       await page_wait(16);
     }
-    await cdp.send('Input.dispatchTouchEvent', { type: 'touchCancel', touchPoints: [] });
+    await cdp.send("Input.dispatchTouchEvent", {
+      type: "touchCancel",
+      touchPoints: [],
+    });
     await page.waitForTimeout(900);
 
     const settled = await page.evaluate(() => {
-      const el = document.querySelector('[data-mobile-sheet]') as HTMLElement;
+      const el = document.querySelector("[data-mobile-sheet]") as HTMLElement;
       const probe = window.__mobileSheet!.read();
-      return { tier: el.dataset.tier, translateY: el.style.transform, probe, probeTier: probe.tier };
+      return {
+        tier: el.dataset.tier,
+        translateY: el.style.transform,
+        probe,
+        probeTier: probe.tier,
+      };
     });
     expect(Object.keys(TIER_TOPS)).toContain(settled.tier);
     /* And the sheet is AT a snap point, not stranded mid-gesture. */
-    expect(settled.translateY).not.toBe('');
+    expect(settled.translateY).not.toBe("");
     expect(beforeCancel.drags).toBeGreaterThan(0);
     expect(settled.probeTier).toBe(settled.tier);
   });
 
   /* ---------------------------------------------------------------------- M9 island */
 
-  test('M9: the island text matches formatIsland of the live store, and the scrubber drives the globe', async ({
+  test("M9: the island text matches formatIsland of the live store, and the scrubber drives the globe", async ({
     page,
   }) => {
     await open(page);
@@ -934,7 +1134,7 @@ test.describe('mobile snap sheet', () => {
     const readIsland = () =>
       page.evaluate(() => {
         const span = document.querySelector('[data-testid="enso-chip-text"]');
-        return span ? (span.textContent ?? '').trim() : null;
+        return span ? (span.textContent ?? "").trim() : null;
       });
 
     const expectedText = async () =>
@@ -946,29 +1146,40 @@ test.describe('mobile snap sheet', () => {
          * sheet's anomaly readout specifically (`.num` inside `[data-testid="sheet-title"]`'s sibling row), so it
          * cannot accidentally read the STAT component's value.
          */
-        const el = document.querySelector('[data-mobile-sheet] .num');
-        return el ? el.textContent?.trim() ?? '' : '';
+        const el = document.querySelector("[data-mobile-sheet] .num");
+        return el ? (el.textContent?.trim() ?? "") : "";
       });
 
     const text = await readIsland();
-    expect(text, 'the island must exist').not.toBeNull();
-    expect(text!, 'the island must print the formatIsland shape').toMatch(/^ENSO: /);
-    expect(text!, 'the island must never print a literal — it must carry a signed temperature').toMatch(/°C/);
+    expect(text, "the island must exist").not.toBeNull();
+    expect(text!, "the island must print the formatIsland shape").toMatch(
+      /^ENSO: /,
+    );
+    expect(
+      text!,
+      "the island must never print a literal — it must carry a signed temperature",
+    ).toMatch(/°C/);
     /* And it must agree with the sheet's own reading of the same store value. */
     const sheetReading = await expectedText();
-    expect(text!).toContain(sheetReading.replace('°C', '').trim());
+    expect(text!).toContain(sheetReading.replace("°C", "").trim());
 
     /* Expand the chip's scrubber popover and use it. */
-    await page.getByTestId('enso-chip').tap();
-    await expect.poll(() => page.getByTestId('enso-chip').getAttribute('aria-expanded')).toBe('true');
-    await expect(page.getByTestId('enso-popover')).toHaveCount(1);
+    await page.getByTestId("enso-chip").tap();
+    await expect
+      .poll(() => page.getByTestId("enso-chip").getAttribute("aria-expanded"))
+      .toBe("true");
+    await expect(page.getByTestId("enso-popover")).toHaveCount(1);
 
-    const distanceBefore = await page.evaluate(() => window.__globe!.distance());
-    const scrubber = page.getByRole('slider', { name: 'Global SST anomaly' }).first();
+    const distanceBefore = await page.evaluate(() =>
+      window.__globe!.distance(),
+    );
+    const scrubber = page
+      .getByRole("slider", { name: "Global SST anomaly" })
+      .first();
     await scrubber.evaluate((el: HTMLInputElement) => {
-      el.value = '2.40';
-      el.dispatchEvent(new Event('input', { bubbles: true }));
-      el.dispatchEvent(new Event('change', { bubbles: true }));
+      el.value = "2.40";
+      el.dispatchEvent(new Event("input", { bubbles: true }));
+      el.dispatchEvent(new Event("change", { bubbles: true }));
     });
     await page.waitForTimeout(900);
 
@@ -976,26 +1187,34 @@ test.describe('mobile snap sheet', () => {
     await expect
       .poll(async () => readIsland(), { timeout: 15_000, intervals: [200] })
       .toMatch(/2[.,]4/);
-    const distanceAfter = await page.evaluate(() => window.__globe!.distance());
+    const distanceAfter = await page.evaluate(() =>
+      window.__globe!.distance(),
+    );
     expect(distanceBefore).toBeGreaterThan(0);
     expect(Number.isFinite(distanceAfter)).toBe(true);
   });
 
-  test('M9: Reset works from the mobile layout', async ({ page }) => {
+  test("M9: Reset works from the mobile layout", async ({ page }) => {
     await open(page);
     await page.evaluate(() => window.__globe!.setSpin?.(false, 0));
-    await page.getByRole('slider', { name: 'Sheet position' }).press('End');
+    await page.getByRole("slider", { name: "Sheet position" }).press("End");
     await page.waitForTimeout(500);
     await page.locator('[data-region-id="us-west"]').tap();
-    await expect.poll(() => selected(page), { timeout: 20_000, intervals: [250] }).toBe('us-west');
+    await expect
+      .poll(() => selected(page), { timeout: 20_000, intervals: [250] })
+      .toBe("us-west");
 
-    await page.getByRole('button', { name: /reset view/i }).tap();
-    await expect.poll(() => selected(page), { timeout: 20_000, intervals: [250] }).toBeNull();
+    await page.getByRole("button", { name: /reset view/i }).tap();
+    await expect
+      .poll(() => selected(page), { timeout: 20_000, intervals: [250] })
+      .toBeNull();
   });
 
   /* --------------------------------------------------------------- M10 inert and a11y */
 
-  test('M10: out-of-view controls are not focusable, and keyboard tier changes work', async ({ page }) => {
+  test("M10: out-of-view controls are not focusable, and keyboard tier changes work", async ({
+    page,
+  }) => {
     await open(page);
 
     /*
@@ -1010,52 +1229,67 @@ test.describe('mobile snap sheet', () => {
      * reachable at full. An earlier revision asserted only `>= 0` on a count of hidden chips, which cannot fail
      * and so proved nothing about either tier.
      */
-    const walk = async (from: 'peek' | 'full'): Promise<string[]> => {
-      const handle = page.getByRole('slider', { name: 'Sheet position' });
+    const walk = async (from: "peek" | "full"): Promise<string[]> => {
+      const handle = page.getByRole("slider", { name: "Sheet position" });
       await handle.focus();
-      if (from === 'full') {
-        await handle.press('End');
+      if (from === "full") {
+        await handle.press("End");
         await page.waitForTimeout(600);
       }
       const seen: string[] = [];
       for (let i = 0; i < 12; i += 1) {
-        await page.keyboard.press('Tab');
+        await page.keyboard.press("Tab");
         seen.push(
           await page.evaluate(() => {
             const el = document.activeElement as HTMLElement | null;
-            if (!el || el === document.body) return 'body';
-            return el.getAttribute('aria-label') ?? el.getAttribute('data-region-id') ?? el.tagName.toLowerCase();
+            if (!el || el === document.body) return "body";
+            return (
+              el.getAttribute("aria-label") ??
+              el.getAttribute("data-region-id") ??
+              el.tagName.toLowerCase()
+            );
           }),
         );
       }
       return seen;
     };
 
-    const peekWalk = await walk('peek');
-    for (const hidden of ['pacific', 'us-west', 'se-asia', 'horn-africa', 'Global SST anomaly']) {
-      expect(peekWalk, `"${hidden}" must not be reachable at peek`).not.toContain(hidden);
+    const peekWalk = await walk("peek");
+    for (const hidden of [
+      "pacific",
+      "us-west",
+      "se-asia",
+      "horn-africa",
+      "Global SST anomaly",
+    ]) {
+      expect(
+        peekWalk,
+        `"${hidden}" must not be reachable at peek`,
+      ).not.toContain(hidden);
     }
 
-    const fullWalk = await walk('full');
-    for (const reachable of ['Global SST anomaly', 'pacific', 'horn-africa']) {
-      expect(fullWalk, `"${reachable}" must be reachable at full`).toContain(reachable);
+    const fullWalk = await walk("full");
+    for (const reachable of ["Global SST anomaly", "pacific", "horn-africa"]) {
+      expect(fullWalk, `"${reachable}" must be reachable at full`).toContain(
+        reachable,
+      );
     }
 
     /* Home from full returns the handle to peek, and the keyboard contract reports it. */
-    const handle = page.getByRole('slider', { name: 'Sheet position' });
-    await handle.press('Home');
+    const handle = page.getByRole("slider", { name: "Sheet position" });
+    await handle.press("Home");
     await page.waitForTimeout(600);
-    expect(await handle.getAttribute('aria-valuenow')).toBe('0');
-    expect(await handle.getAttribute('aria-valuetext')).toBe('Peek');
+    expect(await handle.getAttribute("aria-valuenow")).toBe("0");
+    expect(await handle.getAttribute("aria-valuetext")).toBe("Peek");
 
-    await handle.press('End');
+    await handle.press("End");
     await page.waitForTimeout(600);
-    expect(await handle.getAttribute('aria-valuenow')).toBe('2');
-    expect(await handle.getAttribute('aria-valuetext')).toBe('Full');
+    expect(await handle.getAttribute("aria-valuenow")).toBe("2");
+    expect(await handle.getAttribute("aria-valuetext")).toBe("Full");
 
-    await handle.press('Home');
+    await handle.press("Home");
     await page.waitForTimeout(600);
-    expect(await handle.getAttribute('aria-valuenow')).toBe('0');
-    expect(await handle.getAttribute('aria-valuetext')).toBe('Peek');
+    expect(await handle.getAttribute("aria-valuenow")).toBe("0");
+    expect(await handle.getAttribute("aria-valuetext")).toBe("Peek");
   });
 });
