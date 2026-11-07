@@ -1,16 +1,17 @@
-import { useRef, useSyncExternalStore, type MutableRefObject } from 'react';
-import { useFrame } from '@react-three/fiber';
-import * as THREE from 'three';
-import type { RegionId } from '@/types/enso';
-import type { ScenarioMetrics } from '@/types/enso';
-import { REGIONS } from '@/lib/regions';
-import { isNinoUiEnabled } from '@/lib/ninoFlag';
-import { regionHeadline } from '@/lib/model';
-import { Globe } from '@/scene/Globe';
-import { SUN_DIRECTION } from '@/scene/constants';
-import { Hotspot } from '@/scene/Hotspot';
-import { NinoOverlay } from '@/scene/NinoOverlay';
-import { getLookFlags, subscribeLookFlags } from '@/scene/globeLook';
+import { useRef, useSyncExternalStore, type MutableRefObject } from "react";
+import { useFrame } from "@react-three/fiber";
+import * as THREE from "three";
+import type { RegionId } from "@/types/enso";
+import type { ScenarioMetrics } from "@/types/enso";
+import { REGIONS } from "@/lib/regions";
+import { isNinoUiEnabled } from "@/lib/ninoFlag";
+import { regionHeadline } from "@/lib/model";
+import { Globe } from "@/scene/Globe";
+import { SUN_DIRECTION } from "@/scene/constants";
+import { Hotspot } from "@/scene/Hotspot";
+import { NinoOverlay } from "@/scene/NinoOverlay";
+import { getLookFlags, subscribeLookFlags } from "@/scene/globeLook";
+import { AtmosphericRiver } from "@/scene/AtmosphericRiver";
 
 /**
  * `?nino=1`, read ONCE at module load.
@@ -21,7 +22,7 @@ import { getLookFlags, subscribeLookFlags } from '@/scene/globeLook';
  * prop would touch two more files for a boolean that never changes at runtime.
  */
 const NINO_UI = isNinoUiEnabled(
-  typeof location === 'undefined' ? '' : location.search,
+  typeof location === "undefined" ? "" : location.search,
 );
 
 export interface SpinState {
@@ -72,7 +73,11 @@ export function EarthSystem({
   activeNinoBox = null,
 }: EarthSystemProps) {
   const groupRef = useRef<THREE.Group>(null);
-  const look = useSyncExternalStore(subscribeLookFlags, getLookFlags, getLookFlags);
+  const look = useSyncExternalStore(
+    subscribeLookFlags,
+    getLookFlags,
+    getLookFlags,
+  );
 
   useFrame((_, delta) => {
     if (spin.current.frozen) {
@@ -105,7 +110,14 @@ export function EarthSystem({
         in `NinoOverlay.tsx`, so with the flag off nothing here is constructed at all — no pins, no
         geometry, no material — and the flag-off scene is the same object graph as before.
       */}
-      {NINO_UI ? <NinoOverlay earthRef={groupRef} sst={sst} selectedBoxId={activeNinoBox} /> : null}
+      {NINO_UI ? (
+        <NinoOverlay
+          earthRef={groupRef}
+          sst={sst}
+          selectedBoxId={activeNinoBox}
+        />
+      ) : null}
+      <AtmosphericRiver sst={sst} jetShiftDegrees={metrics.jet} />
     </group>
   );
 }
