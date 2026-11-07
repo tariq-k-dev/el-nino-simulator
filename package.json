@@ -5,6 +5,8 @@
   "type": "module",
   "description": "Super El Nino Global Impact Simulator - an interactive R3F globe with a client-side DuckDB-WASM analytics engine.",
   "scripts": {
+    "dev:worker": "cd workers/noaa-telemetry && pnpm dev",
+    "dev:all": "concurrently -k -n vite,worker -c cyan,yellow \"pnpm dev\" \"pnpm run dev:worker\"",
     "predev": "node scripts/copy-duckdb.mjs",
     "dev": "vite",
     "prebuild": "node scripts/copy-duckdb.mjs",
@@ -55,6 +57,7 @@
     "@types/three": "^0.169.0",
     "@vitejs/plugin-react": "^4.3.2",
     "autoprefixer": "^10.4.20",
+    "concurrently": "^10.0.6",
     "cross-env": "^10.1.0",
     "eslint": "^9.12.0",
     "eslint-plugin-react-hooks": "^5.0.0",

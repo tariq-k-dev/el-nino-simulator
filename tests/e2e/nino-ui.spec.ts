@@ -3165,7 +3165,7 @@ async function spinRateOver3s(page: Page): Promise<number> {
  * The first version of G3(a) did exactly that and failed with `aria-pressed` still true; that was my test code,
  * not the product.
  */
-async function reachablePin(
+async function _reachablePin(
   page: Page,
   exclude: string | null,
 ): Promise<{ id: string; x: number; y: number } | null> {
