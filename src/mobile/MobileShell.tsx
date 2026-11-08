@@ -70,7 +70,10 @@ interface MobileShellProps {
     units: UnitSystem;
     exporting: boolean;
     onToggleUnits: () => void;
-    onExport: () => void;
+    /** Download the composed 1920×1080 PNG snapshot. */
+    onExportPng: () => void;
+    /** Open the HTML diagnostic report in a new tab. */
+    onExportReport: () => void;
     onSelect: (id: RegionId | null) => void;
     onClearSelection: () => void;
     onScenarioChange: (patch: Partial<ScenarioState>) => void;
@@ -94,7 +97,8 @@ export function MobileShell({
     units,
     exporting,
     onToggleUnits,
-    onExport,
+    onExportPng,
+    onExportReport,
     onSelect,
     onClearSelection,
     onScenarioChange,
@@ -233,7 +237,8 @@ export function MobileShell({
                 anomalyC={scenario.sstAnomaly}
                 units={units}
                 onToggleUnits={onToggleUnits}
-                onExport={onExport}
+                onExportPng={onExportPng}
+                onExportReport={onExportReport}
                 exporting={exporting}
                 onClearSelection={onClearSelection}
                 onSstChange={(value) => onScenarioChange({ sstAnomaly: value })}

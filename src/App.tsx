@@ -24,8 +24,9 @@ import { captureCanvasElement } from "@/lib/canvasCapture";
 import { composeSnapshot } from "@/lib/snapshotComposer";
 import { isNinoUiEnabled } from "@/lib/ninoFlag";
 import { submitNinoFocus } from "@/scene/cameraIntents";
-import type { RegionId } from "@/types/enso";
+import type { RegionId, ScenarioMetrics } from "@/types/enso";
 import { fixed } from "@/lib/format";
+import type { SnapshotRegionMetrics } from "@/lib/snapshotComposer";
 
 /**
  * The `?nino=1` flag, read exactly once at module load.
@@ -38,6 +39,56 @@ import { fixed } from "@/lib/format";
 const NINO_UI = isNinoUiEnabled(
     typeof location === "undefined" ? "" : location.search,
 );
+
+/**
+ * Per-region numbers for the snapshot's right-hand panel.
+ *
+ * Mirrors the fields `RegionDrawer.buildHud` reads, but flattened into the
+ * shape `composeSnapshot` expects. Kept here rather than exported from the
+ * drawer because the drawer's `RegionHud` is a presentation shape (headline,
+ * stats, bars, narrative) and the composer wants raw numbers.
+ *
+ * Regions without a temperature or jet term report `0` for those fields —
+ * the composer draws them as `+0.0 °C` / `0.0%`, which is honest: the model
+ * genuinely has no such term for them.
+ */
+function regionSnapshotMetrics(
+    region: RegionId,
+    metrics: ScenarioMetrics,
+): SnapshotRegionMetrics {
+    const base: SnapshotRegionMetrics = {
+        precipChange: 0,
+        tempDeviation: 0,
+        basePrecip: 0,
+        jetContribution: 0,
+        snowpackProxy: 0,
+        signalTier: metrics.riskTier,
+    };
+    switch (region) {
+        case "pacific":
+            return { ...base, precipChange: metrics.pacificSstDev };
+        case "us-west":
+            return {
+                ...base,
+                precipChange: metrics.usPrecip,
+                tempDeviation: metrics.usTempDevF,
+                basePrecip: metrics.usPrecipBase,
+                jetContribution: metrics.usPrecip - metrics.usPrecipBase,
+                snowpackProxy: Math.min(
+                    100,
+                    Math.max(0, metrics.usPrecip * 1.1),
+                ),
+            };
+        case "se-asia":
+            return { ...base, precipChange: metrics.asiaPrecip };
+        case "horn-africa":
+            return { ...base, precipChange: metrics.africaPrecip };
+        case "amazon-basin":
+            return { ...base, precipChange: metrics.amazonPrecip };
+        case "gulf-coast":
+            return { ...base, precipChange: metrics.gulfPrecip };
+    }
+}
 
 export default function App() {
     const {
@@ -486,7 +537,8 @@ export default function App() {
                     onScenarioChange={setScenario}
                     exporting={exporting}
                     onToggleUnits={toggleUnits}
-                    onExport={handleExport}
+                    onExportPng={handleExportPng}
+                    onExportReport={handleExportReport}
                     activeNinoBox={activeNinoBox}
                     onShowOnGlobe={showNinoOnGlobe}
                     telemetry={telemetry}
