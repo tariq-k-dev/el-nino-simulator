@@ -145,6 +145,8 @@ interface SnapSheetProps {
     onShowOnGlobe: (boxId: string) => void;
     /** Live telemetry, forwarded to the shared body. */
     telemetry?: TelemetryBundle | null;
+    /** Notified whenever the tier changes, including the imperative `resetTier()`. */
+    onTierChange?: (tier: Tier) => void;
 }
 
 /**
@@ -180,6 +182,7 @@ export const SnapSheet = forwardRef<SnapSheetHandle, SnapSheetProps>(
             activeNinoBox,
             onShowOnGlobe,
             telemetry,
+            onTierChange: onTierChangeProp,
         },
         ref,
     ) {
@@ -199,7 +202,13 @@ export const SnapSheet = forwardRef<SnapSheetHandle, SnapSheetProps>(
         const [fullMounted, setFullMounted] = useState(false);
         if (tier === "full" && !fullMounted) setFullMounted(true);
 
-        const onTierChange = useCallback((next: Tier) => setTier(next), []);
+        const onTierChange = useCallback(
+            (next: Tier) => {
+                setTier(next);
+                onTierChangeProp?.(next);
+            },
+            [onTierChangeProp],
+        );
         const { sheetRef, handleRef, points, dragCount } = useSheetDrag({
             tier,
             onTierChange,
@@ -210,8 +219,13 @@ export const SnapSheet = forwardRef<SnapSheetHandle, SnapSheetProps>(
         /* The tier reset the shell drives on every portrait entry. */
         useImperativeHandle(
             ref,
-            () => ({ resetTier: () => setTier("peek") }),
-            [],
+            () => ({
+                resetTier: () => {
+                    setTier("peek");
+                    onTierChangeProp?.("peek");
+                },
+            }),
+            [onTierChangeProp],
         );
 
         /* --------------------------------------------------------------- geometry plumbing */

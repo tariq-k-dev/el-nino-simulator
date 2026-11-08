@@ -72,6 +72,8 @@ interface HeaderCompactProps {
     /** The drawer X / Escape path, driven by the Reset control. */
     onClearSelection: () => void;
     onSstChange: (value: number) => void;
+    /** Hide the ENSO chip (portrait, sheet at full). Fades out rather than unmounting. */
+    hideChip?: boolean;
 }
 
 /**
@@ -93,6 +95,7 @@ export function HeaderCompact({
     exporting,
     onClearSelection,
     onSstChange,
+    hideChip = false,
 }: HeaderCompactProps) {
     const headerRef = useRef<HTMLElement>(null);
     const landscape = mode === "phoneLandscape";
@@ -250,7 +253,8 @@ export function HeaderCompact({
                  * `position: absolute`, so widening the button cannot move it.
                  */
                 className={[
-                    "pointer-events-auto",
+                    "pointer-events-auto transition-opacity duration-200",
+                    hideChip ? "pointer-events-none opacity-0" : "opacity-100",
                     landscape
                         ? "flex-none [&>div]:w-full [&_button]:w-full"
                         : "order-last w-full",

@@ -25,7 +25,7 @@
  * business.
  */
 
-import { useEffect, useRef } from "react";
+import { useEffect, useRef, useState } from "react";
 import type {
     AnalyticsPayload,
     RegionDefinition,
@@ -38,6 +38,7 @@ import type {
 import { HeaderCompact } from "@/mobile/HeaderCompact";
 import { LandscapeDock } from "@/mobile/LandscapeDock";
 import { SnapSheet, type SnapSheetHandle } from "@/mobile/SnapSheet";
+import type { Tier } from "@/mobile/snapMath";
 import type { LayoutMode2 } from "@/mobile/layoutMath";
 import { NINO_BOXES } from "@/lib/regions";
 import { isNinoUiEnabled } from "@/lib/ninoFlag";
@@ -102,6 +103,8 @@ export function MobileShell({
     telemetry,
 }: MobileShellProps) {
     const sheetRef = useRef<SnapSheetHandle>(null);
+    /** The sheet's current tier, mirrored here so the header can hide the chip at full. */
+    const [sheetTier, setSheetTier] = useState<Tier>("peek");
 
     /*
      * The tier reset on portrait entry.
@@ -234,6 +237,7 @@ export function MobileShell({
                 exporting={exporting}
                 onClearSelection={onClearSelection}
                 onSstChange={(value) => onScenarioChange({ sstAnomaly: value })}
+                hideChip={mode === "portrait" && sheetTier === "full"}
             />
 
             {mode === "portrait" ? (
@@ -254,6 +258,7 @@ export function MobileShell({
                     }
                     onChangeScenario={(patch) => onScenarioChange(patch)}
                     telemetry={telemetry}
+                    onTierChange={setSheetTier}
                 />
             ) : null}
 
