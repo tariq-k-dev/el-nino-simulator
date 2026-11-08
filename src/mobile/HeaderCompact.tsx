@@ -281,7 +281,10 @@ export function HeaderCompact({
             {/* ------------------------------------------------------------------ row 1: controls */}
             <div
                 className={[
-                    "pointer-events-auto flex shrink-0 items-center gap-1.5",
+                    "flex shrink-0 items-center gap-1.5 transition-opacity duration-200",
+                    hideChip
+                        ? "pointer-events-none opacity-0"
+                        : "pointer-events-auto opacity-100",
                     landscape ? "flex-none [&_button_span]:hidden" : "",
                 ].join(" ")}
                 style={
