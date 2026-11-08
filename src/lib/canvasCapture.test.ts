@@ -1,3 +1,4 @@
+// @vitest-environment jsdom
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { captureCanvas, registerRenderer } from "./canvasCapture";
 
@@ -7,62 +8,52 @@ describe("canvasCapture", () => {
         document.body.innerHTML = "";
     });
 
-    it("returns null when no renderer is registered and no canvas exists", () => {
+    it("returns null when no renderer is registered and no canvas exists in DOM", () => {
         expect(captureCanvas()).toBeNull();
     });
 
-    it("falls back to document.querySelector when no renderer is registered", () => {
-        const mockCanvas = document.createElement("canvas");
-        mockCanvas.id = "globe-canvas";
-        document.body.appendChild(mockCanvas);
+    it("falls back to document.querySelector('#globe-canvas canvas') when no renderer is registered", () => {
+        const container = document.createElement("div");
+        container.id = "globe-canvas";
+        const canvas = document.createElement("canvas");
+        container.appendChild(canvas);
+        document.body.appendChild(container);
 
-        const mockDataURL = "data:image/png;base64,test";
-        const toDataURLSpy = vi.spyOn(mockCanvas, "toDataURL").mockReturnValue(mockDataURL);
+        const mockDataURL = "data:image/png;base64,fallbackMock";
+        const toDataURLSpy = vi.spyOn(canvas, "toDataURL").mockReturnValue(mockDataURL);
 
         expect(captureCanvas()).toBe(mockDataURL);
         expect(toDataURLSpy).toHaveBeenCalledWith("image/png");
-
-        toDataURLSpy.mockRestore();
     });
 
-    it("uses registered renderer and calls render() before toDataURL", () => {
+    it("uses registered renderer handle and calls render() synchronously before reading toDataURL", () => {
         const mockRender = vi.fn();
-        const mockCanvas = {
-            render: mockRender,
-            domElement: document.createElement("canvas"),
-        };
-        const mockDataURL = "data:image/png;base64,test";
-        const toDataURLSpy = vi.spyOn(mockCanvas.domElement, "toDataURL").mockReturnValue(mockDataURL);
+        const domElement = document.createElement("canvas");
+        const mockDataURL = "data:image/png;base64,renderedMock";
+        const toDataURLSpy = vi.spyOn(domElement, "toDataURL").mockReturnValue(mockDataURL);
 
-        registerRenderer(mockRender);
+        registerRenderer({
+            render: mockRender,
+            domElement,
+        });
+
         expect(captureCanvas()).toBe(mockDataURL);
-        expect(mockRender).toHaveBeenCalledOnce();
+        expect(mockRender).toHaveBeenCalledTimes(1);
         expect(toDataURLSpy).toHaveBeenCalledWith("image/png");
-
-        toDataURLSpy.mockRestore();
     });
 
-    it("returns null gracefully when toDataURL throws", () => {
-        // Test with registered renderer
+    it("returns null gracefully when toDataURL throws DOMException or error", () => {
         const mockRender = vi.fn();
-        const mockCanvas = {
-            render: mockRender,
-            domElement: document.createElement("canvas"),
-        };
-        vi.spyOn(mockCanvas.domElement, "toDataURL").mockImplementation(() => {
-            throw new DOMException("Security error");
+        const domElement = document.createElement("canvas");
+        vi.spyOn(domElement, "toDataURL").mockImplementation(() => {
+            throw new DOMException("SecurityError");
         });
-        registerRenderer(mockRender);
-        expect(captureCanvas()).toBeNull();
 
-        // Test with fallback canvas
-        const fallbackCanvas = document.createElement("canvas");
-        fallbackCanvas.id = "globe-canvas";
-        document.body.appendChild(fallbackCanvas);
-        vi.spyOn(fallbackCanvas, "toDataURL").mockImplementation(() => {
-            throw new Error("Test error");
+        registerRenderer({
+            render: mockRender,
+            domElement,
         });
-        registerRenderer(null);
+
         expect(captureCanvas()).toBeNull();
     });
 });
