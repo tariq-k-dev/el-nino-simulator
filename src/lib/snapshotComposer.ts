@@ -144,13 +144,19 @@ function drawDomLabels(
         sh = source.width / outAspect;
         sy = (source.height - sh) / 2;
     }
-    const scaleX = OUT_W / sw;
-    const scaleY = OUT_H / sh;
+    const scaleX = OUT_W / source.width;
+    const scaleY = OUT_H / source.height;
 
-    const toOut = (rect: DOMRect) => ({
-        x: (rect.left - canvasRect.left - sx) * scaleX + rect.width * scaleX / 2,
-        y: (rect.top - canvasRect.top - sy) * scaleY + rect.height * scaleY / 2,
-    });
+    const toOut = (rect: DOMRect) => {
+        const u =
+            (rect.left + rect.width / 2 - canvasRect.left) / canvasRect.width;
+        const v =
+            (rect.top + rect.height / 2 - canvasRect.top) / canvasRect.height;
+        return {
+            x: u * OUT_W,
+            y: v * OUT_H,
+        };
+    };
 
     const onCanvas = (rect: DOMRect) =>
         rect.right >= canvasRect.left &&
