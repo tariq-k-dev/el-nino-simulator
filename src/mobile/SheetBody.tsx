@@ -114,7 +114,14 @@ export function SheetBody({
                     No impact zone selected. Tap a pin or pick a region below.
                     The global signal is{" "}
                     <span style={{ color: accent }}>{ensoLabel(category)}</span>{" "}
-                    at {fixed(scenarioSst, 2)} °C.
+                    at{" "}
+                    {fixed(
+                        units === "imperial"
+                            ? scenarioSst * 1.8
+                            : scenarioSst,
+                        2,
+                    )}{" "}
+                    {units === "imperial" ? "°F" : "°C"}.
                 </p>
             ) : null}
 
@@ -125,7 +132,13 @@ export function SheetBody({
                         <span className="mb-1 flex items-center justify-between font-mono text-[9px] uppercase tracking-[0.14em] text-slate-500">
                             <span>Global SST anomaly</span>
                             <span className="text-slate-300">
-                                {fixed(scenarioSst, 2)} °C
+                                {fixed(
+                                    units === "imperial"
+                                        ? scenarioSst * 1.8
+                                        : scenarioSst,
+                                    2,
+                                )}{" "}
+                                {units === "imperial" ? "°F" : "°C"}
                             </span>
                         </span>
                         <input
@@ -339,7 +352,7 @@ function FullSections({
     );
 
     return (
-        <div className="space-y-3">
+        <div className="space-y-3 pb-8">
             {region ? (
                 <div className="rounded-xl border border-white/[0.06] bg-white/[0.018] p-3">
                     <p className="text-[10.5px] leading-relaxed text-slate-400">
@@ -504,6 +517,40 @@ function FullSections({
                     Clear selection
                 </button>
             ) : null}
+
+            {/* Attribution card. */}
+            <div className="mt-4 rounded-xl border border-white/[0.08] bg-black/40 p-3.5 text-center font-mono">
+                <p className="font-semibold text-slate-100">© 2026 Tariq Khan</p>
+                <p className="text-[9px] text-slate-400">
+                    React Three Fiber · DuckDB-WASM · Cloudflare Pages
+                </p>
+                <div className="mt-2 flex justify-center gap-4 text-[11px]">
+                    <a
+                        href="https://tariqkhan.dev"
+                        className="min-h-[44px] text-cyan-400 underline underline-offset-4"
+                        target="_blank"
+                        rel="noopener noreferrer"
+                    >
+                        Portfolio
+                    </a>
+                    <a
+                        href="https://github.com/tariq-k-dev/el-nino-simulator"
+                        className="min-h-[44px] text-cyan-400 underline underline-offset-4"
+                        target="_blank"
+                        rel="noopener noreferrer"
+                    >
+                        GitHub
+                    </a>
+                    <a
+                        href="https://www.linkedin.com/in/tariqakhan"
+                        className="min-h-[44px] text-cyan-400 underline underline-offset-4"
+                        target="_blank"
+                        rel="noopener noreferrer"
+                    >
+                        LinkedIn
+                    </a>
+                </div>
+            </div>
         </div>
     );
 }

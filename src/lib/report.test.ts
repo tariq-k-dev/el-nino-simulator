@@ -55,6 +55,7 @@ describe("buildReportHtml", () => {
         analytics,
         activeRegion: "us-west",
         snapshot: null,
+        units: "metric",
     });
 
     it("is a complete HTML document", () => {
@@ -94,6 +95,7 @@ describe("buildReportHtml", () => {
             analytics,
             activeRegion: null,
             snapshot: "data:image/png;base64,AAAA",
+            units: "metric",
         });
         expect(withShot).toContain(
             '<img class="shot" src="data:image/png;base64,AAAA"',

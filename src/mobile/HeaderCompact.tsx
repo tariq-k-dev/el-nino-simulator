@@ -33,7 +33,7 @@
 
 import { useCallback, useEffect, useId, useRef, useState } from "react";
 import type { CSSProperties } from "react";
-import { Download, Gauge, Globe2 } from "lucide-react";
+import { Download, FileText, Gauge, Globe2 } from "lucide-react";
 import type { UnitSystem } from "@/types/enso";
 import { REGIONS } from "@/lib/regions";
 import { SST_MAX, SST_MIN, thermalColor } from "@/lib/model";
@@ -67,11 +67,16 @@ interface HeaderCompactProps {
     anomalyC: number;
     units: UnitSystem;
     onToggleUnits: () => void;
-    onExport: () => void;
+    /** Download the composed 1920×1080 PNG snapshot. */
+    onExportPng: () => void;
+    /** Open the HTML diagnostic report in a new tab. */
+    onExportReport: () => void;
     exporting: boolean;
     /** The drawer X / Escape path, driven by the Reset control. */
     onClearSelection: () => void;
     onSstChange: (value: number) => void;
+    /** Hide the ENSO chip (portrait, sheet at full). Fades out rather than unmounting. */
+    hideChip?: boolean;
 }
 
 /**
@@ -89,10 +94,12 @@ export function HeaderCompact({
     anomalyC,
     units,
     onToggleUnits,
-    onExport,
+    onExportPng,
+    onExportReport,
     exporting,
     onClearSelection,
     onSstChange,
+    hideChip = false,
 }: HeaderCompactProps) {
     const headerRef = useRef<HTMLElement>(null);
     const landscape = mode === "phoneLandscape";
@@ -250,7 +257,8 @@ export function HeaderCompact({
                  * `position: absolute`, so widening the button cannot move it.
                  */
                 className={[
-                    "pointer-events-auto",
+                    "pointer-events-auto transition-opacity duration-200",
+                    hideChip ? "pointer-events-none opacity-0" : "opacity-100",
                     landscape
                         ? "flex-none [&>div]:w-full [&_button]:w-full"
                         : "order-last w-full",
@@ -277,7 +285,10 @@ export function HeaderCompact({
             {/* ------------------------------------------------------------------ row 1: controls */}
             <div
                 className={[
-                    "pointer-events-auto flex shrink-0 items-center gap-1.5",
+                    "flex shrink-0 items-center gap-1.5 transition-opacity duration-200",
+                    hideChip
+                        ? "pointer-events-none opacity-0"
+                        : "pointer-events-auto opacity-100",
                     landscape ? "flex-none [&_button_span]:hidden" : "",
                 ].join(" ")}
                 style={
@@ -293,7 +304,11 @@ export function HeaderCompact({
                         <button
                             key={system}
                             type="button"
-                            onClick={onToggleUnits}
+                            onClick={() => {
+                                /* Idempotent: clicking the already-active unit is a no-op. */
+                                if (units === system) return;
+                                onToggleUnits();
+                            }}
                             className={[
                                 "h-11 min-w-[44px] rounded-full px-2 font-mono text-[9px] uppercase tracking-[0.12em] transition-all duration-200",
                                 units === system
@@ -314,9 +329,9 @@ export function HeaderCompact({
 
                 <button
                     type="button"
-                    onClick={onExport}
+                    onClick={onExportPng}
                     disabled={exporting}
-                    aria-label="Snapshot"
+                    aria-label="Snapshot PNG"
                     className={`${TOUCH} gap-1.5 border border-sky-300/25 bg-sky-400/10 px-3 text-[10px] font-medium uppercase tracking-[0.12em] text-sky-100 backdrop-blur-md disabled:opacity-50`}
                 >
                     {exporting ? (
@@ -325,8 +340,19 @@ export function HeaderCompact({
                         <Download size={12} />
                     )}
                     <span className="sr-only sm:not-sr-only">
-                        {exporting ? "Rendering…" : "Snapshot"}
+                        {exporting ? "Rendering…" : "PNG"}
                     </span>
+                </button>
+
+                <button
+                    type="button"
+                    onClick={exporting ? undefined : onExportReport}
+                    disabled={exporting}
+                    aria-label="Open report"
+                    className="flex min-h-[44px] min-w-[44px] items-center justify-center gap-1.5 rounded-full border border-sky-300/25 bg-sky-400/10 px-3 text-[10px] font-medium uppercase tracking-[0.12em] text-sky-100 backdrop-blur-md disabled:opacity-50"
+                >
+                    <FileText size={12} />
+                    <span className="sr-only sm:not-sr-only">Report</span>
                 </button>
 
                 {/*
@@ -459,7 +485,7 @@ function EnsoChip({
                     data-testid="enso-chip-text"
                     className="whitespace-nowrap font-mono text-[9px] uppercase tracking-[0.08em] text-slate-200"
                 >
-                    {formatIsland(anomalyC)}
+                    {formatIsland(anomalyC, units)}
                 </span>
             </button>
 
