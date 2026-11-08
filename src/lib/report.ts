@@ -161,13 +161,18 @@ export function buildReportHtml({
     font-size: 14px; font-weight: 600; color: #334155;
     display: flex; justify-content: space-between; }
   .no-print { margin-bottom: 18px; }
+  .btn-group { display: flex; gap: 8px; margin-bottom: 18px; }
   .btn { font: inherit; font-size: 11px; padding: 7px 16px; border-radius: 6px;
     border: 1px solid #10151f; background: #10151f; color: #fff; cursor: pointer; }
-  @media print { .no-print { display: none; } body { padding: 0; } }
+  .btn-outline { background: transparent; color: #10151f; }
+  @media print { .no-print, .btn-group { display: none; } body { padding: 0; } }
 </style>
 </head>
 <body>
-  <div class="no-print"><button class="btn" onclick="window.print()">Print / Save as PDF</button></div>
+  <div class="btn-group no-print">
+    <button class="btn" onclick="window.print()">Print / Save as PDF</button>
+    <button class="btn btn-outline" onclick="downloadReport()">Download HTML Report</button>
+  </div>
 
   <header>
     <div>
@@ -235,6 +240,20 @@ export function buildReportHtml({
     <span>Super El Niño Global Impact Simulator · tariqkhan.dev</span>
     <span>Query ${fixed(analytics.queryMs, 1)} ms · model output, not a weather forecast</span>
   </footer>
+  <script>
+    function downloadReport() {
+      const html = document.documentElement.outerHTML;
+      const blob = new Blob([html], { type: 'text/html;charset=utf-8' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = document.title + '.html';
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      URL.revokeObjectURL(url);
+    }
+  </script>
 </body>
 </html>`;
 }

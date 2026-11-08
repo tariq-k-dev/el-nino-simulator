@@ -258,7 +258,8 @@ export async function composeSnapshot({
     //     so the right column is never empty.
     const rightX = OUT_W - 720 - CARD_PADDING;
     if (region && regionMetrics) {
-        drawCard(ctx, rightX, CARD_PADDING, 720, 260);
+        const isUsWest = region.id === "us-west";
+        drawCard(ctx, rightX, CARD_PADDING, 720, isUsWest ? 320 : 260);
         ctx.fillStyle = TEXT_PRIMARY;
         ctx.font =
             "600 28px ui-sans-serif, -apple-system, 'Segoe UI', sans-serif";
@@ -271,6 +272,26 @@ export async function composeSnapshot({
             rightX + 24,
             CARD_PADDING + 92,
         );
+
+        // Atmospheric river badge — US West only. The precip change is the
+        // moisture-flux proxy the model already computes for this region, so
+        // the badge is a labelled view of an existing number, not a new term.
+        if (isUsWest) {
+            ctx.beginPath();
+            ctx.roundRect(rightX + 24, CARD_PADDING + 112, 360, 40, 20);
+            ctx.fillStyle = "rgba(10, 16, 26, 0.85)";
+            ctx.fill();
+            ctx.strokeStyle = "rgba(96, 165, 250, 0.4)";
+            ctx.lineWidth = 1;
+            ctx.stroke();
+            ctx.fillStyle = "#93c5fd";
+            ctx.font = "600 16px ui-monospace, 'JetBrains Mono', monospace";
+            ctx.fillText(
+                `ATMOSPHERIC RIVER: ${regionMetrics.precipChange >= 0 ? "+" : ""}${fixed(regionMetrics.precipChange, 0)}% FLUX`,
+                rightX + 44,
+                CARD_PADDING + 139,
+            );
+        }
 
         const tempValue =
             units === "imperial"
@@ -296,9 +317,10 @@ export async function composeSnapshot({
                 value: regionMetrics.signalTier,
             },
         ];
+        const rowsTop = CARD_PADDING + (isUsWest ? 200 : 140);
         regionCols.forEach((col, i) => {
             const colX = rightX + 24 + (i % 2) * 360;
-            const rowY = CARD_PADDING + 140 + Math.floor(i / 2) * 60;
+            const rowY = rowsTop + Math.floor(i / 2) * 60;
             drawLabel(ctx, col.label, colX, rowY);
             ctx.fillStyle = TEXT_PRIMARY;
             ctx.font =
