@@ -108,25 +108,16 @@ function drawValue(
 }
 
 /**
- * Compose the snapshot and return it as a PNG blob.
+ * Draw the composed snapshot onto a caller-supplied 2D context.
  *
- * Rejects if the 2D context cannot be created (extremely rare; a browser with
- * WebGL but no 2D canvas is not a real configuration).
+ * Shared by `composeSnapshot` (Blob) and `composeSnapshotToDataUrl` (string) so
+ * the two outputs cannot drift: the PNG download and the HTML report's inline
+ * image are the same pixels by construction, not by convention.
  */
-export async function composeSnapshot({
-    source,
-    metrics,
-    region,
-    telemetry,
-    units,
-    regionMetrics,
-}: SnapshotInput): Promise<Blob> {
-    const canvas = document.createElement("canvas");
-    canvas.width = OUT_W;
-    canvas.height = OUT_H;
-    const ctx = canvas.getContext("2d");
-    if (!ctx) throw new Error("snapshot: 2D context unavailable");
-
+function composeSnapshotToCanvas(
+    ctx: CanvasRenderingContext2D,
+    { source, metrics, region, telemetry, units, regionMetrics }: SnapshotInput,
+): void {
     // 1. Background: the live frame, scaled to fill. `cover` semantics — the
     //    source is viewport-shaped, the output is 16:9, so crop rather than
     //    letterbox. A letterboxed globe with black bars reads as a bug.
