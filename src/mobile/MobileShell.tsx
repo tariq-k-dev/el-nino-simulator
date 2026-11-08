@@ -32,6 +32,7 @@ import type {
     RegionId,
     ScenarioMetrics,
     ScenarioState,
+    TelemetryBundle,
     UnitSystem,
 } from "@/types/enso";
 import { HeaderCompact } from "@/mobile/HeaderCompact";
@@ -76,6 +77,8 @@ interface MobileShellProps {
     activeNinoBox: string | null;
     /** The "Show on globe" trigger, forwarded to the cards inside the sheet. */
     onShowOnGlobe: (boxId: string) => void;
+    /** Live telemetry, forwarded to the sheet and dock bodies. */
+    telemetry?: TelemetryBundle | null;
 }
 
 export function MobileShell({
@@ -96,6 +99,7 @@ export function MobileShell({
     onScenarioChange,
     activeNinoBox,
     onShowOnGlobe,
+    telemetry,
 }: MobileShellProps) {
     const sheetRef = useRef<SnapSheetHandle>(null);
 
@@ -249,6 +253,7 @@ export function MobileShell({
                         onScenarioChange({ sstAnomaly: value })
                     }
                     onChangeScenario={(patch) => onScenarioChange(patch)}
+                    telemetry={telemetry}
                 />
             ) : null}
 
@@ -270,6 +275,7 @@ export function MobileShell({
                         onScenarioChange({ sstAnomaly: value })
                     }
                     onChangeScenario={(patch) => onScenarioChange(patch)}
+                    telemetry={telemetry}
                 />
             ) : null}
         </>

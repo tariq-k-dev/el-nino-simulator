@@ -440,6 +440,7 @@ export default function App() {
                     onExport={handleExport}
                     activeNinoBox={activeNinoBox}
                     onShowOnGlobe={showNinoOnGlobe}
+                    telemetry={telemetry}
                 />
             ) : null}
 
