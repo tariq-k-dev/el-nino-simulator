@@ -43,9 +43,13 @@
  * `docs/NINO-UI-RECON.md` A4.)
  */
 
-import { fixed, signed } from '@/lib/format';
-import { celsiusDeltaToFahrenheit } from '@/lib/regions';
-import { pickRelation, projectAnomaly, type NinoRelationRegion } from '@/lib/ninoRelation';
+import { fixed, signed } from "@/lib/format";
+import { celsiusDeltaToFahrenheit } from "@/lib/regions";
+import {
+    pickRelation,
+    projectAnomaly,
+    type NinoRelationRegion,
+} from "@/lib/ninoRelation";
 
 /**
  * The r² below which a relation is reported as WEAK.
@@ -59,45 +63,45 @@ export const WEAK_R2 = 0.3;
 
 /** Display label per region. Display only — never a URL slug or a DOM id. */
 const REGION_LABELS: Record<NinoRelationRegion, string> = {
-  nino12: 'NIÑO 1+2',
-  nino4: 'NIÑO 4',
+    nino12: "NIÑO 1+2",
+    nino4: "NIÑO 4",
 };
 
 /** Unit system the caller wants the numbers rendered in. */
-export type NinoCardUnit = 'C' | 'F';
+export type NinoCardUnit = "C" | "F";
 
 /** Everything a card renders. All numbers are in `unit`; the text fields are ready to print. */
 export interface NinoCardModel {
-  regionId: NinoRelationRegion;
-  /** Human label for the region, e.g. `NIÑO 1+2`. Display only. */
-  regionLabel: string;
-  /** Fitted anomaly, in the requested unit. */
-  value: number;
-  /** Lower edge of the ±1 residual-SD band. */
-  lo: number;
-  /** Upper edge of the ±1 residual-SD band. */
-  hi: number;
-  /** `+1.5` / `-0.3` / `0.0` — one decimal, explicit plus, no unit. */
-  valueText: string;
-  /** `-0.7 to +1.3` — both ends signed, one decimal, no unit. */
-  rangeText: string;
-  /** `°C` or `°F`. */
-  unitText: string;
-  /** True when the slider position lies outside the warm sample's x range. */
-  extrapolated: boolean;
-  /** True when the relation's r² is below `WEAK_R2`. */
-  weak: boolean;
-  /** `EMPIRICAL · R2 0.29 · N 181` — the fit's provenance, for the card corner. */
-  badgeText: string;
-  /** The extrapolation warning, or `''` when the position is inside the fitted range. */
-  noteText: string;
-  /** One sentence: historical co-variation, not a forecast. Never empty. */
-  captionText: string;
+    regionId: NinoRelationRegion;
+    /** Human label for the region, e.g. `NIÑO 1+2`. Display only. */
+    regionLabel: string;
+    /** Fitted anomaly, in the requested unit. */
+    value: number;
+    /** Lower edge of the ±1 residual-SD band. */
+    lo: number;
+    /** Upper edge of the ±1 residual-SD band. */
+    hi: number;
+    /** `+1.5` / `-0.3` / `0.0` — one decimal, explicit plus, no unit. */
+    valueText: string;
+    /** `-0.7 to +1.3` — both ends signed, one decimal, no unit. */
+    rangeText: string;
+    /** `°C` or `°F`. */
+    unitText: string;
+    /** True when the slider position lies outside the warm sample's x range. */
+    extrapolated: boolean;
+    /** True when the relation's r² is below `WEAK_R2`. */
+    weak: boolean;
+    /** `EMPIRICAL · R2 0.29 · N 181` — the fit's provenance, for the card corner. */
+    badgeText: string;
+    /** The extrapolation warning, or `''` when the position is inside the fitted range. */
+    noteText: string;
+    /** One sentence: historical co-variation, not a forecast. Never empty. */
+    captionText: string;
 }
 
 /** Convert an anomaly delta from °C to the requested unit. Never adds 32. */
 function toUnit(celsiusDelta: number, unit: NinoCardUnit): number {
-  return unit === 'F' ? celsiusDeltaToFahrenheit(celsiusDelta) : celsiusDelta;
+    return unit === "F" ? celsiusDeltaToFahrenheit(celsiusDelta) : celsiusDelta;
 }
 
 /**
@@ -113,57 +117,57 @@ function toUnit(celsiusDelta: number, unit: NinoCardUnit): number {
  * full of `NaN`.
  */
 export function ninoCardModel(
-  regionId: NinoRelationRegion,
-  nino34Anomaly: number,
-  unit: NinoCardUnit,
+    regionId: NinoRelationRegion,
+    nino34Anomaly: number,
+    unit: NinoCardUnit,
 ): NinoCardModel {
-  const relation = pickRelation(regionId);
-  const projection = projectAnomaly(relation, nino34Anomaly);
+    const relation = pickRelation(regionId);
+    const projection = projectAnomaly(relation, nino34Anomaly);
 
-  const value = toUnit(projection.value, unit);
-  const lo = toUnit(projection.lo, unit);
-  const hi = toUnit(projection.hi, unit);
+    const value = toUnit(projection.value, unit);
+    const lo = toUnit(projection.lo, unit);
+    const hi = toUnit(projection.hi, unit);
 
-  const extrapolated = projection.extrapolated;
-  const weak = relation.r2 < WEAK_R2;
+    const extrapolated = projection.extrapolated;
+    const weak = relation.r2 < WEAK_R2;
 
-  /*
-   * The band is SIGNED on both ends, not absolute.
-   *
-   * A range like "0.7 to 1.3" would be prettier, but at the slider's low end the band
-   * genuinely straddles zero (Niño 1+2 at 0.5 °C is -0.66 to +1.31), and an unsigned
-   * pair there would read as "0.7 to 1.3" — a band entirely on the wrong side of zero.
-   * Correctness over tidiness.
-   */
-  const rangeText = `${signed(lo, 1)} to ${signed(hi, 1)}`;
+    /*
+     * The band is SIGNED on both ends, not absolute.
+     *
+     * A range like "0.7 to 1.3" would be prettier, but at the slider's low end the band
+     * genuinely straddles zero (Niño 1+2 at 0.5 °C is -0.66 to +1.31), and an unsigned
+     * pair there would read as "0.7 to 1.3" — a band entirely on the wrong side of zero.
+     * Correctness over tidiness.
+     */
+    const rangeText = `${signed(lo, 1)} to ${signed(hi, 1)}`;
 
-  const badgeText = `EMPIRICAL · R2 ${fixed(relation.r2, 2)} · N ${relation.n}`;
+    const badgeText = `EMPIRICAL · R2 ${fixed(relation.r2, 2)} · N ${relation.n}`;
 
-  const noteText = extrapolated
-    ? `Beyond the observed range: the warmest Niño 3.4 anomaly in this fit is ${fixed(
-        relation.xMax,
-        2,
-      )} °C, so a value at ${fixed(nino34Anomaly, 2)} °C is an extrapolation.`
-    : '';
+    const noteText = extrapolated
+        ? `Beyond the observed range: the warmest Niño 3.4 anomaly in this fit is ${fixed(
+              relation.xMax,
+              2,
+          )} °C, so a value at ${fixed(nino34Anomaly, 2)} °C is an extrapolation.`
+        : "";
 
-  const captionText =
-    `Typical historical response of the ${REGION_LABELS[regionId]} index to a ` +
-    `Niño 3.4 anomaly of ${fixed(nino34Anomaly, 1)} °C — a correlation from the ` +
-    `observed record, not a forecast.`;
+    const captionText =
+        `Typical historical response of the ${REGION_LABELS[regionId]} index to a ` +
+        `Niño 3.4 anomaly of ${fixed(nino34Anomaly, 1)} °C — a correlation from the ` +
+        `observed record, not a forecast.`;
 
-  return {
-    regionId,
-    regionLabel: REGION_LABELS[regionId],
-    value,
-    lo,
-    hi,
-    valueText: signed(value, 1),
-    rangeText,
-    unitText: unit === 'F' ? '°F' : '°C',
-    extrapolated,
-    weak,
-    badgeText,
-    noteText,
-    captionText,
-  };
+    return {
+        regionId,
+        regionLabel: REGION_LABELS[regionId],
+        value,
+        lo,
+        hi,
+        valueText: signed(value, 1),
+        rangeText,
+        unitText: unit === "F" ? "°F" : "°C",
+        extrapolated,
+        weak,
+        badgeText,
+        noteText,
+        captionText,
+    };
 }

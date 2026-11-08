@@ -31,10 +31,10 @@
  */
 
 /** The exact value that turns the Niño cards on. Anything else is off. */
-export const NINO_FLAG_VALUE = '1';
+export const NINO_FLAG_VALUE = "1";
 
 /** The query key. Deliberately not added to any `URLSearchParams` writer, because there is none. */
-export const NINO_FLAG_KEY = 'nino';
+export const NINO_FLAG_KEY = "nino";
 
 /**
  * True only when the query string carries `nino=1` exactly.
@@ -43,5 +43,5 @@ export const NINO_FLAG_KEY = 'nino';
  * optional because `URLSearchParams` strips it.
  */
 export function isNinoUiEnabled(search: string): boolean {
-  return new URLSearchParams(search).get(NINO_FLAG_KEY) === NINO_FLAG_VALUE;
+    return new URLSearchParams(search).get(NINO_FLAG_KEY) === NINO_FLAG_VALUE;
 }

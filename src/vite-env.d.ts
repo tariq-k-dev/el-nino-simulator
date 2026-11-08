@@ -7,10 +7,10 @@
  * constants rather than runtime lookups.
  */
 declare const __DUCKDB_DECODED_BYTES__: {
-  /** Decoded size of duckdb-eh.wasm in bytes. */
-  eh: number;
-  /** Decoded size of duckdb-mvp.wasm in bytes. */
-  mvp: number;
+    /** Decoded size of duckdb-eh.wasm in bytes. */
+    eh: number;
+    /** Decoded size of duckdb-mvp.wasm in bytes. */
+    mvp: number;
 };
 
 /** Version of @duckdb/duckdb-wasm that produced the sizes above. */
@@ -24,9 +24,9 @@ declare const __DUCKDB_VERSION__: string;
  * Rollup's dead-code elimination removes it from a production build.
  */
 interface ImportMetaEnv {
-  readonly VITE_E2E?: string;
+    readonly VITE_E2E?: string;
 }
 
 interface ImportMeta {
-  readonly env: ImportMetaEnv;
+    readonly env: ImportMetaEnv;
 }

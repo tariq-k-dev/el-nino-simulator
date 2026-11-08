@@ -28,23 +28,23 @@
  * The parquet deliberately lives outside public/ so it can never be served.
  */
 
-import * as duckdb from "@duckdb/duckdb-wasm"
+import * as duckdb from "@duckdb/duckdb-wasm";
 import type {
-  AnalogMonth,
-  AnalyticsPayload,
-  HistoricalSummary,
-  ScenarioMetrics,
-  TimelinePoint,
-} from "@/types/enso"
-import { computeMetrics } from "@/lib/model"
-import { engineStore } from "@/lib/engine/store"
-import { getDecodedBytes, type BundleKind } from "@/lib/engine/manifest"
-import { BootTimeoutError, createWatchdog } from "@/lib/engine/watchdog"
-import { acquireWorker, WorkerLoadError } from "@/lib/engine/workerBoot"
-import { TelemetryBundle } from "@/types/enso"
+    AnalogMonth,
+    AnalyticsPayload,
+    HistoricalSummary,
+    ScenarioMetrics,
+    TimelinePoint,
+} from "@/types/enso";
+import { computeMetrics } from "@/lib/model";
+import { engineStore } from "@/lib/engine/store";
+import { getDecodedBytes, type BundleKind } from "@/lib/engine/manifest";
+import { BootTimeoutError, createWatchdog } from "@/lib/engine/watchdog";
+import { acquireWorker, WorkerLoadError } from "@/lib/engine/workerBoot";
+import { TelemetryBundle } from "@/types/enso";
 
 /** 'auto' applies the projected cap and early abort; 'user' only connect + stall. */
-export type BootMode = "auto" | "user"
+export type BootMode = "auto" | "user";
 
 /**
  * The dataset text, or a PROMISE of it.
@@ -55,25 +55,25 @@ export type BootMode = "auto" | "user"
  * resolved — by then the CSV has almost always already landed, so the await costs
  * nothing, and on a slow link the two transfers run concurrently.
  */
-export type DatasetTextInput = string | null | Promise<string | null>
+export type DatasetTextInput = string | null | Promise<string | null>;
 
 /** Resolve a DatasetTextInput. Never throws: a failed dataset yields null. */
 async function resolveDatasetText(
-  input: DatasetTextInput,
+    input: DatasetTextInput,
 ): Promise<string | null> {
-  try {
-    return await input
-  } catch {
-    return null
-  }
+    try {
+        return await input;
+    } catch {
+        return null;
+    }
 }
 
 /**
  * Derived CSV, emitted by scripts/generate_enso_data.py.
  * Loaded with read_csv() so no DuckDB extension is required at runtime.
  */
-const DATA_URL = "/data/enso.csv"
-const DATA_FILE = "enso.csv"
+const DATA_URL = "/data/enso.csv";
+const DATA_FILE = "enso.csv";
 
 /**
  * Explicit column types for read_csv.
@@ -114,7 +114,7 @@ const CSV_COLUMNS = `{
     'risk_tier_pacific': 'VARCHAR',
     'source': 'VARCHAR',
     'model_basis': 'VARCHAR'
-  }`
+  }`;
 
 /**
  * WASM from a CDN, workers from this origin.
@@ -131,16 +131,16 @@ const CSV_COLUMNS = `{
  * Pinned to the exact installed package version so a CDN release can never
  * silently change behaviour underneath the app.
  */
-const DUCKDB_VERSION = duckdb.PACKAGE_VERSION
+const DUCKDB_VERSION = duckdb.PACKAGE_VERSION;
 
 /** jsDelivr and unpkg both expose the identical `dist/` layout for this package. */
-const WASM_BASE_JSDELIVR = `https://cdn.jsdelivr.net/npm/@duckdb/duckdb-wasm@${DUCKDB_VERSION}/dist`
-const WASM_BASE_UNPKG = `https://unpkg.com/@duckdb/duckdb-wasm@${DUCKDB_VERSION}/dist`
+const WASM_BASE_JSDELIVR = `https://cdn.jsdelivr.net/npm/@duckdb/duckdb-wasm@${DUCKDB_VERSION}/dist`;
+const WASM_BASE_UNPKG = `https://unpkg.com/@duckdb/duckdb-wasm@${DUCKDB_VERSION}/dist`;
 
 /** Optional self-hosted override, e.g. VITE_DUCKDB_WASM_BASE=https://r2.example.com/duckdb */
 const WASM_BASE_OVERRIDE = (
-  import.meta.env as Record<string, string | undefined>
-).VITE_DUCKDB_WASM_BASE?.trim().replace(/\/+$/, "")
+    import.meta.env as Record<string, string | undefined>
+).VITE_DUCKDB_WASM_BASE?.trim().replace(/\/+$/, "");
 
 /**
  * Hosts tried in order. The env override goes first so a deploy can point at
@@ -148,21 +148,21 @@ const WASM_BASE_OVERRIDE = (
  * fallback if jsDelivr is blocked or down.
  */
 export const WASM_BASES: readonly string[] = [
-  ...(WASM_BASE_OVERRIDE ? [WASM_BASE_OVERRIDE] : []),
-  WASM_BASE_JSDELIVR,
-  WASM_BASE_UNPKG,
-]
+    ...(WASM_BASE_OVERRIDE ? [WASM_BASE_OVERRIDE] : []),
+    WASM_BASE_JSDELIVR,
+    WASM_BASE_UNPKG,
+];
 
 /** Short label for the HUD, e.g. "jsdelivr". */
 export function hostLabel(base: string): string {
-  if (base === WASM_BASE_OVERRIDE) return new URL(base).host
-  if (base.includes("jsdelivr")) return "jsdelivr"
-  if (base.includes("unpkg")) return "unpkg"
-  try {
-    return new URL(base).host
-  } catch {
-    return base
-  }
+    if (base === WASM_BASE_OVERRIDE) return new URL(base).host;
+    if (base.includes("jsdelivr")) return "jsdelivr";
+    if (base.includes("unpkg")) return "unpkg";
+    try {
+        return new URL(base).host;
+    } catch {
+        return base;
+    }
 }
 
 /**
@@ -172,23 +172,23 @@ export function hostLabel(base: string): string {
  * deploy does not set, so `selectBundle()` would never choose it.
  */
 export function bundlesFor(wasmBase: string): duckdb.DuckDBBundles {
-  return {
-    mvp: {
-      mainModule: `${wasmBase}/duckdb-mvp.wasm`,
-      mainWorker: "/duckdb/duckdb-browser-mvp.worker.js",
-    },
-    eh: {
-      mainModule: `${wasmBase}/duckdb-eh.wasm`,
-      mainWorker: "/duckdb/duckdb-browser-eh.worker.js",
-    },
-  }
+    return {
+        mvp: {
+            mainModule: `${wasmBase}/duckdb-mvp.wasm`,
+            mainWorker: "/duckdb/duckdb-browser-mvp.worker.js",
+        },
+        eh: {
+            mainModule: `${wasmBase}/duckdb-eh.wasm`,
+            mainWorker: "/duckdb/duckdb-browser-eh.worker.js",
+        },
+    };
 }
 
 /** Which host actually served the wasm, for engineLabel. */
-let activeWasmHost: string | null = null
+let activeWasmHost: string | null = null;
 
 export function getActiveWasmHost(): string | null {
-  return activeWasmHost
+    return activeWasmHost;
 }
 
 /**
@@ -201,48 +201,51 @@ export function getActiveWasmHost(): string | null {
 
 /** How a single-host attempt failed, which determines whether to try the next host. */
 export type BootFailureKind =
-  /** Watchdog tripped: projected completion exceeds the auto cap. Do NOT try next host. */
-  | "cap"
-  /** Watchdog tripped: no first event (host unreachable/blocked). Try next host. */
-  | "connect"
-  /** Watchdog tripped: transfer died mid-flight. Try next host. */
-  | "stall"
-  /** The worker script itself never loaded/started. Try next host. */
-  | "worker-load"
-  /** Any other error from instantiate/registration. Try next host. */
-  | "error"
+    /** Watchdog tripped: projected completion exceeds the auto cap. Do NOT try next host. */
+    | "cap"
+    /** Watchdog tripped: no first event (host unreachable/blocked). Try next host. */
+    | "connect"
+    /** Watchdog tripped: transfer died mid-flight. Try next host. */
+    | "stall"
+    /** The worker script itself never loaded/started. Try next host. */
+    | "worker-load"
+    /** Any other error from instantiate/registration. Try next host. */
+    | "error";
 
 export class HostBootError extends Error {
-  constructor(
-    public readonly kind: BootFailureKind,
-    message: string,
-    options?: { cause?: unknown },
-  ) {
-    super(message, options)
-    this.name = "HostBootError"
-  }
+    constructor(
+        public readonly kind: BootFailureKind,
+        message: string,
+        options?: { cause?: unknown },
+    ) {
+        super(message, options);
+        this.name = "HostBootError";
+    }
 }
 
 /** Thrown by boot() when every host failed. */
 export class EngineUnreachableError extends Error {
-  constructor(
-    public readonly failures: Array<{ host: string; kind: BootFailureKind }>,
-  ) {
-    super(
-      `DuckDB could not boot from any host: ${failures.map((f) => `${f.host}(${f.kind})`).join(", ")}`,
-    )
-    this.name = "EngineUnreachableError"
-  }
+    constructor(
+        public readonly failures: Array<{
+            host: string;
+            kind: BootFailureKind;
+        }>,
+    ) {
+        super(
+            `DuckDB could not boot from any host: ${failures.map((f) => `${f.host}(${f.kind})`).join(", ")}`,
+        );
+        this.name = "EngineUnreachableError";
+    }
 }
 
 /** Thrown by boot() when the network is too slow (cap trip). Not a host problem. */
 export class EngineTooSlowError extends Error {
-  constructor(public readonly host: string) {
-    super(
-      `DuckDB boot aborted: connection too slow to finish within budget (${host})`,
-    )
-    this.name = "EngineTooSlowError"
-  }
+    constructor(public readonly host: string) {
+        super(
+            `DuckDB boot aborted: connection too slow to finish within budget (${host})`,
+        );
+        this.name = "EngineTooSlowError";
+    }
 }
 
 const SCENARIO_SQL = `
@@ -296,7 +299,7 @@ SELECT
       * (0.55 + agri * 0.45) * 100.0)),
     1)                         AS agriculture_exposure
 FROM base;
-`
+`;
 
 const ANALOG_SQL = `
 SELECT
@@ -321,7 +324,7 @@ FROM enso_historical
 -- return the same rows in a different order from identical data.
 ORDER BY delta ASC, date DESC
 LIMIT 6;
-`
+`;
 
 const SUMMARY_SQL = `
 SELECT
@@ -336,7 +339,7 @@ SELECT
   count(*) FILTER (WHERE nino_34_anomaly <= -0.5)       AS lanina_months,
   any_value(source)                                     AS source
 FROM enso_historical;
-`
+`;
 
 const TIMELINE_SQL = `
 SELECT
@@ -344,7 +347,7 @@ SELECT
   nino_34_anomaly          AS anomaly
 FROM enso_historical
 ORDER BY date ASC;
-`
+`;
 
 // One bind parameter, referenced through a CTE. duckdb-wasm's prepared-statement
 // binding is positional and brittle across repeated `?` in a single CASE, so the
@@ -360,25 +363,25 @@ SELECT CASE
   ELSE 'Extreme Mega-El Niño'
 END AS risk_tier
 FROM p;
-`
+`;
 
-type Row = Record<string, unknown>
+type Row = Record<string, unknown>;
 
 interface DuckDbClient {
-  conn: duckdb.AsyncDuckDBConnection
-  db: duckdb.AsyncDuckDB
-  version: string
-  /**
-   * Whether `enso_historical` exists.
-   *
-   * False when the dataset was unavailable at boot. The scenario and risk-tier
-   * queries still work (they never touch the table); summary/analogs/timeline
-   * throw, and callers fall back to the TS engine for those.
-   */
-  hasHistory: boolean
+    conn: duckdb.AsyncDuckDBConnection;
+    db: duckdb.AsyncDuckDB;
+    version: string;
+    /**
+     * Whether `enso_historical` exists.
+     *
+     * False when the dataset was unavailable at boot. The scenario and risk-tier
+     * queries still work (they never touch the table); summary/analogs/timeline
+     * throw, and callers fall back to the TS engine for those.
+     */
+    hasHistory: boolean;
 }
 
-let clientPromise: Promise<DuckDbClient> | null = null
+let clientPromise: Promise<DuckDbClient> | null = null;
 
 /**
  * Create the materialised history table.
@@ -392,21 +395,21 @@ let clientPromise: Promise<DuckDbClient> | null = null
  * would re-parse on every query.
  */
 async function createHistoryTable(
-  conn: duckdb.AsyncDuckDBConnection,
+    conn: duckdb.AsyncDuckDBConnection,
 ): Promise<boolean> {
-  try {
-    await conn.query(`
+    try {
+        await conn.query(`
       CREATE OR REPLACE TABLE enso_historical AS
       SELECT * FROM read_csv('${DATA_FILE}', header=true, columns=${CSV_COLUMNS});
-    `)
-    return true
-  } catch (error) {
-    console.warn(
-      "[duckdb] history table unavailable; scenario still works:",
-      error,
-    )
-    return false
-  }
+    `);
+        return true;
+    } catch (error) {
+        console.warn(
+            "[duckdb] history table unavailable; scenario still works:",
+            error,
+        );
+        return false;
+    }
 }
 
 /**
@@ -417,16 +420,16 @@ async function createHistoryTable(
  * rebooting the wasm. Idempotent — a second call is a cheap CREATE OR REPLACE.
  */
 export async function ensureHistoryTable(): Promise<boolean> {
-  if (!clientPromise) return false
-  try {
-    const client = await clientPromise
-    if (client.hasHistory) return true
-    const ok = await createHistoryTable(client.conn)
-    if (ok) client.hasHistory = true
-    return ok
-  } catch {
-    return false
-  }
+    if (!clientPromise) return false;
+    try {
+        const client = await clientPromise;
+        if (client.hasHistory) return true;
+        const ok = await createHistoryTable(client.conn);
+        if (ok) client.hasHistory = true;
+        return ok;
+    } catch {
+        return false;
+    }
 }
 
 /**
@@ -442,175 +445,179 @@ export async function ensureHistoryTable(): Promise<boolean> {
  *    next attempt.
  */
 async function bootFromHost(
-  wasmBase: string,
-  mode: BootMode,
-  datasetInput: DatasetTextInput,
+    wasmBase: string,
+    mode: BootMode,
+    datasetInput: DatasetTextInput,
 ): Promise<DuckDbClient> {
-  const bundle = await duckdb.selectBundle(bundlesFor(wasmBase))
-  if (!bundle.mainWorker) {
-    throw new HostBootError(
-      "error",
-      "DuckDB bundle has no worker — refusing to block the main thread.",
-    )
-  }
-
-  const label = hostLabel(wasmBase)
-  const bundleKind: BundleKind = bundle.mainModule.includes("duckdb-mvp")
-    ? "mvp"
-    : "eh"
-  const decoded = getDecodedBytes(bundleKind).decodedBytes
-
-  // Surface the chosen host and decoded size to the UI before any bytes land, so
-  // the badge can render a determinate bar from the first frame.
-  engineStore.startBooting({ host: label, decoded, mode })
-
-  // Acquire the worker script FIRST, on its own budget.
-  //
-  // `new Worker(url)` returns immediately but fetches the 755 KB script
-  // asynchronously, and no InstantiationProgress event can fire until it runs.
-  // Starting the watchdog before this point spent CONNECT_MS waiting for an
-  // event that could not arrive: measured on 400 kbps, `connect` tripped at 12 s
-  // while the worker script alone needed ~15 s, so the wasm was never requested
-  // at all (wasmFetchCount: 0). WorkerLoadError is retried on the next host by
-  // boot(), because a worker that will not load is a host/local-serve problem.
-  const worker = await acquireWorker(bundle.mainWorker)
-
-  const watchdog = createWatchdog({
-    mode,
-    decoded,
-    onProgress: (loaded) => engineStore.reportProgress(loaded),
-  })
-
-  try {
-    const logger = new duckdb.ConsoleLogger(duckdb.LogLevel.WARNING)
-    const db = new duckdb.AsyncDuckDB(logger, worker)
-
-    // Race the instantiate against the watchdog. The watchdog rejects; we
-    // translate that into a typed failure so boot() can decide whether the next
-    // host is worth trying.
-    await Promise.race([
-      db.instantiate(bundle.mainModule, bundle.pthreadWorker, (p) => {
-        watchdog.progress(Number(p.bytesLoaded))
-      }),
-      watchdog.rejected,
-    ])
-
-    // Await the dataset ONLY here — after instantiate() has resolved. The wasm
-    // and worker downloads have already been running concurrently with the CSV
-    // fetch, so this await is normally already settled.
-    const datasetText = await resolveDatasetText(datasetInput)
-
-    if (datasetText !== null) {
-      // Preferred path: the loader already fetched the CSV, and registering the
-      // text means DuckDB parses the exact same bytes without a second network
-      // request. One fetch, two engines.
-      await db.registerFileText(DATA_FILE, datasetText)
-    } else {
-      // Fallback for callers that have no text yet (e.g. a direct runScenario from
-      // a test). Costs one extra fetch but keeps the engine usable standalone.
-      await db.registerFileURL(
-        DATA_FILE,
-        new URL(DATA_URL, window.location.origin).toString(),
-        duckdb.DuckDBDataProtocol.HTTP,
-        false,
-      )
+    const bundle = await duckdb.selectBundle(bundlesFor(wasmBase));
+    if (!bundle.mainWorker) {
+        throw new HostBootError(
+            "error",
+            "DuckDB bundle has no worker — refusing to block the main thread.",
+        );
     }
 
-    const conn = await db.connect()
+    const label = hostLabel(wasmBase);
+    const bundleKind: BundleKind = bundle.mainModule.includes("duckdb-mvp")
+        ? "mvp"
+        : "eh";
+    const decoded = getDecodedBytes(bundleKind).decodedBytes;
 
-    // Disable extension autoload before touching any data. read_csv() is in the
-    // wasm core, so nothing here needs an extension; turning this off converts
-    // "silently fetch from extensions.duckdb.org" into a hard local error if a
-    // future query does reach for one. That is the desired failure mode: loud,
-    // in the console, instead of a hidden network dependency.
-    await conn.query("SET autoinstall_known_extensions=false")
-    await conn.query("SET autoload_known_extensions=false")
+    // Surface the chosen host and decoded size to the UI before any bytes land, so
+    // the badge can render a determinate bar from the first frame.
+    engineStore.startBooting({ host: label, decoded, mode });
 
-    // Materialise the history table — but do NOT let a dataset failure kill the
-    // engine.
+    // Acquire the worker script FIRST, on its own budget.
     //
-    // SCENARIO_SQL and RISK_TIER_SQL never reference enso_historical (verified in
-    // semantics.test.ts), so every number the user can change with a slider works
-    // without the table. Failing the whole boot here would mean a blocked or
-    // corrupt CSV takes the scenario engine down with it, which is strictly worse
-    // than losing only history.
-    const hasHistory = await createHistoryTable(conn)
+    // `new Worker(url)` returns immediately but fetches the 755 KB script
+    // asynchronously, and no InstantiationProgress event can fire until it runs.
+    // Starting the watchdog before this point spent CONNECT_MS waiting for an
+    // event that could not arrive: measured on 400 kbps, `connect` tripped at 12 s
+    // while the worker script alone needed ~15 s, so the wasm was never requested
+    // at all (wasmFetchCount: 0). WorkerLoadError is retried on the next host by
+    // boot(), because a worker that will not load is a host/local-serve problem.
+    const worker = await acquireWorker(bundle.mainWorker);
 
-    watchdog.dispose()
-    return { conn, db, version: duckdb.PACKAGE_VERSION, hasHistory }
-  } catch (error) {
-    watchdog.dispose()
+    const watchdog = createWatchdog({
+        mode,
+        decoded,
+        onProgress: (loaded) => engineStore.reportProgress(loaded),
+    });
 
-    // Tear the failed attempt down before the next host is tried. This is not
-    // sufficient on its own (the pending instantiate promise would stay pending
-    // forever) which is why the watchdog also rejects — see the race above.
     try {
-      worker.terminate()
-    } catch {
-      /* already dead */
-    }
+        const logger = new duckdb.ConsoleLogger(duckdb.LogLevel.WARNING);
+        const db = new duckdb.AsyncDuckDB(logger, worker);
 
-    // Normalise the watchdog's own error type into a typed host failure.
-    if (error instanceof BootTimeoutError) {
-      throw new HostBootError(error.reason, error.message, { cause: error })
+        // Race the instantiate against the watchdog. The watchdog rejects; we
+        // translate that into a typed failure so boot() can decide whether the next
+        // host is worth trying.
+        await Promise.race([
+            db.instantiate(bundle.mainModule, bundle.pthreadWorker, (p) => {
+                watchdog.progress(Number(p.bytesLoaded));
+            }),
+            watchdog.rejected,
+        ]);
+
+        // Await the dataset ONLY here — after instantiate() has resolved. The wasm
+        // and worker downloads have already been running concurrently with the CSV
+        // fetch, so this await is normally already settled.
+        const datasetText = await resolveDatasetText(datasetInput);
+
+        if (datasetText !== null) {
+            // Preferred path: the loader already fetched the CSV, and registering the
+            // text means DuckDB parses the exact same bytes without a second network
+            // request. One fetch, two engines.
+            await db.registerFileText(DATA_FILE, datasetText);
+        } else {
+            // Fallback for callers that have no text yet (e.g. a direct runScenario from
+            // a test). Costs one extra fetch but keeps the engine usable standalone.
+            await db.registerFileURL(
+                DATA_FILE,
+                new URL(DATA_URL, window.location.origin).toString(),
+                duckdb.DuckDBDataProtocol.HTTP,
+                false,
+            );
+        }
+
+        const conn = await db.connect();
+
+        // Disable extension autoload before touching any data. read_csv() is in the
+        // wasm core, so nothing here needs an extension; turning this off converts
+        // "silently fetch from extensions.duckdb.org" into a hard local error if a
+        // future query does reach for one. That is the desired failure mode: loud,
+        // in the console, instead of a hidden network dependency.
+        await conn.query("SET autoinstall_known_extensions=false");
+        await conn.query("SET autoload_known_extensions=false");
+
+        // Materialise the history table — but do NOT let a dataset failure kill the
+        // engine.
+        //
+        // SCENARIO_SQL and RISK_TIER_SQL never reference enso_historical (verified in
+        // semantics.test.ts), so every number the user can change with a slider works
+        // without the table. Failing the whole boot here would mean a blocked or
+        // corrupt CSV takes the scenario engine down with it, which is strictly worse
+        // than losing only history.
+        const hasHistory = await createHistoryTable(conn);
+
+        watchdog.dispose();
+        return { conn, db, version: duckdb.PACKAGE_VERSION, hasHistory };
+    } catch (error) {
+        watchdog.dispose();
+
+        // Tear the failed attempt down before the next host is tried. This is not
+        // sufficient on its own (the pending instantiate promise would stay pending
+        // forever) which is why the watchdog also rejects — see the race above.
+        try {
+            worker.terminate();
+        } catch {
+            /* already dead */
+        }
+
+        // Normalise the watchdog's own error type into a typed host failure.
+        if (error instanceof BootTimeoutError) {
+            throw new HostBootError(error.reason, error.message, {
+                cause: error,
+            });
+        }
+        if (error instanceof WorkerLoadError) {
+            throw new HostBootError("worker-load", error.message, {
+                cause: error,
+            });
+        }
+        if (error instanceof HostBootError) throw error;
+        throw new HostBootError(
+            "error",
+            error instanceof Error ? error.message : String(error),
+            {
+                cause: error,
+            },
+        );
     }
-    if (error instanceof WorkerLoadError) {
-      throw new HostBootError("worker-load", error.message, { cause: error })
-    }
-    if (error instanceof HostBootError) throw error
-    throw new HostBootError(
-      "error",
-      error instanceof Error ? error.message : String(error),
-      {
-        cause: error,
-      },
-    )
-  }
 }
 
 /** All hosts exhausted. */
 async function boot(
-  mode: BootMode = "auto",
-  datasetInput: DatasetTextInput = null,
+    mode: BootMode = "auto",
+    datasetInput: DatasetTextInput = null,
 ): Promise<DuckDbClient> {
-  const failures: Array<{ host: string; kind: BootFailureKind }> = []
+    const failures: Array<{ host: string; kind: BootFailureKind }> = [];
 
-  for (const wasmBase of WASM_BASES) {
-    const label = hostLabel(wasmBase)
-    try {
-      const client = await bootFromHost(wasmBase, mode, datasetInput)
-      activeWasmHost = label
-      if (failures.length > 0) {
-        console.warn(
-          `[duckdb] served wasm from ${label} after ${failures.map((f) => `${f.host}(${f.kind})`).join(", ")} failed`,
-        )
-      }
-      return client
-    } catch (error) {
-      const kind: BootFailureKind =
-        error instanceof HostBootError ? error.kind : "error"
-      failures.push({ host: label, kind })
+    for (const wasmBase of WASM_BASES) {
+        const label = hostLabel(wasmBase);
+        try {
+            const client = await bootFromHost(wasmBase, mode, datasetInput);
+            activeWasmHost = label;
+            if (failures.length > 0) {
+                console.warn(
+                    `[duckdb] served wasm from ${label} after ${failures.map((f) => `${f.host}(${f.kind})`).join(", ")} failed`,
+                );
+            }
+            return client;
+        } catch (error) {
+            const kind: BootFailureKind =
+                error instanceof HostBootError ? error.kind : "error";
+            failures.push({ host: label, kind });
 
-      // A cap trip means the NETWORK is the bottleneck, not this particular
-      // host. Retrying the next CDN would spend the same time to reach the same
-      // conclusion, so stop immediately and report "too slow".
-      if (kind === "cap") {
-        activeWasmHost = null
-        console.warn(
-          `[duckdb] aborting boot: projection exceeds budget on ${label} (network-bound)`,
-        )
-        throw new EngineTooSlowError(label)
-      }
+            // A cap trip means the NETWORK is the bottleneck, not this particular
+            // host. Retrying the next CDN would spend the same time to reach the same
+            // conclusion, so stop immediately and report "too slow".
+            if (kind === "cap") {
+                activeWasmHost = null;
+                console.warn(
+                    `[duckdb] aborting boot: projection exceeds budget on ${label} (network-bound)`,
+                );
+                throw new EngineTooSlowError(label);
+            }
 
-      console.warn(
-        `[duckdb] wasm host "${label}" failed (${kind}), trying next:`,
-        error,
-      )
+            console.warn(
+                `[duckdb] wasm host "${label}" failed (${kind}), trying next:`,
+                error,
+            );
+        }
     }
-  }
 
-  activeWasmHost = null
-  throw new EngineUnreachableError(failures)
+    activeWasmHost = null;
+    throw new EngineUnreachableError(failures);
 }
 
 /**
@@ -620,39 +627,39 @@ async function boot(
  * the `failed` state without the old rejection being replayed.
  */
 function getClient(
-  mode: BootMode = "auto",
-  datasetInput: DatasetTextInput = null,
+    mode: BootMode = "auto",
+    datasetInput: DatasetTextInput = null,
 ): Promise<DuckDbClient> {
-  if (!clientPromise) {
-    const startedAt = performance.now()
-    clientPromise = boot(mode, datasetInput)
-      .then((client) => {
-        // Transition to ready HERE, not inside bootFromHost: this is the one
-        // place that knows both the host that actually succeeded and the total
-        // elapsed time. Without it the store would sit in `booting` forever and
-        // the UI would never switch off the TS model.
-        engineStore.markReady(
-          activeWasmHost ?? "unknown",
-          Math.round(performance.now() - startedAt),
-        )
-        return client
-      })
-      .catch((error) => {
-        // Mark the store *before* clearing the promise, so a subscriber reading
-        // status in the same tick never sees a transient "booting".
-        if (error instanceof EngineTooSlowError) {
-          engineStore.markFailed("too-slow")
-        } else if (error instanceof EngineUnreachableError) {
-          engineStore.markFailed("unreachable")
-        } else {
-          engineStore.markFailed("error")
-        }
-        // Reset so a later retry (e.g. the user clicking "Load anyway") can run.
-        clientPromise = null
-        throw error
-      })
-  }
-  return clientPromise
+    if (!clientPromise) {
+        const startedAt = performance.now();
+        clientPromise = boot(mode, datasetInput)
+            .then((client) => {
+                // Transition to ready HERE, not inside bootFromHost: this is the one
+                // place that knows both the host that actually succeeded and the total
+                // elapsed time. Without it the store would sit in `booting` forever and
+                // the UI would never switch off the TS model.
+                engineStore.markReady(
+                    activeWasmHost ?? "unknown",
+                    Math.round(performance.now() - startedAt),
+                );
+                return client;
+            })
+            .catch((error) => {
+                // Mark the store *before* clearing the promise, so a subscriber reading
+                // status in the same tick never sees a transient "booting".
+                if (error instanceof EngineTooSlowError) {
+                    engineStore.markFailed("too-slow");
+                } else if (error instanceof EngineUnreachableError) {
+                    engineStore.markFailed("unreachable");
+                } else {
+                    engineStore.markFailed("error");
+                }
+                // Reset so a later retry (e.g. the user clicking "Load anyway") can run.
+                clientPromise = null;
+                throw error;
+            });
+    }
+    return clientPromise;
 }
 
 /**
@@ -661,171 +668,171 @@ function getClient(
  * statement — so every parameterised call routes through here.
  */
 async function query(
-  conn: duckdb.AsyncDuckDBConnection,
-  sql: string,
-  params: unknown[] = [],
+    conn: duckdb.AsyncDuckDBConnection,
+    sql: string,
+    params: unknown[] = [],
 ): Promise<{ toArray: () => Array<{ toJSON: () => Row }> }> {
-  if (params.length === 0) return conn.query(sql)
-  const stmt = await conn.prepare(sql)
-  try {
-    return await stmt.query(...params)
-  } finally {
-    await stmt.close()
-  }
+    if (params.length === 0) return conn.query(sql);
+    const stmt = await conn.prepare(sql);
+    try {
+        return await stmt.query(...params);
+    } finally {
+        await stmt.close();
+    }
 }
 
 const asRows = (table: {
-  toArray: () => Array<{ toJSON: () => Row }>
-}): Row[] => table.toArray().map((row) => row.toJSON())
+    toArray: () => Array<{ toJSON: () => Row }>;
+}): Row[] => table.toArray().map((row) => row.toJSON());
 
 const num = (value: unknown, fallback = 0): number => {
-  if (value === null || value === undefined) return fallback
-  const n = typeof value === "number" ? value : Number(value)
-  return Number.isFinite(n) ? n : fallback
-}
+    if (value === null || value === undefined) return fallback;
+    const n = typeof value === "number" ? value : Number(value);
+    return Number.isFinite(n) ? n : fallback;
+};
 
 const str = (value: unknown, fallback = ""): string =>
-  value === null || value === undefined ? fallback : String(value)
+    value === null || value === undefined ? fallback : String(value);
 
 const rowsToMetrics = (
-  row: Row,
-  state: {
-    sstAnomaly: number
-    jetStreamShift: number
-    agricultureWeight: number
-  },
+    row: Row,
+    state: {
+        sstAnomaly: number;
+        jetStreamShift: number;
+        agricultureWeight: number;
+    },
 ): ScenarioMetrics => ({
-  sst: num(row.sst, state.sstAnomaly),
-  jet: num(row.jet, state.jetStreamShift),
-  agri: num(row.agri, state.agricultureWeight),
-  pacificSstDev: num(row.pacific_sst_dev),
-  pacificConvection: num(row.pacific_convection),
-  usPrecip: num(row.us_precip),
-  usPrecipBase: num(row.us_precip_base),
-  usTempDevF: num(row.us_temp_dev_f),
-  asiaPrecip: num(row.asia_precip),
-  asiaDrought: num(row.asia_drought),
-  africaPrecip: num(row.africa_precip),
-  africaFlood: num(row.africa_flood),
-  amazonPrecip: num(row.amazon_precip),
-  amazonDrought: num(row.amazon_drought),
-  gulfPrecip: num(row.gulf_precip),
-  globalImpactIndex: num(row.global_impact_index),
-  agricultureExposure: num(row.agriculture_exposure),
-  riskTier: "pending",
-})
+    sst: num(row.sst, state.sstAnomaly),
+    jet: num(row.jet, state.jetStreamShift),
+    agri: num(row.agri, state.agricultureWeight),
+    pacificSstDev: num(row.pacific_sst_dev),
+    pacificConvection: num(row.pacific_convection),
+    usPrecip: num(row.us_precip),
+    usPrecipBase: num(row.us_precip_base),
+    usTempDevF: num(row.us_temp_dev_f),
+    asiaPrecip: num(row.asia_precip),
+    asiaDrought: num(row.asia_drought),
+    africaPrecip: num(row.africa_precip),
+    africaFlood: num(row.africa_flood),
+    amazonPrecip: num(row.amazon_precip),
+    amazonDrought: num(row.amazon_drought),
+    gulfPrecip: num(row.gulf_precip),
+    globalImpactIndex: num(row.global_impact_index),
+    agricultureExposure: num(row.agriculture_exposure),
+    riskTier: "pending",
+});
 
 /** Full analytics pass: metrics + analogs + summary + timeline, timed end to end. */
 export async function runScenario(
-  state: {
-    sstAnomaly: number
-    jetStreamShift: number
-    agricultureWeight: number
-  },
-  cache?: AnalyticsCache,
-  mode: BootMode = "auto",
-  /**
-   * CSV text, or a promise of it, from loadDataset(). When provided, DuckDB
-   * parses THIS string via registerFileText instead of fetching the file again —
-   * the same bytes feed both engines, and there is exactly one request.
-   *
-   * A promise is accepted so the caller does not have to await it before
-   * booting: the wasm download then overlaps the CSV fetch. It is awaited only
-   * at table-registration time.
-   */
-  datasetInput: DatasetTextInput = null,
+    state: {
+        sstAnomaly: number;
+        jetStreamShift: number;
+        agricultureWeight: number;
+    },
+    cache?: AnalyticsCache,
+    mode: BootMode = "auto",
+    /**
+     * CSV text, or a promise of it, from loadDataset(). When provided, DuckDB
+     * parses THIS string via registerFileText instead of fetching the file again —
+     * the same bytes feed both engines, and there is exactly one request.
+     *
+     * A promise is accepted so the caller does not have to await it before
+     * booting: the wasm download then overlaps the CSV fetch. It is awaited only
+     * at table-registration time.
+     */
+    datasetInput: DatasetTextInput = null,
 ): Promise<AnalyticsPayload> {
-  // Boot first, then start the clock: the first call also instantiates the WASM
-  // module (~1.5 s), and counting that as query latency makes the HUD badge lie.
-  const { conn } = await getClient(mode, datasetInput)
-  const started = performance.now()
-  const {
-    sstAnomaly: sst,
-    jetStreamShift: jet,
-    agricultureWeight: agri,
-  } = state
+    // Boot first, then start the clock: the first call also instantiates the WASM
+    // module (~1.5 s), and counting that as query latency makes the HUD badge lie.
+    const { conn } = await getClient(mode, datasetInput);
+    const started = performance.now();
+    const {
+        sstAnomaly: sst,
+        jetStreamShift: jet,
+        agricultureWeight: agri,
+    } = state;
 
-  const [metricsTable, riskTable] = await Promise.all([
-    query(conn, SCENARIO_SQL, [sst, jet, agri]),
-    query(conn, RISK_TIER_SQL, [sst]),
-  ])
+    const [metricsTable, riskTable] = await Promise.all([
+        query(conn, SCENARIO_SQL, [sst, jet, agri]),
+        query(conn, RISK_TIER_SQL, [sst]),
+    ]);
 
-  const metricsRow = asRows(metricsTable)[0] ?? {}
-  const metrics = rowsToMetrics(metricsRow, state)
-  metrics.riskTier = str(
-    asRows(riskTable)[0]?.risk_tier,
-    "Neutral / La Niña Watch",
-  )
+    const metricsRow = asRows(metricsTable)[0] ?? {};
+    const metrics = rowsToMetrics(metricsRow, state);
+    metrics.riskTier = str(
+        asRows(riskTable)[0]?.risk_tier,
+        "Neutral / La Niña Watch",
+    );
 
-  // Summary + timeline only change when the query parameter changes, so cache them.
-  const summaryPromise = cache?.summary
-    ? Promise.resolve(cache.summary)
-    : query(conn, SUMMARY_SQL, [sst]).then((t) => {
-        const r = asRows(t)[0] ?? {}
-        const summary: HistoricalSummary = {
-          rowCount: num(r.row_count),
-          firstDate: str(r.first_date),
-          lastDate: str(r.last_date),
-          meanAnomaly: num(r.mean_anomaly),
-          maxAnomaly: num(r.max_anomaly),
-          maxAnomalyDate: str(r.max_anomaly_date),
-          analogCount: num(r.analog_count),
-          extremeMonths: num(r.extreme_months),
-          laninaMonths: num(r.lanina_months),
-          source: str(r.source, "Unknown source"),
-        }
-        if (cache) cache.summary = summary
-        return summary
-      })
+    // Summary + timeline only change when the query parameter changes, so cache them.
+    const summaryPromise = cache?.summary
+        ? Promise.resolve(cache.summary)
+        : query(conn, SUMMARY_SQL, [sst]).then((t) => {
+              const r = asRows(t)[0] ?? {};
+              const summary: HistoricalSummary = {
+                  rowCount: num(r.row_count),
+                  firstDate: str(r.first_date),
+                  lastDate: str(r.last_date),
+                  meanAnomaly: num(r.mean_anomaly),
+                  maxAnomaly: num(r.max_anomaly),
+                  maxAnomalyDate: str(r.max_anomaly_date),
+                  analogCount: num(r.analog_count),
+                  extremeMonths: num(r.extreme_months),
+                  laninaMonths: num(r.lanina_months),
+                  source: str(r.source, "Unknown source"),
+              };
+              if (cache) cache.summary = summary;
+              return summary;
+          });
 
-  const timelinePromise = cache?.timeline
-    ? Promise.resolve(cache.timeline)
-    : query(conn, TIMELINE_SQL).then((t) => {
-        const points: TimelinePoint[] = asRows(t).map((r) => ({
-          date: str(r.date),
-          label: str(r.date).replace("-", " "),
-          anomaly: num(r.anomaly),
-        }))
-        if (cache) cache.timeline = points
-        return points
-      })
+    const timelinePromise = cache?.timeline
+        ? Promise.resolve(cache.timeline)
+        : query(conn, TIMELINE_SQL).then((t) => {
+              const points: TimelinePoint[] = asRows(t).map((r) => ({
+                  date: str(r.date),
+                  label: str(r.date).replace("-", " "),
+                  anomaly: num(r.anomaly),
+              }));
+              if (cache) cache.timeline = points;
+              return points;
+          });
 
-  const [analogTable, summary, timeline] = await Promise.all([
-    query(conn, ANALOG_SQL, [sst]),
-    summaryPromise,
-    timelinePromise,
-  ])
+    const [analogTable, summary, timeline] = await Promise.all([
+        query(conn, ANALOG_SQL, [sst]),
+        summaryPromise,
+        timelinePromise,
+    ]);
 
-  const analogs: AnalogMonth[] = asRows(analogTable).map((r) => ({
-    date: str(r.period),
-    label: str(r.period).replace("-", " "),
-    anomaly: num(r.nino_34_anomaly),
-    absoluteSst: num(r.nino34_sst),
-    delta: num(r.delta),
-    sstDeviation: num(r.sst_deviation),
-    precipPacific: num(r.precip_anomaly_pacific),
-    precipUs: num(r.precip_anomaly_us),
-    precipSeAsia: num(r.precip_anomaly_se_asia),
-    precipAfrica: num(r.precip_anomaly_africa),
-    precipAmazon: num(r.amazon_precip),
-    precipGulf: num(r.gulf_precip),
-    droughtIndex: num(r.drought_index_se_asia),
-    riskTier: str(r.risk_tier_pacific, "Unknown"),
-  }))
+    const analogs: AnalogMonth[] = asRows(analogTable).map((r) => ({
+        date: str(r.period),
+        label: str(r.period).replace("-", " "),
+        anomaly: num(r.nino_34_anomaly),
+        absoluteSst: num(r.nino34_sst),
+        delta: num(r.delta),
+        sstDeviation: num(r.sst_deviation),
+        precipPacific: num(r.precip_anomaly_pacific),
+        precipUs: num(r.precip_anomaly_us),
+        precipSeAsia: num(r.precip_anomaly_se_asia),
+        precipAfrica: num(r.precip_anomaly_africa),
+        precipAmazon: num(r.amazon_precip),
+        precipGulf: num(r.gulf_precip),
+        droughtIndex: num(r.drought_index_se_asia),
+        riskTier: str(r.risk_tier_pacific, "Unknown"),
+    }));
 
-  return {
-    metrics,
-    analogs,
-    summary,
-    timeline,
-    queryMs: Math.round((performance.now() - started) * 10) / 10,
-  }
+    return {
+        metrics,
+        analogs,
+        summary,
+        timeline,
+        queryMs: Math.round((performance.now() - started) * 10) / 10,
+    };
 }
 
 /** Cache slot for the parameter-independent queries. */
 export interface AnalyticsCache {
-  summary?: HistoricalSummary
-  timeline?: TimelinePoint[]
+    summary?: HistoricalSummary;
+    timeline?: TimelinePoint[];
 }
 
 /**
@@ -833,42 +840,42 @@ export interface AnalyticsCache {
  * support). Values are identical to the SQL path by construction.
  */
 export function runScenarioFallback(
-  state: {
-    sstAnomaly: number
-    jetStreamShift: number
-    agricultureWeight: number
-  },
-  timeline: TimelinePoint[] = [],
-): AnalyticsPayload {
-  const started = performance.now()
-  const metrics = computeMetrics(state)
-  return {
-    metrics,
-    analogs: [],
-    summary: {
-      rowCount: timeline.length,
-      firstDate: timeline[0]?.date ?? "—",
-      lastDate: timeline.at(-1)?.date ?? "—",
-      meanAnomaly: 0,
-      maxAnomaly: 0,
-      maxAnomalyDate: "—",
-      analogCount: 0,
-      extremeMonths: 0,
-      laninaMonths: 0,
-      source: "—",
+    state: {
+        sstAnomaly: number;
+        jetStreamShift: number;
+        agricultureWeight: number;
     },
-    timeline,
-    queryMs: Math.round((performance.now() - started) * 10) / 10,
-  }
+    timeline: TimelinePoint[] = [],
+): AnalyticsPayload {
+    const started = performance.now();
+    const metrics = computeMetrics(state);
+    return {
+        metrics,
+        analogs: [],
+        summary: {
+            rowCount: timeline.length,
+            firstDate: timeline[0]?.date ?? "—",
+            lastDate: timeline.at(-1)?.date ?? "—",
+            meanAnomaly: 0,
+            maxAnomaly: 0,
+            maxAnomalyDate: "—",
+            analogCount: 0,
+            extremeMonths: 0,
+            laninaMonths: 0,
+            source: "—",
+        },
+        timeline,
+        queryMs: Math.round((performance.now() - started) * 10) / 10,
+    };
 }
 
 export async function getDuckDbVersion(): Promise<string | null> {
-  try {
-    const { version } = await getClient()
-    return version
-  } catch {
-    return null
-  }
+    try {
+        const { version } = await getClient();
+        return version;
+    } catch {
+        return null;
+    }
 }
 
 /**
@@ -890,15 +897,15 @@ export async function getDuckDbVersion(): Promise<string | null> {
  * primary scenario computation.
  */
 export async function registerTelemetry(
-  bundle: TelemetryBundle,
+    bundle: TelemetryBundle,
 ): Promise<boolean> {
-  if (!clientPromise) return false
-  try {
-    const client = await clientPromise
-    const { tao, ar } = bundle
-    const timestamp = bundle.timestamp
+    if (!clientPromise) return false;
+    try {
+        const client = await clientPromise;
+        const { tao, ar } = bundle;
+        const timestamp = bundle.timestamp;
 
-    await client.conn.query(`
+        await client.conn.query(`
       CREATE OR REPLACE TABLE live_telemetry AS
       SELECT
         CAST('${timestamp}' AS VARCHAR) AS recorded_at,
@@ -909,12 +916,12 @@ export async function registerTelemetry(
         CAST(${ar.maxIvt} AS INTEGER) AS max_ivt,
         CAST('${ar.coastalRiskTier}' AS VARCHAR) AS coastal_risk_tier,
         CAST('${tao.status}' AS VARCHAR) AS telemetry_status;
-    `)
-    return true
-  } catch (err) {
-    console.warn("[duckdb] Failed to register live telemetry table:", err)
-    return false
-  }
+    `);
+        return true;
+    } catch (err) {
+        console.warn("[duckdb] Failed to register live telemetry table:", err);
+        return false;
+    }
 }
 
 /**
@@ -927,18 +934,18 @@ export async function registerTelemetry(
  * not been registered yet, or if query execution fails.
  */
 export async function getLiveTelemetry(): Promise<Record<
-  string,
-  unknown
+    string,
+    unknown
 > | null> {
-  if (!clientPromise) return null
-  try {
-    const client = await clientPromise
-    const table = await client.conn.query(
-      "SELECT * FROM live_telemetry LIMIT 1",
-    )
-    const rows = asRows(table)
-    return rows[0] ?? null
-  } catch {
-    return null
-  }
+    if (!clientPromise) return null;
+    try {
+        const client = await clientPromise;
+        const table = await client.conn.query(
+            "SELECT * FROM live_telemetry LIMIT 1",
+        );
+        const rows = asRows(table);
+        return rows[0] ?? null;
+    } catch {
+        return null;
+    }
 }

@@ -10,33 +10,35 @@
  */
 
 interface RendererHandle {
-  render: () => void;
-  domElement: HTMLCanvasElement;
+    render: () => void;
+    domElement: HTMLCanvasElement;
 }
 
 let handle: RendererHandle | null = null;
 
 export function registerRenderer(next: RendererHandle | null): void {
-  handle = next;
+    handle = next;
 }
 
-export function captureCanvas(type = 'image/png'): string | null {
-  if (!handle) {
-    // Fall back to the selector in case the handle was never registered.
-    const canvas = document.querySelector<HTMLCanvasElement>('#globe-canvas canvas');
-    if (!canvas) return null;
-    try {
-      return canvas.toDataURL(type);
-    } catch {
-      return null;
+export function captureCanvas(type = "image/png"): string | null {
+    if (!handle) {
+        // Fall back to the selector in case the handle was never registered.
+        const canvas = document.querySelector<HTMLCanvasElement>(
+            "#globe-canvas canvas",
+        );
+        if (!canvas) return null;
+        try {
+            return canvas.toDataURL(type);
+        } catch {
+            return null;
+        }
     }
-  }
 
-  try {
-    // Force a draw into the drawing buffer, then read it in the same task.
-    handle.render();
-    return handle.domElement.toDataURL(type);
-  } catch {
-    return null;
-  }
+    try {
+        // Force a draw into the drawing buffer, then read it in the same task.
+        handle.render();
+        return handle.domElement.toDataURL(type);
+    } catch {
+        return null;
+    }
 }

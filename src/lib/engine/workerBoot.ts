@@ -34,13 +34,13 @@ export const WORKER_LOAD_MS = 45_000;
 
 /** A worker that fails to boot. Distinguished so boot() can retry the next host. */
 export class WorkerLoadError extends Error {
-  constructor(
-    message: string,
-    public readonly kind: 'worker-load' = 'worker-load',
-  ) {
-    super(message);
-    this.name = 'WorkerLoadError';
-  }
+    constructor(
+        message: string,
+        public readonly kind: "worker-load" = "worker-load",
+    ) {
+        super(message);
+        this.name = "WorkerLoadError";
+    }
 }
 
 /**
@@ -50,61 +50,69 @@ export class WorkerLoadError extends Error {
  *
  * Rejects with WorkerLoadError on timeout or on a script-level error event.
  */
-export function acquireWorker(scriptUrl: string, timeoutMs = WORKER_LOAD_MS): Promise<Worker> {
-  const worker = new Worker(scriptUrl);
+export function acquireWorker(
+    scriptUrl: string,
+    timeoutMs = WORKER_LOAD_MS,
+): Promise<Worker> {
+    const worker = new Worker(scriptUrl);
 
-  return new Promise<Worker>((resolve, reject) => {
-    let settled = false;
+    return new Promise<Worker>((resolve, reject) => {
+        let settled = false;
 
-    const cleanup = () => {
-      clearTimeout(timer);
-      worker.removeEventListener('message', onMessage);
-      worker.removeEventListener('error', onError);
-      worker.removeEventListener('messageerror', onError);
-    };
+        const cleanup = () => {
+            clearTimeout(timer);
+            worker.removeEventListener("message", onMessage);
+            worker.removeEventListener("error", onError);
+            worker.removeEventListener("messageerror", onError);
+        };
 
-    const fail = (message: string) => {
-      if (settled) return;
-      settled = true;
-      cleanup();
-      try {
-        worker.terminate();
-      } catch {
-        /* already dead */
-      }
-      reject(new WorkerLoadError(message));
-    };
+        const fail = (message: string) => {
+            if (settled) return;
+            settled = true;
+            cleanup();
+            try {
+                worker.terminate();
+            } catch {
+                /* already dead */
+            }
+            reject(new WorkerLoadError(message));
+        };
 
-    const timer = setTimeout(
-      () => fail(`Worker script did not become ready within ${timeoutMs} ms: ${scriptUrl}`),
-      timeoutMs,
-    );
+        const timer = setTimeout(
+            () =>
+                fail(
+                    `Worker script did not become ready within ${timeoutMs} ms: ${scriptUrl}`,
+                ),
+            timeoutMs,
+        );
 
-    // duckdb-wasm's worker posts messages as soon as its bindings are up. Any
-    // message proves the script executed, which is exactly what we need.
-    const onMessage = () => {
-      if (settled) return;
-      settled = true;
-      cleanup();
-      resolve(worker);
-    };
+        // duckdb-wasm's worker posts messages as soon as its bindings are up. Any
+        // message proves the script executed, which is exactly what we need.
+        const onMessage = () => {
+            if (settled) return;
+            settled = true;
+            cleanup();
+            resolve(worker);
+        };
 
-    const onError = (event: Event) => {
-      const msg = (event as ErrorEvent).message;
-      fail(`Worker failed to load (${scriptUrl})${msg ? `: ${msg}` : ''}`);
-    };
+        const onError = (event: Event) => {
+            const msg = (event as ErrorEvent).message;
+            fail(
+                `Worker failed to load (${scriptUrl})${msg ? `: ${msg}` : ""}`,
+            );
+        };
 
-    worker.addEventListener('message', onMessage);
-    worker.addEventListener('error', onError);
-    worker.addEventListener('messageerror', onError);
+        worker.addEventListener("message", onMessage);
+        worker.addEventListener("error", onError);
+        worker.addEventListener("messageerror", onError);
 
-    // Nudge the worker to emit something even before instantiate() is called.
-    // duckdb-wasm tolerates an early PING; if a version ever stops doing so the
-    // timeout still bounds the wait and boot() retries the next host.
-    try {
-      worker.postMessage({ messageId: -1, type: 'PING', data: null });
-    } catch {
-      /* posting before the script is ready is allowed; ignore */
-    }
-  });
+        // Nudge the worker to emit something even before instantiate() is called.
+        // duckdb-wasm tolerates an early PING; if a version ever stops doing so the
+        // timeout still bounds the wait and boot() retries the next host.
+        try {
+            worker.postMessage({ messageId: -1, type: "PING", data: null });
+        } catch {
+            /* posting before the script is ready is allowed; ignore */
+        }
+    });
 }

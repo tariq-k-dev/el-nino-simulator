@@ -46,27 +46,27 @@
  * assume `dTarget === dContain`.
  */
 
-import type { Insets, Viewport } from './insets';
+import type { Insets, Viewport } from "./insets";
 
 /** Padding held inside the free rectangle before the disc is fitted, in CSS px. */
 export const FRAME_PADDING_PX = 24;
 
 /** Inputs to the framing arithmetic. */
 export interface FrameInput {
-  /** Viewport size in CSS pixels — the canvas is full-viewport (`docs/STEP3-AUDIT.md` §2). */
-  viewport: Viewport;
-  /** Measured occluder insets. `free` is recomputed here, so a caller may pass a stale one. */
-  insets: Pick<Insets, 'left' | 'right' | 'top' | 'bottom'>;
-  /** Vertical field of view, degrees (three's `camera.fov`). */
-  fovDeg: number;
-  /** The shipped distance. Zoom-out only: the fit never goes below this. */
-  d0: number;
-  /** Design ceiling — `<OrbitControls maxDistance>`. */
-  dMax: number;
-  /** Globe radius to fit, in scene units. 1.10242 = the pin core envelope. */
-  re: number;
-  /** Padding inside the free rectangle. Defaults to `FRAME_PADDING_PX`. */
-  paddingPx?: number;
+    /** Viewport size in CSS pixels — the canvas is full-viewport (`docs/STEP3-AUDIT.md` §2). */
+    viewport: Viewport;
+    /** Measured occluder insets. `free` is recomputed here, so a caller may pass a stale one. */
+    insets: Pick<Insets, "left" | "right" | "top" | "bottom">;
+    /** Vertical field of view, degrees (three's `camera.fov`). */
+    fovDeg: number;
+    /** The shipped distance. Zoom-out only: the fit never goes below this. */
+    d0: number;
+    /** Design ceiling — `<OrbitControls maxDistance>`. */
+    dMax: number;
+    /** Globe radius to fit, in scene units. 1.10242 = the pin core envelope. */
+    re: number;
+    /** Padding inside the free rectangle. Defaults to `FRAME_PADDING_PX`. */
+    paddingPx?: number;
 }
 
 /**
@@ -80,7 +80,7 @@ export interface FrameInput {
  * keeps the fov/CSS-px relationship of the whole canvas.
  */
 export function focalPxFor(viewportH: number, fovDeg: number): number {
-  return viewportH / 2 / Math.tan((fovDeg * Math.PI) / 180 / 2);
+    return viewportH / 2 / Math.tan((fovDeg * Math.PI) / 180 / 2);
 }
 
 /**
@@ -97,32 +97,36 @@ export function focalPxFor(viewportH: number, fovDeg: number): number {
  * THE law of this repo: `computeFrame` calls it with the free rectangle's `rMax`, and
  * `computeMobileFit` calls it with the radius budget `Rb`. Neither re-derives it.
  */
-export function dContainFor(radiusPx: number, focalPx: number, re: number): number {
-  return Math.sqrt(re * re + ((focalPx * re) / radiusPx) ** 2);
+export function dContainFor(
+    radiusPx: number,
+    focalPx: number,
+    re: number,
+): number {
+    return Math.sqrt(re * re + ((focalPx * re) / radiusPx) ** 2);
 }
 
 /** The free rectangle, in CSS pixels from the viewport's top-left. */
 export interface FrameRect {
-  x: number;
-  y: number;
-  w: number;
-  h: number;
+    x: number;
+    y: number;
+    w: number;
+    h: number;
 }
 
 export interface Frame {
-  /** The rectangle the globe may occupy, after padding. */
-  free: FrameRect;
-  /** View-offset shift: the globe centre moves by `(+dx, +dy)` from the viewport centre. */
-  dx: number;
-  dy: number;
-  /** Largest allowed silhouette radius, px. */
-  rMax: number;
-  /** Distance at which the silhouette is exactly `rMax`, before clamping. */
-  dContain: number;
-  /** What the rig should use: `clamp(max(d0, dContain), d0, dMax)`. */
-  dTarget: number;
-  /** True when the free rectangle collapsed or the padding ate it: zero offset, `dTarget = d0`. */
-  degenerate: boolean;
+    /** The rectangle the globe may occupy, after padding. */
+    free: FrameRect;
+    /** View-offset shift: the globe centre moves by `(+dx, +dy)` from the viewport centre. */
+    dx: number;
+    dy: number;
+    /** Largest allowed silhouette radius, px. */
+    rMax: number;
+    /** Distance at which the silhouette is exactly `rMax`, before clamping. */
+    dContain: number;
+    /** What the rig should use: `clamp(max(d0, dContain), d0, dMax)`. */
+    dTarget: number;
+    /** True when the free rectangle collapsed or the padding ate it: zero offset, `dTarget = d0`. */
+    degenerate: boolean;
 }
 
 /**
@@ -134,101 +138,101 @@ export interface Frame {
  * rectangle itself, and the two agree because both subtract the same `2 * padding`.
  */
 export function computeFrame(input: FrameInput): Frame {
-  const { viewport, insets, fovDeg, d0, dMax, re } = input;
-  const padding = input.paddingPx ?? FRAME_PADDING_PX;
+    const { viewport, insets, fovDeg, d0, dMax, re } = input;
+    const padding = input.paddingPx ?? FRAME_PADDING_PX;
 
-  const W = viewport.w;
-  const H = viewport.h;
+    const W = viewport.w;
+    const H = viewport.h;
 
-  /*
-   * The inner rectangle: what the insets leave, before any padding.
-   *
-   * `Math.max(0, ...)` on each span: a viewport narrower than its insets is a real case (at
-   * 1024 px the deck and the Impact Zones are 24 px apart, and the drawer is another 418), and a
-   * negative width would propagate into `rMax` as a positive number and produce a confident,
-   * wrong fit.
-   */
-  const innerW = Math.max(0, W - insets.left - insets.right);
-  const innerH = Math.max(0, H - insets.top - insets.bottom);
-  const hasInner = innerW > 0 && innerH > 0;
+    /*
+     * The inner rectangle: what the insets leave, before any padding.
+     *
+     * `Math.max(0, ...)` on each span: a viewport narrower than its insets is a real case (at
+     * 1024 px the deck and the Impact Zones are 24 px apart, and the drawer is another 418), and a
+     * negative width would propagate into `rMax` as a positive number and produce a confident,
+     * wrong fit.
+     */
+    const innerW = Math.max(0, W - insets.left - insets.right);
+    const innerH = Math.max(0, H - insets.top - insets.bottom);
+    const hasInner = innerW > 0 && innerH > 0;
 
-  /*
-   * `free` is the rectangle the INSETS leave — padding is NOT subtracted from it.
-   *
-   * That is the prompt's own definition (`r_max = 0.5 * min(freeW, freeH) - padding`) and it is the
-   * one that keeps the two reported numbers independent: `free` answers "what did the layout
-   * leave?", `rMax` answers "how big may the disc be?", and the difference between them is exactly
-   * the padding. Folding the padding into `free` would make `rMax` equal half of `free` and there
-   * would be nowhere left to see the margin that F4 measures.
-   */
-  const freeW = innerW;
-  const freeH = innerH;
+    /*
+     * `free` is the rectangle the INSETS leave — padding is NOT subtracted from it.
+     *
+     * That is the prompt's own definition (`r_max = 0.5 * min(freeW, freeH) - padding`) and it is the
+     * one that keeps the two reported numbers independent: `free` answers "what did the layout
+     * leave?", `rMax` answers "how big may the disc be?", and the difference between them is exactly
+     * the padding. Folding the padding into `free` would make `rMax` equal half of `free` and there
+     * would be nowhere left to see the margin that F4 measures.
+     */
+    const freeW = innerW;
+    const freeH = innerH;
 
-  /*
-   * The centre of the free rectangle.
-   *
-   * Written as `inset + half` rather than `(inset + W - other) / 2` so it is obvious that moving a
-   * panel on ONE side moves the centre by HALF of that panel's thickness: a full-width header of
-   * 118.25 px lowers the centre by 59.125, which is the number every viewport below reports for
-   * `dy`.
-   */
-  const centreX = insets.left + innerW / 2;
-  const centreY = insets.top + innerH / 2;
+    /*
+     * The centre of the free rectangle.
+     *
+     * Written as `inset + half` rather than `(inset + W - other) / 2` so it is obvious that moving a
+     * panel on ONE side moves the centre by HALF of that panel's thickness: a full-width header of
+     * 118.25 px lowers the centre by 59.125, which is the number every viewport below reports for
+     * `dy`.
+     */
+    const centreX = insets.left + innerW / 2;
+    const centreY = insets.top + innerH / 2;
 
-  const dx = centreX - W / 2;
-  const dy = centreY - H / 2;
+    const dx = centreX - W / 2;
+    const dy = centreY - H / 2;
 
-  /*
-   * The disc is a circle in a rectangle, so the smaller side decides, and the padding comes off
-   * once — it is the fit's margin, applied from the inside of the free rectangle.
-   */
-  const rMax = 0.5 * Math.min(freeW, freeH) - padding;
+    /*
+     * The disc is a circle in a rectangle, so the smaller side decides, and the padding comes off
+     * once — it is the fit's margin, applied from the inside of the free rectangle.
+     */
+    const rMax = 0.5 * Math.min(freeW, freeH) - padding;
 
-  /*
-   * Degenerate: nothing to centre in, or no room left for a disc once the padding is taken.
-   *
-   * Reported as a flag AND as the honest numbers (zero offset, `dTarget = d0`), because a consumer
-   * that silently clamped would hide that the layout no longer fits — the same reasoning as
-   * `Insets.degenerate`.
-   */
-  const degenerate = !hasInner || !(rMax > 0);
+    /*
+     * Degenerate: nothing to centre in, or no room left for a disc once the padding is taken.
+     *
+     * Reported as a flag AND as the honest numbers (zero offset, `dTarget = d0`), because a consumer
+     * that silently clamped would hide that the layout no longer fits — the same reasoning as
+     * `Insets.degenerate`.
+     */
+    const degenerate = !hasInner || !(rMax > 0);
 
-  /*
-   * Focal length in px, from the VERTICAL fov and the FULL viewport height.
-   *
-   * Full height, not `freeH`: `setViewOffset` shifts the frustum without rescaling it, so the
-   * projection keeps the fov/CSS-px relationship of the whole canvas. Using the free height here
-   * would make the offset change the apparent scale, which is exactly what it must not do.
-   */
-  const focalPx = focalPxFor(H, fovDeg);
+    /*
+     * Focal length in px, from the VERTICAL fov and the FULL viewport height.
+     *
+     * Full height, not `freeH`: `setViewOffset` shifts the frustum without rescaling it, so the
+     * projection keeps the fov/CSS-px relationship of the whole canvas. Using the free height here
+     * would make the offset change the apparent scale, which is exactly what it must not do.
+     */
+    const focalPx = focalPxFor(H, fovDeg);
 
-  /*
-   * d_contain from the tangent-length form. The law itself now lives in `dContainFor` above, because the mobile
-   * free-rect fit needs the same law with a different radius; this call site supplies the free rectangle's `rMax`.
-   */
-  const dContain = degenerate ? d0 : dContainFor(rMax, focalPx, re);
+    /*
+     * d_contain from the tangent-length form. The law itself now lives in `dContainFor` above, because the mobile
+     * free-rect fit needs the same law with a different radius; this call site supplies the free rectangle's `rMax`.
+     */
+    const dContain = degenerate ? d0 : dContainFor(rMax, focalPx, re);
 
-  /*
-   * Zoom-out only, inside the control bound.
-   *
-   * `Math.max(d0, ...)` makes the floor explicit even though `dContain >= re` always; `d0 > re`
-   * here (3.3534 vs 1.10242), so on a large viewport the floor is what binds and the fit is a
-   * no-op — which is the intended behaviour, not a missing case.
-   */
-  const dTarget = degenerate ? d0 : Math.min(Math.max(d0, dContain), dMax);
+    /*
+     * Zoom-out only, inside the control bound.
+     *
+     * `Math.max(d0, ...)` makes the floor explicit even though `dContain >= re` always; `d0 > re`
+     * here (3.3534 vs 1.10242), so on a large viewport the floor is what binds and the fit is a
+     * no-op — which is the intended behaviour, not a missing case.
+     */
+    const dTarget = degenerate ? d0 : Math.min(Math.max(d0, dContain), dMax);
 
-  return {
-    free: {
-      x: centreX - freeW / 2,
-      y: centreY - freeH / 2,
-      w: freeW,
-      h: freeH,
-    },
-    dx,
-    dy,
-    rMax: degenerate ? 0 : rMax,
-    dContain,
-    dTarget,
-    degenerate,
-  };
+    return {
+        free: {
+            x: centreX - freeW / 2,
+            y: centreY - freeH / 2,
+            w: freeW,
+            h: freeH,
+        },
+        dx,
+        dy,
+        rMax: degenerate ? 0 : rMax,
+        dContain,
+        dTarget,
+        degenerate,
+    };
 }

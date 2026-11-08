@@ -24,7 +24,7 @@
  * the geometry is recomputed from JS on resize.
  */
 
-import { peekVisible } from '@/mobile/layoutMath';
+import { peekVisible } from "@/mobile/layoutMath";
 
 /**
  * The narrowest desktop width, minus one hundredth of a pixel.
@@ -43,7 +43,7 @@ export const MOBILE_QUERY = `(max-width: ${BREAKPOINT_MAX}px)`;
  * Which tiers exist, low to high. The ORDER is load-bearing: it is the keyboard's `ArrowUp`/`ArrowDown`
  * direction, the `aria-valuenow` index, and the tie-breaker in `resolveSnap`.
  */
-export const TIERS = ['peek', 'half', 'full'] as const;
+export const TIERS = ["peek", "half", "full"] as const;
 export type Tier = (typeof TIERS)[number];
 export type TierIndex = 0 | 1 | 2;
 
@@ -55,9 +55,9 @@ export type TierIndex = 0 | 1 | 2;
  * labels visible above the sheet at full, so a reader can still see what the prose is about.
  */
 export const TIER_FRACTION: Record<Tier, number> = {
-  peek: 0.18,
-  half: 0.48,
-  full: 0.88,
+    peek: 0.18,
+    half: 0.48,
+    full: 0.88,
 };
 
 /**
@@ -114,7 +114,7 @@ export const RUBBER_ASYMPTOTE_FRACTION = 0.25;
 
 /** The snap transition, and its reduced-motion duration. */
 export const SNAP_DURATION_MS = 320;
-export const SNAP_EASING = 'cubic-bezier(0.22,1,0.36,1)';
+export const SNAP_EASING = "cubic-bezier(0.22,1,0.36,1)";
 
 /** The snap points for one viewport height, in px of `translateY`, keyed by tier. */
 export type SnapPoints = Record<Tier, number>;
@@ -126,15 +126,16 @@ export const VELOCITY_WINDOW_MS = 100;
 export const VELOCITY_SAMPLES = 5;
 
 /** Clamp, without importing `lib/model.ts` (which is scenario maths, not geometry). */
-const clamp = (v: number, lo: number, hi: number): number => (v < lo ? lo : v > hi ? hi : v);
+const clamp = (v: number, lo: number, hi: number): number =>
+    v < lo ? lo : v > hi ? hi : v;
 
 /** Guard a viewport height once, so every function below agrees about what "no height" means. */
 const safeHeight = (viewportH: number): number =>
-  Number.isFinite(viewportH) && viewportH > 0 ? viewportH : 0;
+    Number.isFinite(viewportH) && viewportH > 0 ? viewportH : 0;
 
 /** The sheet's pixel height for a viewport. Shared by the geometry and the snap points. */
 export function sheetHeight(viewportH: number): number {
-  return SHEET_HEIGHT_FRACTION * safeHeight(viewportH);
+    return SHEET_HEIGHT_FRACTION * safeHeight(viewportH);
 }
 
 /**
@@ -152,17 +153,18 @@ export function sheetHeight(viewportH: number): number {
  * silently drops the whole transform, which would leave the sheet at full on load.
  */
 export function computeSnapPoints(viewportH: number): SnapPoints {
-  const h = Number.isFinite(viewportH) && viewportH > 0 ? viewportH : 0;
-  return {
-    full: (SHEET_HEIGHT_FRACTION - TIER_FRACTION.full) * h,
-    half: (SHEET_HEIGHT_FRACTION - TIER_FRACTION.half) * h,
-    /*
-     * The peek point is where the sheet's TOP sits at `h - peekVisible(h)`, which is the same line the camera's
-     * free rect ends at. Written as the subtraction rather than as the fraction so the clamp is visible in the code
-     * that places the sheet.
-     */
-    peek: h === 0 ? 0 : h - peekVisible(h) - (h - SHEET_HEIGHT_FRACTION * h),
-  };
+    const h = Number.isFinite(viewportH) && viewportH > 0 ? viewportH : 0;
+    return {
+        full: (SHEET_HEIGHT_FRACTION - TIER_FRACTION.full) * h,
+        half: (SHEET_HEIGHT_FRACTION - TIER_FRACTION.half) * h,
+        /*
+         * The peek point is where the sheet's TOP sits at `h - peekVisible(h)`, which is the same line the camera's
+         * free rect ends at. Written as the subtraction rather than as the fraction so the clamp is visible in the code
+         * that places the sheet.
+         */
+        peek:
+            h === 0 ? 0 : h - peekVisible(h) - (h - SHEET_HEIGHT_FRACTION * h),
+    };
 }
 
 /**
@@ -181,13 +183,13 @@ export function computeSnapPoints(viewportH: number): SnapPoints {
  * px and the result is the distance the sheet actually moves, in px.
  */
 export function rubberBand(over: number, viewportH: number): number {
-  if (!Number.isFinite(over) || over === 0) return 0;
-  const h = Number.isFinite(viewportH) && viewportH > 0 ? viewportH : 0;
-  const asymptote = RUBBER_ASYMPTOTE_FRACTION * h;
-  if (asymptote <= 0) return 0;
-  const sign = over < 0 ? -1 : 1;
-  const magnitude = Math.abs(over);
-  return sign * asymptote * (1 - Math.exp(-magnitude / asymptote));
+    if (!Number.isFinite(over) || over === 0) return 0;
+    const h = Number.isFinite(viewportH) && viewportH > 0 ? viewportH : 0;
+    const asymptote = RUBBER_ASYMPTOTE_FRACTION * h;
+    if (asymptote <= 0) return 0;
+    const sign = over < 0 ? -1 : 1;
+    const magnitude = Math.abs(over);
+    return sign * asymptote * (1 - Math.exp(-magnitude / asymptote));
 }
 
 /**
@@ -199,32 +201,36 @@ export function rubberBand(over: number, viewportH: number): number {
  * The range is `[full, peek]` rather than `[peek, full]` because `full` is 0 and `peek` is the largest
  * translate; a caller that has the two the other way round would rubber-band the whole usable range.
  */
-export function clampDrag(y: number, points: SnapPoints, viewportH: number): number {
-  const lo = points.full;
-  const hi = points.peek;
-  if (!Number.isFinite(y)) return lo;
-  if (y < lo) return lo + rubberBand(y - lo, viewportH);
-  if (y > hi) return hi + rubberBand(y - hi, viewportH);
-  return y;
+export function clampDrag(
+    y: number,
+    points: SnapPoints,
+    viewportH: number,
+): number {
+    const lo = points.full;
+    const hi = points.peek;
+    if (!Number.isFinite(y)) return lo;
+    if (y < lo) return lo + rubberBand(y - lo, viewportH);
+    if (y > hi) return hi + rubberBand(y - hi, viewportH);
+    return y;
 }
 
 /** Which tier a snap point corresponds to, by exact match within a tolerance. */
 function tierOf(point: number, points: SnapPoints): Tier {
-  let best: Tier = 'peek';
-  let bestDelta = Infinity;
-  for (const tier of TIERS) {
-    const delta = Math.abs(points[tier] - point);
-    if (delta < bestDelta) {
-      bestDelta = delta;
-      best = tier;
+    let best: Tier = "peek";
+    let bestDelta = Infinity;
+    for (const tier of TIERS) {
+        const delta = Math.abs(points[tier] - point);
+        if (delta < bestDelta) {
+            bestDelta = delta;
+            best = tier;
+        }
     }
-  }
-  return best;
+    return best;
 }
 
 /** The index of a tier, for `aria-valuenow`. */
 export function tierIndex(tier: Tier): TierIndex {
-  return TIERS.indexOf(tier) as TierIndex;
+    return TIERS.indexOf(tier) as TierIndex;
 }
 
 /**
@@ -245,12 +251,16 @@ export function tierIndex(tier: Tier): TierIndex {
  * `points` is read, never recomputed, so a caller holding stale points for one frame snaps to those
  * rather than to a mid-resize set.
  */
-export function resolveSnap(y: number, velocityPxPerMs: number, points: SnapPoints): Tier {
-  const lo = points.full;
-  const hi = points.peek;
-  const projected = y + velocityPxPerMs * FLICK_PROJECTION_MS;
-  const target = clamp(Number.isFinite(projected) ? projected : y, lo, hi);
-  return tierOf(target, points);
+export function resolveSnap(
+    y: number,
+    velocityPxPerMs: number,
+    points: SnapPoints,
+): Tier {
+    const lo = points.full;
+    const hi = points.peek;
+    const projected = y + velocityPxPerMs * FLICK_PROJECTION_MS;
+    const target = clamp(Number.isFinite(projected) ? projected : y, lo, hi);
+    return tierOf(target, points);
 }
 
 /**
@@ -262,9 +272,9 @@ export function resolveSnap(y: number, velocityPxPerMs: number, points: SnapPoin
  * buried in an event handler.
  */
 export function cycleTier(tier: Tier): Tier {
-  if (tier === 'peek') return 'half';
-  if (tier === 'half') return 'full';
-  return 'half';
+    if (tier === "peek") return "half";
+    if (tier === "half") return "full";
+    return "half";
 }
 
 /**
@@ -275,17 +285,17 @@ export function cycleTier(tier: Tier): Tier {
  * read. `TAP_MAX_MS` is what stops a long press from being a tap.
  */
 export function isTap(movePx: number, durationMs: number): boolean {
-  return (
-    Number.isFinite(movePx) &&
-    Number.isFinite(durationMs) &&
-    Math.abs(movePx) < TAP_MAX_MOVE_PX &&
-    durationMs < TAP_MAX_MS
-  );
+    return (
+        Number.isFinite(movePx) &&
+        Number.isFinite(durationMs) &&
+        Math.abs(movePx) < TAP_MAX_MOVE_PX &&
+        durationMs < TAP_MAX_MS
+    );
 }
 
 /** Whether a click following a drag must be suppressed. One rule, one place. */
 export function suppressesClick(movePx: number): boolean {
-  return Math.abs(movePx) > TAP_MAX_MOVE_PX;
+    return Math.abs(movePx) > TAP_MAX_MOVE_PX;
 }
 
 /**
@@ -303,19 +313,22 @@ export function suppressesClick(movePx: number): boolean {
  *
  * Returned in px/ms with the sheet's own sign convention: a downward drag (increasing `y`) is positive.
  */
-export function sampleVelocity(samples: ReadonlyArray<{ y: number; t: number }>, now: number): number {
-  if (samples.length < 2) return 0;
-  const cutoff = now - VELOCITY_WINDOW_MS;
-  /* Oldest sample still inside the window, never the whole history. */
-  let first = samples[0];
-  for (const s of samples) {
-    if (s.t >= cutoff) {
-      first = s;
-      break;
+export function sampleVelocity(
+    samples: ReadonlyArray<{ y: number; t: number }>,
+    now: number,
+): number {
+    if (samples.length < 2) return 0;
+    const cutoff = now - VELOCITY_WINDOW_MS;
+    /* Oldest sample still inside the window, never the whole history. */
+    let first = samples[0];
+    for (const s of samples) {
+        if (s.t >= cutoff) {
+            first = s;
+            break;
+        }
     }
-  }
-  const last = samples[samples.length - 1];
-  const dt = last.t - first.t;
-  if (!Number.isFinite(dt) || dt <= 0) return 0;
-  return (last.y - first.y) / dt;
+    const last = samples[samples.length - 1];
+    const dt = last.t - first.t;
+    if (!Number.isFinite(dt) || dt <= 0) return 0;
+    return (last.y - first.y) / dt;
 }

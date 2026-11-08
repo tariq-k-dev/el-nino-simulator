@@ -25,14 +25,21 @@
  * business.
  */
 
-import { useEffect, useRef } from 'react';
-import type { AnalyticsPayload, RegionDefinition, RegionId, ScenarioMetrics, ScenarioState, UnitSystem } from '@/types/enso';
-import { HeaderCompact } from '@/mobile/HeaderCompact';
-import { LandscapeDock } from '@/mobile/LandscapeDock';
-import { SnapSheet, type SnapSheetHandle } from '@/mobile/SnapSheet';
-import type { LayoutMode2 } from '@/mobile/layoutMath';
-import { NINO_BOXES } from '@/lib/regions';
-import { isNinoUiEnabled } from '@/lib/ninoFlag';
+import { useEffect, useRef } from "react";
+import type {
+    AnalyticsPayload,
+    RegionDefinition,
+    RegionId,
+    ScenarioMetrics,
+    ScenarioState,
+    UnitSystem,
+} from "@/types/enso";
+import { HeaderCompact } from "@/mobile/HeaderCompact";
+import { LandscapeDock } from "@/mobile/LandscapeDock";
+import { SnapSheet, type SnapSheetHandle } from "@/mobile/SnapSheet";
+import type { LayoutMode2 } from "@/mobile/layoutMath";
+import { NINO_BOXES } from "@/lib/regions";
+import { isNinoUiEnabled } from "@/lib/ninoFlag";
 
 /**
  * The `?nino=1` flag, read once at module load.
@@ -42,133 +49,139 @@ import { isNinoUiEnabled } from '@/lib/ninoFlag';
  * file for a boolean. The value cannot change without a reload, so a second module-scope read is the
  * same fact, and it keeps `MobileShell`'s hook list identical whichever way the flag points.
  */
-const NINO_UI = isNinoUiEnabled(typeof location === 'undefined' ? '' : location.search);
+const NINO_UI = isNinoUiEnabled(
+    typeof location === "undefined" ? "" : location.search,
+);
 
 interface MobileShellProps {
-  /** The three-way mode, from the store. `desktop` is never passed: `App` does not mount this shell there. */
-  mode: LayoutMode2;
-  /** Layout viewport, so the dock can be exactly `dockWidth(w)` wide. */
-  viewportW: number;
-  /** The compact header's published bottom edge. */
-  headerBottom: number;
-  scenario: ScenarioState;
-  metrics: ScenarioMetrics;
-  analytics: AnalyticsPayload;
-  region: RegionDefinition | null;
-  activeRegion: RegionId | null;
-  units: UnitSystem;
-  exporting: boolean;
-  onToggleUnits: () => void;
-  onExport: () => void;
-  onSelect: (id: RegionId | null) => void;
-  onClearSelection: () => void;
-  onScenarioChange: (patch: Partial<ScenarioState>) => void;
-  /** The Niño box last flown to, so the sheet can collapse and the card can show selection. */
-  activeNinoBox: string | null;
-  /** The "Show on globe" trigger, forwarded to the cards inside the sheet. */
-  onShowOnGlobe: (boxId: string) => void;
+    /** The three-way mode, from the store. `desktop` is never passed: `App` does not mount this shell there. */
+    mode: LayoutMode2;
+    /** Layout viewport, so the dock can be exactly `dockWidth(w)` wide. */
+    viewportW: number;
+    /** The compact header's published bottom edge. */
+    headerBottom: number;
+    scenario: ScenarioState;
+    metrics: ScenarioMetrics;
+    analytics: AnalyticsPayload;
+    region: RegionDefinition | null;
+    activeRegion: RegionId | null;
+    units: UnitSystem;
+    exporting: boolean;
+    onToggleUnits: () => void;
+    onExport: () => void;
+    onSelect: (id: RegionId | null) => void;
+    onClearSelection: () => void;
+    onScenarioChange: (patch: Partial<ScenarioState>) => void;
+    /** The Niño box last flown to, so the sheet can collapse and the card can show selection. */
+    activeNinoBox: string | null;
+    /** The "Show on globe" trigger, forwarded to the cards inside the sheet. */
+    onShowOnGlobe: (boxId: string) => void;
 }
 
 export function MobileShell({
-  mode,
-  viewportW,
-  headerBottom,
-  scenario,
-  metrics,
-  analytics,
-  region,
-  activeRegion,
-  units,
-  exporting,
-  onToggleUnits,
-  onExport,
-  onSelect,
-  onClearSelection,
-  onScenarioChange,
-  activeNinoBox,
-  onShowOnGlobe,
+    mode,
+    viewportW,
+    headerBottom,
+    scenario,
+    metrics,
+    analytics,
+    region,
+    activeRegion,
+    units,
+    exporting,
+    onToggleUnits,
+    onExport,
+    onSelect,
+    onClearSelection,
+    onScenarioChange,
+    activeNinoBox,
+    onShowOnGlobe,
 }: MobileShellProps) {
-  const sheetRef = useRef<SnapSheetHandle>(null);
+    const sheetRef = useRef<SnapSheetHandle>(null);
 
-  /*
-   * The tier reset on portrait entry.
-   *
-   * `wasPortrait` starts false, so the FIRST entry (which is the mount on a phone held upright) resets too — the
-   * sheet mounts at peek anyway, so that costs nothing and keeps the rule unconditional. A rotation out and back
-   * resets again, which is the case the prompt names.
-   */
-  const wasPortrait = useRef(false);
-  useEffect(() => {
-    const isPortrait = mode === 'portrait';
-    if (isPortrait && !wasPortrait.current) sheetRef.current?.resetTier();
-    wasPortrait.current = isPortrait;
-  }, [mode]);
+    /*
+     * The tier reset on portrait entry.
+     *
+     * `wasPortrait` starts false, so the FIRST entry (which is the mount on a phone held upright) resets too — the
+     * sheet mounts at peek anyway, so that costs nothing and keeps the rule unconditional. A rotation out and back
+     * resets again, which is the case the prompt names.
+     */
+    const wasPortrait = useRef(false);
+    useEffect(() => {
+        const isPortrait = mode === "portrait";
+        if (isPortrait && !wasPortrait.current) sheetRef.current?.resetTier();
+        wasPortrait.current = isPortrait;
+    }, [mode]);
 
-  /**
-   * When a Niño box is flown to, collapse the sheet to peek.
-   *
-   * NINO-HARDEN B6(c): this now says phone AND TABLET, because that is what it does. The original
-   * comment claimed "on a PHONE" while the effect below is gated on `activeNinoBox` alone — it fires at
-   * 1032x1376 too, and A7 measured the tablet collapse as real (`tier` Peek after a press at both
-   * 390x844 and 1032x1376). Either the comment or the behaviour was wrong; the behaviour is right
-   * (a tablet Full sheet hides the globe exactly as a phone one does), so the comment is corrected.
-   *
-   * The step requires the globe to be visible after the button is pressed, and the button lives inside
-   * the sheet — so leaving the sheet at the tier the user pressed from would hide the very thing the
-   * press was for. Checked what a REGION selection does: it does not touch the tier at all (the mobile
-   * region switcher just calls `onSelect`), so there is no existing behaviour to mirror here and the
-   * collapse has to be explicit. `resetTier()` is the sheet's own handle — the same one the portrait
-   * rotation rule uses — so this adds no new mechanism.
-   */
-  const wasNinoBox = useRef<string | null>(null);
-  useEffect(() => {
-    if (activeNinoBox && activeNinoBox !== wasNinoBox.current) {
-      sheetRef.current?.resetTier();
-      /*
-       * NINO-HARDEN B6(b): move focus to the slider handle after the collapse.
-       *
-       * The card the user just pressed is inside the sheet body, and the body UNMOUNTS at Peek — so
-       * focus fell to `BODY` and a keyboard or screen-reader user lost their place entirely. A7 measured
-       * `activeElement` as BODY at both 390x844 and 1032x1376, with zero `aria-pressed="true"` nodes
-       * surviving. The handle (`SnapSheet.tsx:297-303`, `role="slider"`, `tabIndex=0`) is the nearest
-       * control that survives the collapse and it is what moves the sheet back, so it is the honest
-       * destination rather than an arbitrary one.
-       *
-       * Deferred one frame: `resetTier()` animates and the sheet body is still mounted in this task, so
-       * focusing synchronously would land on an element that is about to be removed.
-       */
-      requestAnimationFrame(() => {
-        const handle = document.querySelector<HTMLElement>(
-          '[role="slider"][aria-label="Sheet position"]',
-        );
-        handle?.focus();
-      });
-    }
-    wasNinoBox.current = activeNinoBox;
-  }, [activeNinoBox]);
+    /**
+     * When a Niño box is flown to, collapse the sheet to peek.
+     *
+     * NINO-HARDEN B6(c): this now says phone AND TABLET, because that is what it does. The original
+     * comment claimed "on a PHONE" while the effect below is gated on `activeNinoBox` alone — it fires at
+     * 1032x1376 too, and A7 measured the tablet collapse as real (`tier` Peek after a press at both
+     * 390x844 and 1032x1376). Either the comment or the behaviour was wrong; the behaviour is right
+     * (a tablet Full sheet hides the globe exactly as a phone one does), so the comment is corrected.
+     *
+     * The step requires the globe to be visible after the button is pressed, and the button lives inside
+     * the sheet — so leaving the sheet at the tier the user pressed from would hide the very thing the
+     * press was for. Checked what a REGION selection does: it does not touch the tier at all (the mobile
+     * region switcher just calls `onSelect`), so there is no existing behaviour to mirror here and the
+     * collapse has to be explicit. `resetTier()` is the sheet's own handle — the same one the portrait
+     * rotation rule uses — so this adds no new mechanism.
+     */
+    const wasNinoBox = useRef<string | null>(null);
+    useEffect(() => {
+        if (activeNinoBox && activeNinoBox !== wasNinoBox.current) {
+            sheetRef.current?.resetTier();
+            /*
+             * NINO-HARDEN B6(b): move focus to the slider handle after the collapse.
+             *
+             * The card the user just pressed is inside the sheet body, and the body UNMOUNTS at Peek — so
+             * focus fell to `BODY` and a keyboard or screen-reader user lost their place entirely. A7 measured
+             * `activeElement` as BODY at both 390x844 and 1032x1376, with zero `aria-pressed="true"` nodes
+             * surviving. The handle (`SnapSheet.tsx:297-303`, `role="slider"`, `tabIndex=0`) is the nearest
+             * control that survives the collapse and it is what moves the sheet back, so it is the honest
+             * destination rather than an arbitrary one.
+             *
+             * Deferred one frame: `resetTier()` animates and the sheet body is still mounted in this task, so
+             * focusing synchronously would land on an element that is about to be removed.
+             */
+            requestAnimationFrame(() => {
+                const handle = document.querySelector<HTMLElement>(
+                    '[role="slider"][aria-label="Sheet position"]',
+                );
+                handle?.focus();
+            });
+        }
+        wasNinoBox.current = activeNinoBox;
+    }, [activeNinoBox]);
 
-  /*
-   * NINO-HARDEN B6(a): the flight announcement lives HERE, at shell level, not in the sheet body.
-   *
-   * The body unmounts at Peek — which is exactly the tier a box press collapses to — so an
-   * `aria-live` node inside it is removed in the same frame its text would have been announced, and the
-   * announcement is lost. Mounted on the shell it survives every tier, every mode change and every
-   * sheet unmount, which is the only way the message is reliably spoken.
-   *
-   * The label comes from `NINO_BOXES.anchorLat`-bearing registry entries rather than a second hardcoded
-   * table: `NINO_BOXES` already carries each box's display `label` ('NIÑO 1+2', 'NIÑO 4', 'NIÑO 3.4'),
-   * so the announcement cannot drift from the card.
-   *
-   * The node is `aria-live="polite"` and visually hidden rather than `display:none` or `aria-hidden`:
-   * a hidden node is not announced. Flag-ON only — the JSX below does not render the node at all when
-   * `NINO_UI` is false, because M1 caught it adding one element to the flag-off DOM.
-   */
-  const announcedBox = activeNinoBox ? NINO_BOXES.find((b) => b.id === activeNinoBox) : undefined;
-  const ninoAnnouncement = announcedBox ? `Showing ${announcedBox.label} on the globe` : '';
+    /*
+     * NINO-HARDEN B6(a): the flight announcement lives HERE, at shell level, not in the sheet body.
+     *
+     * The body unmounts at Peek — which is exactly the tier a box press collapses to — so an
+     * `aria-live` node inside it is removed in the same frame its text would have been announced, and the
+     * announcement is lost. Mounted on the shell it survives every tier, every mode change and every
+     * sheet unmount, which is the only way the message is reliably spoken.
+     *
+     * The label comes from `NINO_BOXES.anchorLat`-bearing registry entries rather than a second hardcoded
+     * table: `NINO_BOXES` already carries each box's display `label` ('NIÑO 1+2', 'NIÑO 4', 'NIÑO 3.4'),
+     * so the announcement cannot drift from the card.
+     *
+     * The node is `aria-live="polite"` and visually hidden rather than `display:none` or `aria-hidden`:
+     * a hidden node is not announced. Flag-ON only — the JSX below does not render the node at all when
+     * `NINO_UI` is false, because M1 caught it adding one element to the flag-off DOM.
+     */
+    const announcedBox = activeNinoBox
+        ? NINO_BOXES.find((b) => b.id === activeNinoBox)
+        : undefined;
+    const ninoAnnouncement = announcedBox
+        ? `Showing ${announcedBox.label} on the globe`
+        : "";
 
-  return (
-    <>
-      {/*
+    return (
+        <>
+            {/*
         NINO-HARDEN B6(a): the persistent announcement node. FLAG-ON ONLY.
 
         Mounted FIRST in the shell and OUTSIDE every tier conditional, so it exists in every mode,
@@ -185,76 +198,80 @@ export function MobileShell({
         `sr-only`-style clipping rather than `hidden`/`display:none`: those remove the node from the
         accessibility tree and it would never be spoken.
       */}
-      {NINO_UI ? (
-        <div
-          role="status"
-          aria-live="polite"
-          aria-atomic="true"
-          data-testid="nino-live"
-          style={{
-            position: 'absolute',
-            width: 1,
-            height: 1,
-            padding: 0,
-            margin: -1,
-            overflow: 'hidden',
-            clip: 'rect(0, 0, 0, 0)',
-            whiteSpace: 'nowrap',
-            border: 0,
-          }}
-        >
-          {ninoAnnouncement}
-        </div>
-      ) : null}
+            {NINO_UI ? (
+                <div
+                    role="status"
+                    aria-live="polite"
+                    aria-atomic="true"
+                    data-testid="nino-live"
+                    style={{
+                        position: "absolute",
+                        width: 1,
+                        height: 1,
+                        padding: 0,
+                        margin: -1,
+                        overflow: "hidden",
+                        clip: "rect(0, 0, 0, 0)",
+                        whiteSpace: "nowrap",
+                        border: 0,
+                    }}
+                >
+                    {ninoAnnouncement}
+                </div>
+            ) : null}
 
-      <HeaderCompact
-        mode={mode}
-        viewportW={viewportW}
-        anomalyC={scenario.sstAnomaly}
-        units={units}
-        onToggleUnits={onToggleUnits}
-        onExport={onExport}
-        exporting={exporting}
-        onClearSelection={onClearSelection}
-        onSstChange={(value) => onScenarioChange({ sstAnomaly: value })}
-      />
+            <HeaderCompact
+                mode={mode}
+                viewportW={viewportW}
+                anomalyC={scenario.sstAnomaly}
+                units={units}
+                onToggleUnits={onToggleUnits}
+                onExport={onExport}
+                exporting={exporting}
+                onClearSelection={onClearSelection}
+                onSstChange={(value) => onScenarioChange({ sstAnomaly: value })}
+            />
 
-      {mode === 'portrait' ? (
-        <SnapSheet
-          ref={sheetRef}
-          metrics={metrics}
-          analytics={analytics}
-          scenarioSst={scenario.sstAnomaly}
-          region={region}
-          units={units}
-          activeRegion={activeRegion}
-          onSelect={(id) => onSelect(id)}
-          activeNinoBox={activeNinoBox}
-          onShowOnGlobe={onShowOnGlobe}
-          onClearSelection={onClearSelection}
-          onSstChange={(value) => onScenarioChange({ sstAnomaly: value })}
-          onChangeScenario={(patch) => onScenarioChange(patch)}
-        />
-      ) : null}
+            {mode === "portrait" ? (
+                <SnapSheet
+                    ref={sheetRef}
+                    metrics={metrics}
+                    analytics={analytics}
+                    scenarioSst={scenario.sstAnomaly}
+                    region={region}
+                    units={units}
+                    activeRegion={activeRegion}
+                    onSelect={(id) => onSelect(id)}
+                    activeNinoBox={activeNinoBox}
+                    onShowOnGlobe={onShowOnGlobe}
+                    onClearSelection={onClearSelection}
+                    onSstChange={(value) =>
+                        onScenarioChange({ sstAnomaly: value })
+                    }
+                    onChangeScenario={(patch) => onScenarioChange(patch)}
+                />
+            ) : null}
 
-      {mode === 'phoneLandscape' ? (
-        <LandscapeDock
-          viewportW={viewportW}
-          headerBottom={headerBottom}
-          metrics={metrics}
-          analytics={analytics}
-          scenarioSst={scenario.sstAnomaly}
-          region={region}
-          units={units}
-          activeRegion={activeRegion}
-          onSelect={(id) => onSelect(id)}
-          activeNinoBox={activeNinoBox}
-          onShowOnGlobe={onShowOnGlobe}
-          onClearSelection={onClearSelection}
-          onSstChange={(value) => onScenarioChange({ sstAnomaly: value })}
-          onChangeScenario={(patch) => onScenarioChange(patch)}
-        />
-      ) : null}
-    </>
-  );
+            {mode === "phoneLandscape" ? (
+                <LandscapeDock
+                    viewportW={viewportW}
+                    headerBottom={headerBottom}
+                    metrics={metrics}
+                    analytics={analytics}
+                    scenarioSst={scenario.sstAnomaly}
+                    region={region}
+                    units={units}
+                    activeRegion={activeRegion}
+                    onSelect={(id) => onSelect(id)}
+                    activeNinoBox={activeNinoBox}
+                    onShowOnGlobe={onShowOnGlobe}
+                    onClearSelection={onClearSelection}
+                    onSstChange={(value) =>
+                        onScenarioChange({ sstAnomaly: value })
+                    }
+                    onChangeScenario={(patch) => onScenarioChange(patch)}
+                />
+            ) : null}
+        </>
+    );
 }

@@ -20,45 +20,49 @@
  */
 
 import {
-  computeFreeRect,
-  isMobileMode,
-  resolveLayoutMode,
-  type LayoutMode2,
-  type MobileFreeRect,
-} from '@/mobile/layoutMath';
+    computeFreeRect,
+    isMobileMode,
+    resolveLayoutMode,
+    type LayoutMode2,
+    type MobileFreeRect,
+} from "@/mobile/layoutMath";
 
 /** What the director publishes about the view. */
 export interface ViewState {
-  /** Nothing selected, no user zoom, direction within 0.5 deg of the default, distance at d_fit. */
-  viewIsDefault: boolean;
-  /** Is the planet's spin running? */
-  spinning: boolean;
-  /**
-   * Is a region card / drawer open? Published by `GlobeScene` from the `activeRegion` prop.
-   *
-   * Step 3B2-FIX1 B: `viewIsDefault` is a question about the POSE, and an open region is a reason to be
-   * able to Reset even when the pose happens to be the default — so the Reset control is disabled only
-   * when BOTH are false. Kept in this store rather than threaded through the header as a prop because the
-   * store is already the one thing React reads from the scene each frame.
-   */
-  hasRegion: boolean;
+    /** Nothing selected, no user zoom, direction within 0.5 deg of the default, distance at d_fit. */
+    viewIsDefault: boolean;
+    /** Is the planet's spin running? */
+    spinning: boolean;
+    /**
+     * Is a region card / drawer open? Published by `GlobeScene` from the `activeRegion` prop.
+     *
+     * Step 3B2-FIX1 B: `viewIsDefault` is a question about the POSE, and an open region is a reason to be
+     * able to Reset even when the pose happens to be the default — so the Reset control is disabled only
+     * when BOTH are false. Kept in this store rather than threaded through the header as a prop because the
+     * store is already the one thing React reads from the scene each frame.
+     */
+    hasRegion: boolean;
 }
 
-const INITIAL: ViewState = { viewIsDefault: true, spinning: true, hasRegion: false };
+const INITIAL: ViewState = {
+    viewIsDefault: true,
+    spinning: true,
+    hasRegion: false,
+};
 
 let current: ViewState = INITIAL;
 const listeners = new Set<() => void>();
 
 /** The current view state. Stable reference until something changes. */
 export function getViewState(): ViewState {
-  return current;
+    return current;
 }
 
 export function subscribeViewState(listener: () => void): () => void {
-  listeners.add(listener);
-  return () => {
-    listeners.delete(listener);
-  };
+    listeners.add(listener);
+    return () => {
+        listeners.delete(listener);
+    };
 }
 
 /**
@@ -66,15 +70,19 @@ export function subscribeViewState(listener: () => void): () => void {
  * keeps a 60 Hz caller from producing 60 Hz renders.
  */
 export function publishViewState(next: ViewState): void {
-  if (
-    next.viewIsDefault === current.viewIsDefault &&
-    next.spinning === current.spinning &&
-    next.hasRegion === current.hasRegion
-  ) {
-    return;
-  }
-  current = { viewIsDefault: next.viewIsDefault, spinning: next.spinning, hasRegion: next.hasRegion };
-  for (const listener of listeners) listener();
+    if (
+        next.viewIsDefault === current.viewIsDefault &&
+        next.spinning === current.spinning &&
+        next.hasRegion === current.hasRegion
+    ) {
+        return;
+    }
+    current = {
+        viewIsDefault: next.viewIsDefault,
+        spinning: next.spinning,
+        hasRegion: next.hasRegion,
+    };
+    for (const listener of listeners) listener();
 }
 
 /**
@@ -85,7 +93,7 @@ export function publishViewState(next: ViewState): void {
  * per-frame publish carries the same value from the machine, and `publishViewState` drops the duplicate.
  */
 export function publishHasRegion(hasRegion: boolean): void {
-  publishViewState({ ...current, hasRegion });
+    publishViewState({ ...current, hasRegion });
 }
 
 /* ------------------------------------------------------------------ the RESET channel */
@@ -95,14 +103,14 @@ let resetCount = 0;
 
 /** The number of RESET requests so far. Monotonic, so a subscriber can diff it. */
 export function getResetRequest(): number {
-  return resetCount;
+    return resetCount;
 }
 
 export function subscribeResetRequest(listener: () => void): () => void {
-  resetListeners.add(listener);
-  return () => {
-    resetListeners.delete(listener);
-  };
+    resetListeners.add(listener);
+    return () => {
+        resetListeners.delete(listener);
+    };
 }
 
 /**
@@ -113,14 +121,14 @@ export function subscribeResetRequest(listener: () => void): () => void {
  * `resetView()` is the rule, and calling half of it is what left the drawer open.
  */
 export function requestReset(): void {
-  resetCount += 1;
-  for (const listener of resetListeners) listener();
+    resetCount += 1;
+    for (const listener of resetListeners) listener();
 }
 
 /** Test-only reset of both channels, so a unit test starts from a known state. */
 export function __resetViewStore(): void {
-  current = INITIAL;
-  resetCount = 0;
+    current = INITIAL;
+    resetCount = 0;
 }
 
 /* ------------------------------------------------------------------ the LAYOUT lane */
@@ -163,20 +171,25 @@ export function __resetViewStore(): void {
  */
 
 export interface LayoutSignal {
-  /** The three-way mode. `portrait` and `phoneLandscape` are both mobile layouts. */
-  mode: LayoutMode2;
-  /** Layout-viewport width, CSS px. */
-  width: number;
-  /** Layout-viewport height, CSS px. */
-  height: number;
-  /**
-   * The compact header's measured bottom edge, CSS px. `0` until the header publishes one (and on desktop, where
-   * no compact header is mounted and the insets registry measures the desktop one instead).
-   */
-  headerBottom: number;
+    /** The three-way mode. `portrait` and `phoneLandscape` are both mobile layouts. */
+    mode: LayoutMode2;
+    /** Layout-viewport width, CSS px. */
+    width: number;
+    /** Layout-viewport height, CSS px. */
+    height: number;
+    /**
+     * The compact header's measured bottom edge, CSS px. `0` until the header publishes one (and on desktop, where
+     * no compact header is mounted and the insets registry measures the desktop one instead).
+     */
+    headerBottom: number;
 }
 
-const INITIAL_LAYOUT: LayoutSignal = { mode: 'desktop', width: 0, height: 0, headerBottom: 0 };
+const INITIAL_LAYOUT: LayoutSignal = {
+    mode: "desktop",
+    width: 0,
+    height: 0,
+    headerBottom: 0,
+};
 
 let layout: LayoutSignal = INITIAL_LAYOUT;
 
@@ -190,17 +203,17 @@ const layoutListeners = new Set<() => void>();
  * re-renders on any change, while the director only has to re-fit when the RECT moves. Kept as one map of key →
  * listeners so a future third consumer costs one entry rather than one more module.
  */
-type LayoutKey = 'mode' | 'size' | 'headerBottom' | 'all';
+type LayoutKey = "mode" | "size" | "headerBottom" | "all";
 const layoutKeyListeners = new Map<LayoutKey, Set<() => void>>();
 
 /** The current signal. Stable reference until something changes. */
 export function getLayoutSignal(): LayoutSignal {
-  return layout;
+    return layout;
 }
 
 /** The three-way mode as of right now. Read non-reactively by the frame loop. */
 export function getLayoutMode2(): LayoutMode2 {
-  return layout.mode;
+    return layout.mode;
 }
 
 /**
@@ -210,53 +223,57 @@ export function getLayoutMode2(): LayoutMode2 {
  * question ("is this a phone layout or the desktop overlays?"), and answering it from the three-way field is one
  * comparison. Nothing new should use it — `getLayoutMode2` is the honest value.
  */
-export function getLayoutMode(): 'mobile' | 'desktop' {
-  return isMobileMode(layout.mode) ? 'mobile' : 'desktop';
+export function getLayoutMode(): "mobile" | "desktop" {
+    return isMobileMode(layout.mode) ? "mobile" : "desktop";
 }
 
 export function subscribeLayout(listener: () => void): () => void {
-  layoutListeners.add(listener);
-  return () => {
-    layoutListeners.delete(listener);
-  };
+    layoutListeners.add(listener);
+    return () => {
+        layoutListeners.delete(listener);
+    };
 }
 
-export function subscribeLayoutKey(key: LayoutKey, listener: () => void): () => void {
-  let set = layoutKeyListeners.get(key);
-  if (!set) {
-    set = new Set();
-    layoutKeyListeners.set(key, set);
-  }
-  set.add(listener);
-  return () => {
-    set?.delete(listener);
-  };
+export function subscribeLayoutKey(
+    key: LayoutKey,
+    listener: () => void,
+): () => void {
+    let set = layoutKeyListeners.get(key);
+    if (!set) {
+        set = new Set();
+        layoutKeyListeners.set(key, set);
+    }
+    set.add(listener);
+    return () => {
+        set?.delete(listener);
+    };
 }
 
 /** Apply a patch, notify only the listeners whose field moved, and keep the snapshot reference stable. */
 function applyLayout(patch: Partial<LayoutSignal>): void {
-  const next: LayoutSignal = { ...layout, ...patch };
-  if (
-    next.mode === layout.mode &&
-    next.width === layout.width &&
-    next.height === layout.height &&
-    next.headerBottom === layout.headerBottom
-  ) {
-    return;
-  }
-  const modeChanged = next.mode !== layout.mode;
-  const sizeChanged = next.width !== layout.width || next.height !== layout.height;
-  const headerChanged = next.headerBottom !== layout.headerBottom;
-  layout = next;
+    const next: LayoutSignal = { ...layout, ...patch };
+    if (
+        next.mode === layout.mode &&
+        next.width === layout.width &&
+        next.height === layout.height &&
+        next.headerBottom === layout.headerBottom
+    ) {
+        return;
+    }
+    const modeChanged = next.mode !== layout.mode;
+    const sizeChanged =
+        next.width !== layout.width || next.height !== layout.height;
+    const headerChanged = next.headerBottom !== layout.headerBottom;
+    layout = next;
 
-  for (const listener of layoutListeners) listener();
-  const notify = (key: LayoutKey): void => {
-    for (const listener of layoutKeyListeners.get(key) ?? []) listener();
-  };
-  if (modeChanged) notify('mode');
-  if (sizeChanged) notify('size');
-  if (headerChanged) notify('headerBottom');
-  notify('all');
+    for (const listener of layoutListeners) listener();
+    const notify = (key: LayoutKey): void => {
+        for (const listener of layoutKeyListeners.get(key) ?? []) listener();
+    };
+    if (modeChanged) notify("mode");
+    if (sizeChanged) notify("size");
+    if (headerChanged) notify("headerBottom");
+    notify("all");
 }
 
 /**
@@ -266,7 +283,12 @@ function applyLayout(patch: Partial<LayoutSignal>): void {
  * thing that can be stale by exactly the frame that matters.
  */
 export function getFreeRect(): MobileFreeRect {
-  return computeFreeRect(layout.mode, layout.width, layout.height, layout.headerBottom);
+    return computeFreeRect(
+        layout.mode,
+        layout.width,
+        layout.height,
+        layout.headerBottom,
+    );
 }
 
 /** The smallest change in the header's bottom edge worth a publish, CSS px. */
@@ -284,16 +306,17 @@ export const HEADER_BOTTOM_EPSILON_PX = 0.5;
  * to desktop would push the desktop free rect down by a header that is not on screen.
  */
 export function publishHeaderBottom(px: number | null): void {
-  const wanted = px === null || !Number.isFinite(px) || px <= 0 ? 0 : px;
-  if (Math.abs(wanted - layout.headerBottom) < HEADER_BOTTOM_EPSILON_PX) return;
-  applyLayout({ headerBottom: wanted });
+    const wanted = px === null || !Number.isFinite(px) || px <= 0 ? 0 : px;
+    if (Math.abs(wanted - layout.headerBottom) < HEADER_BOTTOM_EPSILON_PX)
+        return;
+    applyLayout({ headerBottom: wanted });
 }
 
 /** Read the layout viewport. `innerWidth`/`innerHeight`, NOT `visualViewport` — see `layoutMath`. */
 function readViewport(win: Window): { width: number; height: number } {
-  const w = Number.isFinite(win.innerWidth) ? win.innerWidth : 0;
-  const h = Number.isFinite(win.innerHeight) ? win.innerHeight : 0;
-  return { width: w, height: h };
+    const w = Number.isFinite(win.innerWidth) ? win.innerWidth : 0;
+    const h = Number.isFinite(win.innerHeight) ? win.innerHeight : 0;
+    return { width: w, height: h };
 }
 
 let layoutWindow: Window | null = null;
@@ -309,51 +332,59 @@ let layoutCleanup: (() => void) | null = null;
  * mounts first starts it, and the last unmount stops it.
  */
 export function startLayoutObserver(
-  win: Window | undefined = typeof window === 'undefined' ? undefined : window,
+    win: Window | undefined = typeof window === "undefined"
+        ? undefined
+        : window,
 ): () => void {
-  if (!win) return () => undefined;
+    if (!win) return () => undefined;
 
-  /* The synchronous first read: no first-paint flash, and a spec's first read is already correct. */
-  const initial = readViewport(win);
-  applyLayout({ ...initial, mode: resolveLayoutMode(initial.width, initial.height) });
-
-  if (layoutWindow === win) {
-    layoutRefs += 1;
-    return () => {
-      layoutRefs -= 1;
-      if (layoutRefs <= 0) stopLayoutObserver();
-    };
-  }
-  if (layoutWindow !== null) stopLayoutObserver();
-
-  layoutWindow = win;
-  layoutRefs = 1;
-
-  const measure = (): void => {
-    if (layoutFrame !== null) return;
-    layoutFrame = win.requestAnimationFrame(() => {
-      layoutFrame = null;
-      const next = readViewport(win);
-      applyLayout({ ...next, mode: resolveLayoutMode(next.width, next.height) });
+    /* The synchronous first read: no first-paint flash, and a spec's first read is already correct. */
+    const initial = readViewport(win);
+    applyLayout({
+        ...initial,
+        mode: resolveLayoutMode(initial.width, initial.height),
     });
-  };
 
-  win.addEventListener('resize', measure);
-  win.addEventListener('orientationchange', measure);
-
-  layoutCleanup = () => {
-    if (layoutFrame !== null) {
-      win.cancelAnimationFrame(layoutFrame);
-      layoutFrame = null;
+    if (layoutWindow === win) {
+        layoutRefs += 1;
+        return () => {
+            layoutRefs -= 1;
+            if (layoutRefs <= 0) stopLayoutObserver();
+        };
     }
-    win.removeEventListener('resize', measure);
-    win.removeEventListener('orientationchange', measure);
-  };
+    if (layoutWindow !== null) stopLayoutObserver();
 
-  return () => {
-    layoutRefs -= 1;
-    if (layoutRefs <= 0) stopLayoutObserver();
-  };
+    layoutWindow = win;
+    layoutRefs = 1;
+
+    const measure = (): void => {
+        if (layoutFrame !== null) return;
+        layoutFrame = win.requestAnimationFrame(() => {
+            layoutFrame = null;
+            const next = readViewport(win);
+            applyLayout({
+                ...next,
+                mode: resolveLayoutMode(next.width, next.height),
+            });
+        });
+    };
+
+    win.addEventListener("resize", measure);
+    win.addEventListener("orientationchange", measure);
+
+    layoutCleanup = () => {
+        if (layoutFrame !== null) {
+            win.cancelAnimationFrame(layoutFrame);
+            layoutFrame = null;
+        }
+        win.removeEventListener("resize", measure);
+        win.removeEventListener("orientationchange", measure);
+    };
+
+    return () => {
+        layoutRefs -= 1;
+        if (layoutRefs <= 0) stopLayoutObserver();
+    };
 }
 
 /**
@@ -365,27 +396,27 @@ export function startLayoutObserver(
  * anything that reads the store afterwards.
  */
 function stopLayoutObserver(): void {
-  layoutCleanup?.();
-  layoutCleanup = null;
-  layoutWindow = null;
-  layoutRefs = 0;
-  layoutFrame = null;
-  applyLayout({ ...INITIAL_LAYOUT });
+    layoutCleanup?.();
+    layoutCleanup = null;
+    layoutWindow = null;
+    layoutRefs = 0;
+    layoutFrame = null;
+    applyLayout({ ...INITIAL_LAYOUT });
 }
 
 /** Test-only: force the whole signal, so a unit test can exercise every mode without a browser. */
 export function __setLayoutForTest(next: Partial<LayoutSignal>): void {
-  applyLayout(next);
+    applyLayout(next);
 }
 
 /** Test-only: drop every listener and go back to the desktop default. */
 export function __resetLayoutStore(): void {
-  layoutCleanup?.();
-  layoutCleanup = null;
-  layoutWindow = null;
-  layoutRefs = 0;
-  layoutFrame = null;
-  layout = INITIAL_LAYOUT;
-  layoutListeners.clear();
-  layoutKeyListeners.clear();
+    layoutCleanup?.();
+    layoutCleanup = null;
+    layoutWindow = null;
+    layoutRefs = 0;
+    layoutFrame = null;
+    layout = INITIAL_LAYOUT;
+    layoutListeners.clear();
+    layoutKeyListeners.clear();
 }

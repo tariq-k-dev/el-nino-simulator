@@ -21,7 +21,7 @@
  * (`maxStepDegrees`), so "no segment jumps across the globe" is proved rather than argued.
  */
 
-import { type NinoBox, boxLon360Ranges, latLonToVector3 } from '@/lib/regions';
+import { type NinoBox, boxLon360Ranges, latLonToVector3 } from "@/lib/regions";
 
 /**
  * Radius of the outline, in Earth radii.
@@ -69,70 +69,78 @@ export type Vec3 = readonly [number, number, number];
  * needed, and adding one would only create a place for a sign error.
  */
 export function ninoOutlineLoops(
-  box: NinoBox,
-  radius: number = NINO_OUTLINE_RADIUS,
-  stepDeg: number = NINO_OUTLINE_STEP_DEG,
+    box: NinoBox,
+    radius: number = NINO_OUTLINE_RADIUS,
+    stepDeg: number = NINO_OUTLINE_STEP_DEG,
 ): Vec3[][] {
-  if (!(stepDeg > 0) || stepDeg > 45) {
-    throw new RangeError(`ninoOutlineLoops: stepDeg must be in (0, 45], got ${stepDeg}`);
-  }
-  if (!(radius > 0)) {
-    throw new RangeError(`ninoOutlineLoops: radius must be positive, got ${radius}`);
-  }
+    if (!(stepDeg > 0) || stepDeg > 45) {
+        throw new RangeError(
+            `ninoOutlineLoops: stepDeg must be in (0, 45], got ${stepDeg}`,
+        );
+    }
+    if (!(radius > 0)) {
+        throw new RangeError(
+            `ninoOutlineLoops: radius must be positive, got ${radius}`,
+        );
+    }
 
-  return boxLon360Ranges(box).map(([lonMin, lonMax]) => {
-    const loop: Vec3[] = [];
-    const push = (lat: number, lon360: number) => {
-      loop.push(latLonToVector3(lat, lon360, radius));
-    };
+    return boxLon360Ranges(box).map(([lonMin, lonMax]) => {
+        const loop: Vec3[] = [];
+        const push = (lat: number, lon360: number) => {
+            loop.push(latLonToVector3(lat, lon360, radius));
+        };
 
-    const span = lonMax - lonMin;
-    /**
-     * Steps along the longitude edges, and the vertices along them.
-     *
-     * `Math.max(1, ...)` keeps a degenerate zero-span range (a box one longitude wide) from
-     * producing a loop with no interior vertices, which would still be valid but would make the
-     * step assertions vacuous.
-     */
-    const n = Math.max(1, Math.ceil(span / stepDeg));
-    const lons: number[] = [];
-    for (let i = 0; i <= n; i += 1) lons.push(lonMin + (span * i) / n);
+        const span = lonMax - lonMin;
+        /**
+         * Steps along the longitude edges, and the vertices along them.
+         *
+         * `Math.max(1, ...)` keeps a degenerate zero-span range (a box one longitude wide) from
+         * producing a loop with no interior vertices, which would still be valid but would make the
+         * step assertions vacuous.
+         */
+        const n = Math.max(1, Math.ceil(span / stepDeg));
+        const lons: number[] = [];
+        for (let i = 0; i <= n; i += 1) lons.push(lonMin + (span * i) / n);
 
-    /**
-     * Steps along the LATITUDE legs — added in NINO-HARDEN B1.
-     *
-     * Before this, each loop was two parallel rows joined by a single segment at each end, so the
-     * vertical legs were ONE chord spanning the whole box height: 10 degrees for Niño 1+2, 10 for
-     * Niño 4. The midpoint of such a chord sits at `R·cos(5°)` = 0.998685 R — that is 0.001315 R
-     * INSIDE the unit sphere, so the middle of every vertical leg was buried under the globe's own
-     * surface and depth-hidden, while its two ends poked out at 1.0025. The outline was therefore
-     * visibly two parallel arcs with the ends clipped, not a closed box.
-     *
-     * With the legs sampled at `stepDeg` the worst chord is 1 degree wide, whose midpoint sits at
-     * `1.0025·cos(0.5°)` = 1.002462 R — still above the 1.0020 test floor and outside the sphere.
-     *
-     * The legs are sampled in the same 360 longitude space the horizontal edges already use, so a
-     * vertex on a leg is `latLonToVector3(lat, lon360, radius)` with the same periodic trig — no
-     * normalisation step, and the dateline merge (`boxLon360Ranges`) is untouched.
-     */
-    const m = Math.max(1, Math.ceil(Math.abs(box.latMax - box.latMin) / stepDeg));
-    const lats: number[] = [];
-    for (let i = 1; i < m; i += 1) lats.push(box.latMin + ((box.latMax - box.latMin) * i) / m);
+        /**
+         * Steps along the LATITUDE legs — added in NINO-HARDEN B1.
+         *
+         * Before this, each loop was two parallel rows joined by a single segment at each end, so the
+         * vertical legs were ONE chord spanning the whole box height: 10 degrees for Niño 1+2, 10 for
+         * Niño 4. The midpoint of such a chord sits at `R·cos(5°)` = 0.998685 R — that is 0.001315 R
+         * INSIDE the unit sphere, so the middle of every vertical leg was buried under the globe's own
+         * surface and depth-hidden, while its two ends poked out at 1.0025. The outline was therefore
+         * visibly two parallel arcs with the ends clipped, not a closed box.
+         *
+         * With the legs sampled at `stepDeg` the worst chord is 1 degree wide, whose midpoint sits at
+         * `1.0025·cos(0.5°)` = 1.002462 R — still above the 1.0020 test floor and outside the sphere.
+         *
+         * The legs are sampled in the same 360 longitude space the horizontal edges already use, so a
+         * vertex on a leg is `latLonToVector3(lat, lon360, radius)` with the same periodic trig — no
+         * normalisation step, and the dateline merge (`boxLon360Ranges`) is untouched.
+         */
+        const m = Math.max(
+            1,
+            Math.ceil(Math.abs(box.latMax - box.latMin) / stepDeg),
+        );
+        const lats: number[] = [];
+        for (let i = 1; i < m; i += 1)
+            lats.push(box.latMin + ((box.latMax - box.latMin) * i) / m);
 
-    // South edge: lon increases at latMin.
-    for (const lon of lons) push(box.latMin, lon);
-    // East leg: lat increases at the east end, interior vertices only.
-    const eastLon = lons[lons.length - 1];
-    for (const lat of lats) push(lat, eastLon);
-    // North edge: lon decreases at latMax, so the loop returns without retracing.
-    for (let i = lons.length - 1; i >= 0; i -= 1) push(box.latMax, lons[i]);
-    // West leg: lat decreases back to latMin, interior vertices only.
-    for (let i = lats.length - 1; i >= 0; i -= 1) push(lats[i], lons[0]);
+        // South edge: lon increases at latMin.
+        for (const lon of lons) push(box.latMin, lon);
+        // East leg: lat increases at the east end, interior vertices only.
+        const eastLon = lons[lons.length - 1];
+        for (const lat of lats) push(lat, eastLon);
+        // North edge: lon decreases at latMax, so the loop returns without retracing.
+        for (let i = lons.length - 1; i >= 0; i -= 1) push(box.latMax, lons[i]);
+        // West leg: lat decreases back to latMin, interior vertices only.
+        for (let i = lats.length - 1; i >= 0; i -= 1) push(lats[i], lons[0]);
 
-    // Close THIS loop explicitly, and only to its own first point.
-    if (loop.length > 0) loop.push(loop[0]);
-    return loop;
-  });
+        // Close THIS loop explicitly, and only to its own first point.
+        if (loop.length > 0) loop.push(loop[0]);
+        return loop;
+    });
 }
 
 /**
@@ -143,11 +151,11 @@ export function ninoOutlineLoops(
  * two separate lines rather than one line that joins them.
  */
 export function ninoOutlineVertices(
-  box: NinoBox,
-  radius: number = NINO_OUTLINE_RADIUS,
-  stepDeg: number = NINO_OUTLINE_STEP_DEG,
+    box: NinoBox,
+    radius: number = NINO_OUTLINE_RADIUS,
+    stepDeg: number = NINO_OUTLINE_STEP_DEG,
 ): Vec3[] {
-  return ninoOutlineLoops(box, radius, stepDeg).flat();
+    return ninoOutlineLoops(box, radius, stepDeg).flat();
 }
 
 /**
@@ -158,39 +166,42 @@ export function ninoOutlineVertices(
  * half-turn means the builder emitted a jumped segment.
  */
 export function maxStepDegrees(vertices: readonly Vec3[]): number {
-  if (vertices.length < 2) return 0;
-  let worst = 0;
-  for (let i = 1; i < vertices.length; i += 1) {
-    const a = vertices[i - 1];
-    const b = vertices[i];
-    const dot = a[0] * b[0] + a[1] * b[1] + a[2] * b[2];
-    const la = Math.hypot(a[0], a[1], a[2]);
-    const lb = Math.hypot(b[0], b[1], b[2]);
-    const cos = Math.min(1, Math.max(-1, dot / (la * lb || 1)));
-    worst = Math.max(worst, (Math.acos(cos) * 180) / Math.PI);
-  }
-  return worst;
+    if (vertices.length < 2) return 0;
+    let worst = 0;
+    for (let i = 1; i < vertices.length; i += 1) {
+        const a = vertices[i - 1];
+        const b = vertices[i];
+        const dot = a[0] * b[0] + a[1] * b[1] + a[2] * b[2];
+        const la = Math.hypot(a[0], a[1], a[2]);
+        const lb = Math.hypot(b[0], b[1], b[2]);
+        const cos = Math.min(1, Math.max(-1, dot / (la * lb || 1)));
+        worst = Math.max(worst, (Math.acos(cos) * 180) / Math.PI);
+    }
+    return worst;
 }
 
 /** Every vertex lies on the same sphere, within floating-point tolerance. */
-export function radiusSpread(vertices: readonly Vec3[]): { min: number; max: number } {
-  if (vertices.length === 0) return { min: 0, max: 0 };
-  let min = Infinity;
-  let max = -Infinity;
-  for (const v of vertices) {
-    const r = Math.hypot(v[0], v[1], v[2]);
-    if (r < min) min = r;
-    if (r > max) max = r;
-  }
-  return { min, max };
+export function radiusSpread(vertices: readonly Vec3[]): {
+    min: number;
+    max: number;
+} {
+    if (vertices.length === 0) return { min: 0, max: 0 };
+    let min = Infinity;
+    let max = -Infinity;
+    for (const v of vertices) {
+        const r = Math.hypot(v[0], v[1], v[2]);
+        if (r < min) min = r;
+        if (r > max) max = r;
+    }
+    return { min, max };
 }
 
 /** Centroid direction of a box, as a unit vector — the camera target for a box fly-to. */
 export function boxCentreDirection(box: NinoBox): Vec3 {
-  const [lat, lon] = boxAnchor(box);
-  const v = latLonToVector3(lat, lon, 1);
-  const l = Math.hypot(v[0], v[1], v[2]) || 1;
-  return [v[0] / l, v[1] / l, v[2] / l];
+    const [lat, lon] = boxAnchor(box);
+    const v = latLonToVector3(lat, lon, 1);
+    const l = Math.hypot(v[0], v[1], v[2]) || 1;
+    return [v[0] / l, v[1] / l, v[2] / l];
 }
 
 /**
@@ -201,5 +212,5 @@ export function boxCentreDirection(box: NinoBox): Vec3 {
  * one a reviewer can check against the schema in the diff.
  */
 export function boxAnchor(box: NinoBox): [number, number] {
-  return [box.anchorLat, box.anchorLon];
+    return [box.anchorLat, box.anchorLon];
 }

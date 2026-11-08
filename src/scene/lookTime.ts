@@ -41,5 +41,5 @@ export const FROZEN_LOOK_TIME = 0;
  * @param elapsed  the renderer clock's `elapsedTime`, in seconds
  */
 export function lookTime(animate: boolean, elapsed: number): number {
-  return animate ? elapsed : FROZEN_LOOK_TIME;
+    return animate ? elapsed : FROZEN_LOOK_TIME;
 }

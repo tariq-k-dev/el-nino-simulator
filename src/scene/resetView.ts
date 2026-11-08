@@ -47,10 +47,10 @@
 
 /** The two channels Reset drives. Injected so the wiring can be tested without mounting the app. */
 export interface ResetViewChannels {
-  /** Clear the app's selection — `selectRegion(null)`, the drawer X / Escape path. */
-  clearSelection: () => void;
-  /** Raise the camera's RESET intent — `viewStore.requestReset()`. */
-  requestViewReset: () => void;
+    /** Clear the app's selection — `selectRegion(null)`, the drawer X / Escape path. */
+    clearSelection: () => void;
+    /** Raise the camera's RESET intent — `viewStore.requestReset()`. */
+    requestViewReset: () => void;
 }
 
 /**
@@ -61,9 +61,12 @@ export interface ResetViewChannels {
  * machine no-op and `RESET` from `idle` is the return animation, so calling both is always either
  * necessary or harmless, and it keeps the number of transitions independent of timing.
  */
-export function resetView({ clearSelection, requestViewReset }: ResetViewChannels): void {
-  /* RESET first: see the header. It makes the machine `returning` before the selection effect can run. */
-  requestViewReset();
-  /* Then the selection, through the same path the other close affordances use. */
-  clearSelection();
+export function resetView({
+    clearSelection,
+    requestViewReset,
+}: ResetViewChannels): void {
+    /* RESET first: see the header. It makes the machine `returning` before the selection effect can run. */
+    requestViewReset();
+    /* Then the selection, through the same path the other close affordances use. */
+    clearSelection();
 }

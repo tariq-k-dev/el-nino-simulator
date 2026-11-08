@@ -26,7 +26,7 @@
  * portrait case width-limited and therefore FURTHER away, not nearer.
  */
 
-import type { NinoBox } from '@/lib/regions';
+import type { NinoBox } from "@/lib/regions";
 
 /** Slack on the fitted distance, per the step: `max(needed * 1.1, 1.25)`. */
 export const NINO_FLYTO_MARGIN = 1.1;
@@ -45,14 +45,14 @@ const INV_DEG = 180 / Math.PI;
 
 /** Longitude wrapped into [0, 360). */
 export function wrapLon360(lon: number): number {
-  const wrapped = lon % 360;
-  return wrapped < 0 ? wrapped + 360 : wrapped;
+    const wrapped = lon % 360;
+    return wrapped < 0 ? wrapped + 360 : wrapped;
 }
 
 /** Longitude wrapped into (-180, 180]. */
 export function wrapLon180(lon: number): number {
-  const wrapped = wrapLon360(lon);
-  return wrapped > 180 ? wrapped - 360 : wrapped;
+    const wrapped = wrapLon360(lon);
+    return wrapped > 180 ? wrapped - 360 : wrapped;
 }
 
 /**
@@ -64,24 +64,24 @@ export function wrapLon180(lon: number): number {
  * take the short arc.
  */
 export function shortestLonDelta(fromLon: number, toLon: number): number {
-  return wrapLon180(toLon - fromLon);
+    return wrapLon180(toLon - fromLon);
 }
 
 /** True when the shortest path from `fromLon` to `toLon` crosses the antimeridian. */
 export function crossesAntimeridian(fromLon: number, toLon: number): boolean {
-  /*
-   * Crosses when the SHORTEST arc is shorter than the difference measured straight between the
-   * wrapped longitudes — i.e. the naive subtraction went the wrong way round the globe.
-   *
-   * 175 -> 185: wrapped longitudes are 175 and -175, so the naive difference is -350, while the
-   * shortest arc is +10. |−350| > |10|, so the path crosses.
-   * -150 -> -120: naive difference 30, shortest 30, so it does not.
-   *
-   * The first version of this had the comparison inverted and reported false for the 175 -> 185
-   * case, which its own test caught.
-   */
-  const naive = wrapLon180(toLon) - wrapLon180(fromLon);
-  return Math.abs(naive) > Math.abs(shortestLonDelta(fromLon, toLon)) + 1e-9;
+    /*
+     * Crosses when the SHORTEST arc is shorter than the difference measured straight between the
+     * wrapped longitudes — i.e. the naive subtraction went the wrong way round the globe.
+     *
+     * 175 -> 185: wrapped longitudes are 175 and -175, so the naive difference is -350, while the
+     * shortest arc is +10. |−350| > |10|, so the path crosses.
+     * -150 -> -120: naive difference 30, shortest 30, so it does not.
+     *
+     * The first version of this had the comparison inverted and reported false for the 175 -> 185
+     * case, which its own test caught.
+     */
+    const naive = wrapLon180(toLon) - wrapLon180(fromLon);
+    return Math.abs(naive) > Math.abs(shortestLonDelta(fromLon, toLon)) + 1e-9;
 }
 
 /**
@@ -93,21 +93,23 @@ export function crossesAntimeridian(fromLon: number, toLon: number): boolean {
  * back-facing there (-0.1631).
  */
 export function boxCentreLon360(box: NinoBox): number {
-  return wrapLon360(box.anchorLon);
+    return wrapLon360(box.anchorLon);
 }
 
 /** Great-circle angular separation in degrees. */
 export function angularOffsetDeg(
-  fromLat: number,
-  fromLon: number,
-  toLat: number,
-  toLon: number,
+    fromLat: number,
+    fromLon: number,
+    toLat: number,
+    toLon: number,
 ): number {
-  const p1 = fromLat * DEG;
-  const p2 = toLat * DEG;
-  const dl = (toLon - fromLon) * DEG;
-  const cos = Math.sin(p1) * Math.sin(p2) + Math.cos(p1) * Math.cos(p2) * Math.cos(dl);
-  return Math.acos(cos > 1 ? 1 : cos < -1 ? -1 : cos) * INV_DEG;
+    const p1 = fromLat * DEG;
+    const p2 = toLat * DEG;
+    const dl = (toLon - fromLon) * DEG;
+    const cos =
+        Math.sin(p1) * Math.sin(p2) +
+        Math.cos(p1) * Math.cos(p2) * Math.cos(dl);
+    return Math.acos(cos > 1 ? 1 : cos < -1 ? -1 : cos) * INV_DEG;
 }
 
 /**
@@ -118,17 +120,24 @@ export function angularOffsetDeg(
  * so a box near the pole is not credited with more width than it visually has. Both are measured
  * from the ANCHOR, not from the box's geometric middle, because the camera aims at the anchor.
  */
-export function boxHalfExtents(box: NinoBox): { verticalDeg: number; horizontalDeg: number } {
-  const verticalDeg = Math.max(
-    Math.abs(box.latMin - box.anchorLat),
-    Math.abs(box.latMax - box.anchorLat),
-  );
-  const anchorLon360 = wrapLon360(box.anchorLon);
-  const westDelta = Math.abs(shortestLonDelta(anchorLon360, wrapLon360(box.lonWest)));
-  const eastDelta = Math.abs(shortestLonDelta(anchorLon360, wrapLon360(box.lonEast)));
-  const cosLat = Math.cos(box.anchorLat * DEG);
-  const horizontalDeg = Math.max(westDelta, eastDelta) * cosLat;
-  return { verticalDeg, horizontalDeg };
+export function boxHalfExtents(box: NinoBox): {
+    verticalDeg: number;
+    horizontalDeg: number;
+} {
+    const verticalDeg = Math.max(
+        Math.abs(box.latMin - box.anchorLat),
+        Math.abs(box.latMax - box.anchorLat),
+    );
+    const anchorLon360 = wrapLon360(box.anchorLon);
+    const westDelta = Math.abs(
+        shortestLonDelta(anchorLon360, wrapLon360(box.lonWest)),
+    );
+    const eastDelta = Math.abs(
+        shortestLonDelta(anchorLon360, wrapLon360(box.lonEast)),
+    );
+    const cosLat = Math.cos(box.anchorLat * DEG);
+    const horizontalDeg = Math.max(westDelta, eastDelta) * cosLat;
+    return { verticalDeg, horizontalDeg };
 }
 
 /**
@@ -147,19 +156,25 @@ export function boxHalfExtents(box: NinoBox): { verticalDeg: number; horizontalD
  * The genuine degenerate case is `d <= 1`, which happens only as `a` approaches 180 degrees and the
  * point sits behind the camera; `Infinity` is still the honest answer there.
  */
-export function requiredDistanceForHalfAngle(halfAngleDeg: number, halfFovDeg: number): number {
-  if (halfAngleDeg <= 0) return 1;
-  if (halfFovDeg <= 0) return Infinity;
-  const a = halfAngleDeg * DEG;
-  const half = halfFovDeg * DEG;
-  const d = Math.cos(a) + Math.sin(a) / Math.tan(half);
-  /* A point at or behind the camera plane (d <= 1) has no framing distance; wide-but-in-front does. */
-  return Number.isFinite(d) && d > 1 ? d : Infinity;
+export function requiredDistanceForHalfAngle(
+    halfAngleDeg: number,
+    halfFovDeg: number,
+): number {
+    if (halfAngleDeg <= 0) return 1;
+    if (halfFovDeg <= 0) return Infinity;
+    const a = halfAngleDeg * DEG;
+    const half = halfFovDeg * DEG;
+    const d = Math.cos(a) + Math.sin(a) / Math.tan(half);
+    /* A point at or behind the camera plane (d <= 1) has no framing distance; wide-but-in-front does. */
+    return Number.isFinite(d) && d > 1 ? d : Infinity;
 }
 
 /** The horizontal half-fov implied by a vertical half-fov and an aspect ratio. */
-export function horizontalHalfFovDeg(verticalHalfFovDeg: number, aspect: number): number {
-  return Math.atan(Math.tan(verticalHalfFovDeg * DEG) * aspect) * INV_DEG;
+export function horizontalHalfFovDeg(
+    verticalHalfFovDeg: number,
+    aspect: number,
+): number {
+    return Math.atan(Math.tan(verticalHalfFovDeg * DEG) * aspect) * INV_DEG;
 }
 
 /**
@@ -176,10 +191,10 @@ export function horizontalHalfFovDeg(verticalHalfFovDeg: number, aspect: number)
  * far away, which is exactly what the first version did.
  */
 export interface FreeRectFrac {
-  /** Free width as a fraction of the viewport width, in (0, 1]. */
-  widthFrac: number;
-  /** Free height as a fraction of the viewport height, in (0, 1]. */
-  heightFrac: number;
+    /** Free width as a fraction of the viewport width, in (0, 1]. */
+    widthFrac: number;
+    /** Free height as a fraction of the viewport height, in (0, 1]. */
+    heightFrac: number;
 }
 
 /** Full-viewport framing: the free rect IS the viewport, so both fractions are 1. */
@@ -192,16 +207,16 @@ export const FULL_VIEWPORT_FRAC: FreeRectFrac = { widthFrac: 1, heightFrac: 1 };
  * falls back to full-viewport framing rather than producing NaN.
  */
 export function freeRectFraction(
-  free: { x: number; y: number; w: number; h: number },
-  viewportW: number,
-  viewportH: number,
+    free: { x: number; y: number; w: number; h: number },
+    viewportW: number,
+    viewportH: number,
 ): FreeRectFrac {
-  if (!(viewportW > 0) || !(viewportH > 0)) return FULL_VIEWPORT_FRAC;
-  if (!(free.w > 0) || !(free.h > 0)) return FULL_VIEWPORT_FRAC;
-  return {
-    widthFrac: Math.min(free.w / viewportW, 1),
-    heightFrac: Math.min(free.h / viewportH, 1),
-  };
+    if (!(viewportW > 0) || !(viewportH > 0)) return FULL_VIEWPORT_FRAC;
+    if (!(free.w > 0) || !(free.h > 0)) return FULL_VIEWPORT_FRAC;
+    return {
+        widthFrac: Math.min(free.w / viewportW, 1),
+        heightFrac: Math.min(free.h / viewportH, 1),
+    };
 }
 
 /**
@@ -212,9 +227,9 @@ export function freeRectFraction(
  * viewport's, which is a narrower window and therefore a larger distance.
  */
 export function scaledHalfFovDeg(halfFovDeg: number, frac: number): number {
-  if (!(frac > 0)) return 0;
-  if (frac >= 1) return halfFovDeg;
-  return Math.atan(frac * Math.tan(halfFovDeg * DEG)) * INV_DEG;
+    if (!(frac > 0)) return 0;
+    if (frac >= 1) return halfFovDeg;
+    return Math.atan(frac * Math.tan(halfFovDeg * DEG)) * INV_DEG;
 }
 
 /**
@@ -230,23 +245,31 @@ export function scaledHalfFovDeg(halfFovDeg: number, frac: number): number {
  * ~209 px of the outline sat beneath the UI. With it, the same box is fitted to the panel's edge.
  */
 export function ninoFlyToDistance(
-  box: NinoBox,
-  opts: { fovDeg?: number; aspect?: number; freeRect?: FreeRectFrac } = {},
+    box: NinoBox,
+    opts: { fovDeg?: number; aspect?: number; freeRect?: FreeRectFrac } = {},
 ): number {
-  const fovDeg = opts.fovDeg ?? NINO_FLYTO_FOV_DEG;
-  const aspect = opts.aspect ?? 16 / 9;
-  const halfV = fovDeg / 2;
-  const halfH = horizontalHalfFovDeg(halfV, aspect);
-  const frac = opts.freeRect ?? FULL_VIEWPORT_FRAC;
+    const fovDeg = opts.fovDeg ?? NINO_FLYTO_FOV_DEG;
+    const aspect = opts.aspect ?? 16 / 9;
+    const halfV = fovDeg / 2;
+    const halfH = horizontalHalfFovDeg(halfV, aspect);
+    const frac = opts.freeRect ?? FULL_VIEWPORT_FRAC;
 
-  const { verticalDeg, horizontalDeg } = boxHalfExtents(box);
-  const dV = requiredDistanceForHalfAngle(verticalDeg, scaledHalfFovDeg(halfV, frac.heightFrac));
-  const dH = requiredDistanceForHalfAngle(horizontalDeg, scaledHalfFovDeg(halfH, frac.widthFrac));
+    const { verticalDeg, horizontalDeg } = boxHalfExtents(box);
+    const dV = requiredDistanceForHalfAngle(
+        verticalDeg,
+        scaledHalfFovDeg(halfV, frac.heightFrac),
+    );
+    const dH = requiredDistanceForHalfAngle(
+        horizontalDeg,
+        scaledHalfFovDeg(halfH, frac.widthFrac),
+    );
 
-  const needed = Math.max(dV, dH);
-  /* An unreachable extent is a bug in the box, not a framing choice; the ceiling is the honest answer. */
-  const fitted = Number.isFinite(needed) ? needed * NINO_FLYTO_MARGIN : NINO_MAX_DISTANCE;
-  return Math.min(Math.max(fitted, NINO_MIN_DISTANCE), NINO_MAX_DISTANCE);
+    const needed = Math.max(dV, dH);
+    /* An unreachable extent is a bug in the box, not a framing choice; the ceiling is the honest answer. */
+    const fitted = Number.isFinite(needed)
+        ? needed * NINO_FLYTO_MARGIN
+        : NINO_MAX_DISTANCE;
+    return Math.min(Math.max(fitted, NINO_MIN_DISTANCE), NINO_MAX_DISTANCE);
 }
 
 /**
@@ -260,10 +283,10 @@ export function ninoFlyToDistance(
  * round-trips, which is the assertion the step asks for.
  */
 export function zoomToDistance(zoom: number): number {
-  return zoom;
+    return zoom;
 }
 
 /** The inverse of `zoomToDistance`, likewise the identity. */
 export function distanceToZoom(distance: number): number {
-  return distance;
+    return distance;
 }

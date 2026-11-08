@@ -69,7 +69,7 @@
  */
 
 /** Which layout the page runs. `mobile` in MOBILE1 is now two modes; `desktop` is unchanged. */
-export type LayoutMode2 = 'desktop' | 'portrait' | 'phoneLandscape';
+export type LayoutMode2 = "desktop" | "portrait" | "phoneLandscape";
 
 /**
  * Narrowest width at which a LANDSCAPE viewport keeps the desktop shell. Bounds clause 1 only.
@@ -110,16 +110,18 @@ export const LANDSCAPE_MAX_H = 600;
 
 /** ## The mode. Pure, total, and evaluate in the documented order. */
 export function resolveLayoutMode(w: number, h: number): LayoutMode2 {
-  const W = Number.isFinite(w) && w > 0 ? w : 0;
-  const H = Number.isFinite(h) && h > 0 ? h : 0;
-  if (W < DESKTOP_MIN_W && H < LANDSCAPE_MAX_H && W > H) return 'phoneLandscape';
-  if (W < PORTRAIT_MAX_W || (W < TABLET_PORTRAIT_MAX_W && H > W)) return 'portrait';
-  return 'desktop';
+    const W = Number.isFinite(w) && w > 0 ? w : 0;
+    const H = Number.isFinite(h) && h > 0 ? h : 0;
+    if (W < DESKTOP_MIN_W && H < LANDSCAPE_MAX_H && W > H)
+        return "phoneLandscape";
+    if (W < PORTRAIT_MAX_W || (W < TABLET_PORTRAIT_MAX_W && H > W))
+        return "portrait";
+    return "desktop";
 }
 
 /** Is this mode one of the two mobile ones? The single predicate the director and the shell share. */
 export function isMobileMode(mode: LayoutMode2): boolean {
-  return mode !== 'desktop';
+    return mode !== "desktop";
 }
 
 /* ------------------------------------------------------------------ the sheet's peek height */
@@ -141,30 +143,31 @@ export const PEEK_FRACTION = 0.18;
  * below 151.9, so the fraction wins and no band is stolen from the globe.
  */
 export function peekVisible(h: number, safeBottom = 0): number {
-  const H = Number.isFinite(h) && h > 0 ? h : 0;
-  const inset = Number.isFinite(safeBottom) && safeBottom > 0 ? safeBottom : 0;
-  if (H === 0) return 0;
-  const wanted = Math.max(PEEK_FRACTION * H, PEEK_MIN_PX + inset);
-  return Math.min(wanted, H);
+    const H = Number.isFinite(h) && h > 0 ? h : 0;
+    const inset =
+        Number.isFinite(safeBottom) && safeBottom > 0 ? safeBottom : 0;
+    if (H === 0) return 0;
+    const wanted = Math.max(PEEK_FRACTION * H, PEEK_MIN_PX + inset);
+    return Math.min(wanted, H);
 }
 
 /* ---------------------------------------------------------------------------- the free rect */
 
 /** A rectangle in viewport CSS px, its edges rather than its origin+size. */
 export interface FreeRect {
-  left: number;
-  right: number;
-  top: number;
-  bottom: number;
+    left: number;
+    right: number;
+    top: number;
+    bottom: number;
 }
 
 /** What one mobile layout pass publishes for the director to consume. */
 export interface MobileFreeRect extends FreeRect {
-  /** Where the globe's centre belongs, in CSS px. */
-  cx: number;
-  cy: number;
-  /** The largest silhouette radius that fits in the rect with `RADIUS_MARGIN_PX` held back. */
-  radiusBudget: number;
+    /** Where the globe's centre belongs, in CSS px. */
+    cx: number;
+    cy: number;
+    /** The largest silhouette radius that fits in the rect with `RADIUS_MARGIN_PX` held back. */
+    radiusBudget: number;
 }
 
 /** Margin held inside the rect before the disc is fitted, px. */
@@ -209,46 +212,65 @@ export const HALF_TOP_BACKOFF_PX = 28;
  * floor is applied, so a tight rect reports the floor rather than a negative radius, and the acceptance case's
  * "at least 8 px margin" holds with 4 px to spare on every viewport in the matrix.
  */
-export function computeFreeRect(mode: LayoutMode2, w: number, h: number, headerBottom: number): MobileFreeRect {
-  const W = Number.isFinite(w) && w > 0 ? w : 0;
-  const H = Number.isFinite(h) && h > 0 ? h : 0;
-  const top = Number.isFinite(headerBottom) && headerBottom > 0 ? Math.min(headerBottom, H) : 0;
+export function computeFreeRect(
+    mode: LayoutMode2,
+    w: number,
+    h: number,
+    headerBottom: number,
+): MobileFreeRect {
+    const W = Number.isFinite(w) && w > 0 ? w : 0;
+    const H = Number.isFinite(h) && h > 0 ? h : 0;
+    const top =
+        Number.isFinite(headerBottom) && headerBottom > 0
+            ? Math.min(headerBottom, H)
+            : 0;
 
-  let rect: FreeRect;
-  let cx: number;
-  let cy: number;
+    let rect: FreeRect;
+    let cx: number;
+    let cy: number;
 
-  if (mode === 'phoneLandscape') {
-    const dockW = dockWidth(W);
-    rect = { left: 0, right: W - dockW, top, bottom: H };
-    cx = rect.right / 2;
-    cy = (rect.top + rect.bottom) / 2;
-  } else if (mode === 'portrait') {
-    rect = { left: 0, right: W, top, bottom: Math.max(top, H - peekVisible(H)) };
-    cx = W / 2;
-    const mid = (rect.top + rect.bottom) / 2;
-    cy = Math.min(mid, HALF_TOP_FRACTION * H - HALF_TOP_BACKOFF_PX);
-  } else {
-    /* Desktop never consumes this, but the function is total: the whole viewport, centred. */
-    rect = { left: 0, right: W, top: 0, bottom: H };
-    cx = W / 2;
-    cy = H / 2;
-  }
+    if (mode === "phoneLandscape") {
+        const dockW = dockWidth(W);
+        rect = { left: 0, right: W - dockW, top, bottom: H };
+        cx = rect.right / 2;
+        cy = (rect.top + rect.bottom) / 2;
+    } else if (mode === "portrait") {
+        rect = {
+            left: 0,
+            right: W,
+            top,
+            bottom: Math.max(top, H - peekVisible(H)),
+        };
+        cx = W / 2;
+        const mid = (rect.top + rect.bottom) / 2;
+        cy = Math.min(mid, HALF_TOP_FRACTION * H - HALF_TOP_BACKOFF_PX);
+    } else {
+        /* Desktop never consumes this, but the function is total: the whole viewport, centred. */
+        rect = { left: 0, right: W, top: 0, bottom: H };
+        cx = W / 2;
+        cy = H / 2;
+    }
 
-  return { ...rect, cx, cy, radiusBudget: radiusBudget(rect, cx, cy) };
+    return { ...rect, cx, cy, radiusBudget: radiusBudget(rect, cx, cy) };
 }
 
 /** The radius budget for a rect and a centre, with the margin and the floor applied. */
 export function radiusBudget(rect: FreeRect, cx: number, cy: number): number {
-  const inner = Math.min(cx - rect.left, rect.right - cx, cy - rect.top, rect.bottom - cy) - RADIUS_MARGIN_PX;
-  return Math.max(inner, MIN_RADIUS_BUDGET);
+    const inner =
+        Math.min(
+            cx - rect.left,
+            rect.right - cx,
+            cy - rect.top,
+            rect.bottom - cy,
+        ) - RADIUS_MARGIN_PX;
+    return Math.max(inner, MIN_RADIUS_BUDGET);
 }
 
 /** The landscape dock's width for a viewport width. */
 export function dockWidth(w: number): number {
-  const W = Number.isFinite(w) && w > 0 ? w : 0;
-  const clamped = Math.min(Math.max(320, 0.38 * W), 400);
-  return Math.min(clamped, 0.5 * W);
+    const W = Number.isFinite(w) && w > 0 ? w : 0;
+    const clamped = Math.min(Math.max(320, 0.38 * W), 400);
+    return Math.min(clamped, 0.5 * W);
 }
 
 /* --------------------------------------------------------------- the unit conversion for a DELTA */
@@ -263,7 +285,12 @@ export function dockWidth(w: number): number {
  * whatever the units toggle says, and the CATEGORY (weak / strong / very strong) always classifies the °C value,
  * because the ONI bands are defined in °C.
  */
-export function anomalyDeltaUnit(anomalyC: number, units: 'metric' | 'imperial'): { value: number; unit: string } {
-  const c = Number.isFinite(anomalyC) ? anomalyC : 0;
-  return units === 'imperial' ? { value: c * 1.8, unit: '°F' } : { value: c, unit: '°C' };
+export function anomalyDeltaUnit(
+    anomalyC: number,
+    units: "metric" | "imperial",
+): { value: number; unit: string } {
+    const c = Number.isFinite(anomalyC) ? anomalyC : 0;
+    return units === "imperial"
+        ? { value: c * 1.8, unit: "°F" }
+        : { value: c, unit: "°C" };
 }

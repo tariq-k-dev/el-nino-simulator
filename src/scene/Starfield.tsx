@@ -1,11 +1,11 @@
-import { useMemo, useRef, useSyncExternalStore } from 'react';
-import { useFrame } from '@react-three/fiber';
-import * as THREE from 'three';
-import { buildStarfieldData } from '@/scene/starfieldData';
-import { getLookFlags, subscribeLookFlags } from '@/scene/globeLook';
+import { useMemo, useRef, useSyncExternalStore } from "react";
+import { useFrame } from "@react-three/fiber";
+import * as THREE from "three";
+import { buildStarfieldData } from "@/scene/starfieldData";
+import { getLookFlags, subscribeLookFlags } from "@/scene/globeLook";
 
 interface StarfieldProps {
-  count?: number;
+    count?: number;
 }
 
 /**
@@ -26,29 +26,39 @@ interface StarfieldProps {
  * atmosphere rule can satisfy. See that module for the determinism contract.
  */
 export function Starfield({ count = 14000 }: StarfieldProps) {
-  const pointsRef = useRef<THREE.Points>(null);
-  const look = useSyncExternalStore(subscribeLookFlags, getLookFlags, getLookFlags);
+    const pointsRef = useRef<THREE.Points>(null);
+    const look = useSyncExternalStore(
+        subscribeLookFlags,
+        getLookFlags,
+        getLookFlags,
+    );
 
-  const { geometry, material } = useMemo(() => {
-    const data = buildStarfieldData(count);
+    const { geometry, material } = useMemo(() => {
+        const data = buildStarfieldData(count);
 
-    const geo = new THREE.BufferGeometry();
-    geo.setAttribute('position', new THREE.BufferAttribute(data.positions, 3));
-    geo.setAttribute('aSize', new THREE.BufferAttribute(data.sizes, 1));
-    geo.setAttribute('aColor', new THREE.BufferAttribute(data.colors, 3));
-    geo.setAttribute('aPhase', new THREE.BufferAttribute(data.phases, 1));
-    geo.setAttribute('aRate', new THREE.BufferAttribute(data.rates, 1));
-    geo.setAttribute('aTwinkle', new THREE.BufferAttribute(data.twinkle, 1));
+        const geo = new THREE.BufferGeometry();
+        geo.setAttribute(
+            "position",
+            new THREE.BufferAttribute(data.positions, 3),
+        );
+        geo.setAttribute("aSize", new THREE.BufferAttribute(data.sizes, 1));
+        geo.setAttribute("aColor", new THREE.BufferAttribute(data.colors, 3));
+        geo.setAttribute("aPhase", new THREE.BufferAttribute(data.phases, 1));
+        geo.setAttribute("aRate", new THREE.BufferAttribute(data.rates, 1));
+        geo.setAttribute(
+            "aTwinkle",
+            new THREE.BufferAttribute(data.twinkle, 1),
+        );
 
-    const mat = new THREE.ShaderMaterial({
-      transparent: true,
-      depthWrite: false,
-      blending: THREE.AdditiveBlending,
-      uniforms: {
-        uTime: { value: 0 },
-        uPixelRatio: { value: 1 },
-      },
-      vertexShader: /* glsl */ `
+        const mat = new THREE.ShaderMaterial({
+            transparent: true,
+            depthWrite: false,
+            blending: THREE.AdditiveBlending,
+            uniforms: {
+                uTime: { value: 0 },
+                uPixelRatio: { value: 1 },
+            },
+            vertexShader: /* glsl */ `
         attribute float aSize;
         attribute vec3 aColor;
         attribute float aPhase;
@@ -73,7 +83,7 @@ export function Starfield({ count = 14000 }: StarfieldProps) {
           gl_Position = projectionMatrix * mv;
         }
       `,
-      fragmentShader: /* glsl */ `
+            fragmentShader: /* glsl */ `
         varying vec3 vColor;
         varying float vBrightness;
 
@@ -92,31 +102,40 @@ export function Starfield({ count = 14000 }: StarfieldProps) {
           gl_FragColor = vec4(vColor * (0.85 + core * 0.5), alpha);
         }
       `,
+        });
+
+        return { geometry: geo, material: mat };
+    }, [count]);
+
+    useFrame((state, delta) => {
+        /*
+         * Twinkle is a function of elapsed time, so with the scene clock frozen it
+         * must be pinned too - otherwise the same seed still renders a different sky
+         * per load (measured: the star-field comparison failed at 0.05 meanAbsDiff
+         * with only `animate:false` applied to the planet, because each load reached
+         * its first screenshot at a different `elapsedTime`). t = 0 puts every star at
+         * its phase offset, which is deterministic.
+         */
+        material.uniforms.uTime.value = look.animate
+            ? state.clock.elapsedTime
+            : 0;
+        material.uniforms.uPixelRatio.value = state.gl.getPixelRatio();
+        // Near-imperceptible drift. At 0.0035 rad/s the field swept a star-width
+        // every few frames, and that motion — not the twinkle term — measured as
+        // 8.85% of star pixels changing per frame. 0.0006 rad/s is ~10 minutes per
+        // degree: present, but it reads as a still sky.
+        if (pointsRef.current) {
+            if (look.animate) pointsRef.current.rotation.y += delta * 0.0006;
+            else pointsRef.current.rotation.y = 0;
+        }
     });
 
-    return { geometry: geo, material: mat };
-  }, [count]);
-
-  useFrame((state, delta) => {
-    /*
-     * Twinkle is a function of elapsed time, so with the scene clock frozen it
-     * must be pinned too - otherwise the same seed still renders a different sky
-     * per load (measured: the star-field comparison failed at 0.05 meanAbsDiff
-     * with only `animate:false` applied to the planet, because each load reached
-     * its first screenshot at a different `elapsedTime`). t = 0 puts every star at
-     * its phase offset, which is deterministic.
-     */
-    material.uniforms.uTime.value = look.animate ? state.clock.elapsedTime : 0;
-    material.uniforms.uPixelRatio.value = state.gl.getPixelRatio();
-    // Near-imperceptible drift. At 0.0035 rad/s the field swept a star-width
-    // every few frames, and that motion — not the twinkle term — measured as
-    // 8.85% of star pixels changing per frame. 0.0006 rad/s is ~10 minutes per
-    // degree: present, but it reads as a still sky.
-    if (pointsRef.current) {
-      if (look.animate) pointsRef.current.rotation.y += delta * 0.0006;
-      else pointsRef.current.rotation.y = 0;
-    }
-  });
-
-  return <points ref={pointsRef} geometry={geometry} material={material} frustumCulled={false} />;
+    return (
+        <points
+            ref={pointsRef}
+            geometry={geometry}
+            material={material}
+            frustumCulled={false}
+        />
+    );
 }

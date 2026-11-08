@@ -12,79 +12,89 @@
  */
 
 import type {
-  AnalogMonth,
-  AnalyticsPayload,
-  HistoricalSummary,
-  ScenarioMetrics,
-  ScenarioState,
-  TimelinePoint,
-} from '@/types/enso';
-import type { DataEngine } from '@/lib/engine/dataEngine';
-import { runScenario, type AnalyticsCache, type BootMode, type DatasetTextInput } from '@/lib/duckdb';
+    AnalogMonth,
+    AnalyticsPayload,
+    HistoricalSummary,
+    ScenarioMetrics,
+    ScenarioState,
+    TimelinePoint,
+} from "@/types/enso";
+import type { DataEngine } from "@/lib/engine/dataEngine";
+import {
+    runScenario,
+    type AnalyticsCache,
+    type BootMode,
+    type DatasetTextInput,
+} from "@/lib/duckdb";
 
 export interface DuckEngineOptions {
-  /**
-   * CSV text already fetched by loadDataset(). Avoids a second network request.
-   * Null when the dataset was unavailable — the scenario queries still work, and
-   * the history queries will reject because `hasHistory` is false.
-   */
-  datasetText: DatasetTextInput;
-  mode?: BootMode;
-  cache?: AnalyticsCache;
+    /**
+     * CSV text already fetched by loadDataset(). Avoids a second network request.
+     * Null when the dataset was unavailable — the scenario queries still work, and
+     * the history queries will reject because `hasHistory` is false.
+     */
+    datasetText: DatasetTextInput;
+    mode?: BootMode;
+    cache?: AnalyticsCache;
 }
 
 export function createDuckEngine(opts: DuckEngineOptions): DataEngine {
-  return {
-    kind: 'duckdb',
+    return {
+        kind: "duckdb",
 
-    async scenario(state: ScenarioState): Promise<ScenarioMetrics> {
-      // runScenario already computes metrics + risk tier in two parallel queries.
-      const payload = await runScenario(state, opts.cache, opts.mode, opts.datasetText);
-      return payload.metrics;
-    },
+        async scenario(state: ScenarioState): Promise<ScenarioMetrics> {
+            // runScenario already computes metrics + risk tier in two parallel queries.
+            const payload = await runScenario(
+                state,
+                opts.cache,
+                opts.mode,
+                opts.datasetText,
+            );
+            return payload.metrics;
+        },
 
-    async analogs(sstAnomaly: number): Promise<AnalogMonth[]> {
-      const payload = await runScenario(
-        { sstAnomaly, jetStreamShift: 0, agricultureWeight: 0 },
-        opts.cache,
-        opts.mode,
-        opts.datasetText,
-      );
-      return payload.analogs;
-    },
+        async analogs(sstAnomaly: number): Promise<AnalogMonth[]> {
+            const payload = await runScenario(
+                { sstAnomaly, jetStreamShift: 0, agricultureWeight: 0 },
+                opts.cache,
+                opts.mode,
+                opts.datasetText,
+            );
+            return payload.analogs;
+        },
 
-    async summary(sstAnomaly: number): Promise<HistoricalSummary> {
-      const payload = await runScenario(
-        { sstAnomaly, jetStreamShift: 0, agricultureWeight: 0 },
-        opts.cache,
-        opts.mode,
-        opts.datasetText,
-      );
-      return payload.summary;
-    },
+        async summary(sstAnomaly: number): Promise<HistoricalSummary> {
+            const payload = await runScenario(
+                { sstAnomaly, jetStreamShift: 0, agricultureWeight: 0 },
+                opts.cache,
+                opts.mode,
+                opts.datasetText,
+            );
+            return payload.summary;
+        },
 
-    async timeline(): Promise<TimelinePoint[]> {
-      const payload = await runScenario(
-        { sstAnomaly: 0, jetStreamShift: 0, agricultureWeight: 0 },
-        opts.cache,
-        opts.mode,
-        opts.datasetText,
-      );
-      return payload.timeline;
-    },
+        async timeline(): Promise<TimelinePoint[]> {
+            const payload = await runScenario(
+                { sstAnomaly: 0, jetStreamShift: 0, agricultureWeight: 0 },
+                opts.cache,
+                opts.mode,
+                opts.datasetText,
+            );
+            return payload.timeline;
+        },
 
-    async riskTier(sstAnomaly: number): Promise<string> {
-      const payload = await runScenario(
-        { sstAnomaly, jetStreamShift: 0, agricultureWeight: 0 },
-        opts.cache,
-        opts.mode,
-        opts.datasetText,
-      );
-      return payload.metrics.riskTier;
-    },
+        async riskTier(sstAnomaly: number): Promise<string> {
+            const payload = await runScenario(
+                { sstAnomaly, jetStreamShift: 0, agricultureWeight: 0 },
+                opts.cache,
+                opts.mode,
+                opts.datasetText,
+            );
+            return payload.metrics.riskTier;
+        },
 
-    async run(state: ScenarioState): Promise<AnalyticsPayload> {
-      return runScenario(state, opts.cache, opts.mode, opts.datasetText);
-    },
-  };
+        async run(state: ScenarioState): Promise<AnalyticsPayload> {
+            return runScenario(state, opts.cache, opts.mode, opts.datasetText);
+        },
+    };
 }

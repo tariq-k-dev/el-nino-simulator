@@ -29,64 +29,64 @@
  */
 
 /** The two regions this module covers. Niño 3.4 is the regressor, not a target. */
-export type NinoRelationRegion = 'nino12' | 'nino4';
+export type NinoRelationRegion = "nino12" | "nino4";
 
 /** Which months a fit was computed over. */
-export type NinoSubset = 'all' | 'warm';
+export type NinoSubset = "all" | "warm";
 
 /**
  * One fitted relation, as stored. Every field is a measured quantity from the
  * shipped record — none is tuned.
  */
 export interface NinoRelation {
-  regionId: NinoRelationRegion;
-  subset: NinoSubset;
-  /** Valid pairs used in the fit, after dropping non-finite values. */
-  n: number;
-  /** Degrees of anomaly per degree of Niño 3.4 anomaly. */
-  slope: number;
-  /** Fitted region anomaly at a Niño 3.4 anomaly of 0. */
-  intercept: number;
-  /** Coefficient of determination — the honest measure of how well a line fits. */
-  r2: number;
-  /** Residual standard deviation, denominator n - 2. The ± half-width of the band. */
-  residSd: number;
-  /** Smallest Niño 3.4 anomaly in the fitted sample. */
-  xMin: number;
-  /** Largest Niño 3.4 anomaly in the fitted sample. */
-  xMax: number;
+    regionId: NinoRelationRegion;
+    subset: NinoSubset;
+    /** Valid pairs used in the fit, after dropping non-finite values. */
+    n: number;
+    /** Degrees of anomaly per degree of Niño 3.4 anomaly. */
+    slope: number;
+    /** Fitted region anomaly at a Niño 3.4 anomaly of 0. */
+    intercept: number;
+    /** Coefficient of determination — the honest measure of how well a line fits. */
+    r2: number;
+    /** Residual standard deviation, denominator n - 2. The ± half-width of the band. */
+    residSd: number;
+    /** Smallest Niño 3.4 anomaly in the fitted sample. */
+    xMin: number;
+    /** Largest Niño 3.4 anomaly in the fitted sample. */
+    xMax: number;
 }
 
 /** Raw output of `fitLinear`. */
 export interface LinearFit {
-  n: number;
-  meanX: number;
-  meanY: number;
-  slope: number;
-  intercept: number;
-  r2: number;
-  residSd: number;
-  xMin: number;
-  xMax: number;
-  yMin: number;
-  yMax: number;
+    n: number;
+    meanX: number;
+    meanY: number;
+    slope: number;
+    intercept: number;
+    r2: number;
+    residSd: number;
+    xMin: number;
+    xMax: number;
+    yMin: number;
+    yMax: number;
 }
 
 /** A region anomaly projected from a hypothetical Niño 3.4 anomaly. */
 export interface NinoProjection {
-  /** slope * x + intercept. */
-  value: number;
-  /** value - residSd. Never below -Infinity; the physical floor is not modelled. */
-  lo: number;
-  /** value + residSd. */
-  hi: number;
-  /**
-   * True when the input lies outside the fitted sample's x range. A caller should
-   * render a different treatment (or refuse) rather than implying observation:
-   * the slider tops out ABOVE the warm sample's largest Niño 3.4 anomaly, so the
-   * top of the slider is always an extrapolation.
-   */
-  extrapolated: boolean;
+    /** slope * x + intercept. */
+    value: number;
+    /** value - residSd. Never below -Infinity; the physical floor is not modelled. */
+    lo: number;
+    /** value + residSd. */
+    hi: number;
+    /**
+     * True when the input lies outside the fitted sample's x range. A caller should
+     * render a different treatment (or refuse) rather than implying observation:
+     * the slider tops out ABOVE the warm sample's largest Niño 3.4 anomaly, so the
+     * top of the slider is always an extrapolation.
+     */
+    extrapolated: boolean;
 }
 
 /**
@@ -126,82 +126,97 @@ export const WARM_THRESHOLD = 0.5;
  * pairs, or zero variance in `x` (a vertical line has no finite slope, and any
  * returned number would be a division artefact).
  */
-export function fitLinear(xs: readonly number[], ys: readonly number[]): LinearFit {
-  if (xs.length !== ys.length) {
-    throw new Error(
-      `fitLinear: xs and ys must be the same length (got ${xs.length} and ${ys.length}).`,
-    );
-  }
-
-  const px: number[] = [];
-  const py: number[] = [];
-  for (let i = 0; i < xs.length; i += 1) {
-    if (Number.isFinite(xs[i]) && Number.isFinite(ys[i])) {
-      px.push(xs[i]);
-      py.push(ys[i]);
+export function fitLinear(
+    xs: readonly number[],
+    ys: readonly number[],
+): LinearFit {
+    if (xs.length !== ys.length) {
+        throw new Error(
+            `fitLinear: xs and ys must be the same length (got ${xs.length} and ${ys.length}).`,
+        );
     }
-  }
 
-  const n = px.length;
-  if (n < MIN_FIT_PAIRS) {
-    throw new Error(
-      `fitLinear: only ${n} finite pairs; at least ${MIN_FIT_PAIRS} are required for a fit ` +
-        `whose slope and residual spread mean anything.`,
-    );
-  }
+    const px: number[] = [];
+    const py: number[] = [];
+    for (let i = 0; i < xs.length; i += 1) {
+        if (Number.isFinite(xs[i]) && Number.isFinite(ys[i])) {
+            px.push(xs[i]);
+            py.push(ys[i]);
+        }
+    }
 
-  // Pass 1 — means.
-  let sumX = 0;
-  let sumY = 0;
-  for (let i = 0; i < n; i += 1) {
-    sumX += px[i];
-    sumY += py[i];
-  }
-  const meanX = sumX / n;
-  const meanY = sumY / n;
+    const n = px.length;
+    if (n < MIN_FIT_PAIRS) {
+        throw new Error(
+            `fitLinear: only ${n} finite pairs; at least ${MIN_FIT_PAIRS} are required for a fit ` +
+                `whose slope and residual spread mean anything.`,
+        );
+    }
 
-  // Pass 2 — centred sums, the only ones that are numerically safe to subtract.
-  let sxx = 0;
-  let sxy = 0;
-  let syy = 0;
-  for (let i = 0; i < n; i += 1) {
-    const dx = px[i] - meanX;
-    const dy = py[i] - meanY;
-    sxx += dx * dx;
-    sxy += dx * dy;
-    syy += dy * dy;
-  }
+    // Pass 1 — means.
+    let sumX = 0;
+    let sumY = 0;
+    for (let i = 0; i < n; i += 1) {
+        sumX += px[i];
+        sumY += py[i];
+    }
+    const meanX = sumX / n;
+    const meanY = sumY / n;
 
-  if (sxx === 0) {
-    throw new Error(
-      `fitLinear: x has zero variance over ${n} pairs, so the slope is undefined ` +
-        `(every x is ${meanX}).`,
-    );
-  }
+    // Pass 2 — centred sums, the only ones that are numerically safe to subtract.
+    let sxx = 0;
+    let sxy = 0;
+    let syy = 0;
+    for (let i = 0; i < n; i += 1) {
+        const dx = px[i] - meanX;
+        const dy = py[i] - meanY;
+        sxx += dx * dx;
+        sxy += dx * dy;
+        syy += dy * dy;
+    }
 
-  const slope = sxy / sxx;
-  const intercept = meanY - slope * meanX;
+    if (sxx === 0) {
+        throw new Error(
+            `fitLinear: x has zero variance over ${n} pairs, so the slope is undefined ` +
+                `(every x is ${meanX}).`,
+        );
+    }
 
-  // ssRes = syy - slope * sxy follows from the normal equations and needs no third
-  // pass. Clamped at 0: with exact arithmetic it cannot be negative, but a
-  // floating-point cancellation on a near-perfect fit can produce -1e-17, and
-  // Math.sqrt of that is NaN.
-  const ssRes = Math.max(0, syy - slope * sxy);
-  const r2 = syy === 0 ? 1 : 1 - ssRes / syy;
-  const residSd = Math.sqrt(ssRes / (n - 2));
+    const slope = sxy / sxx;
+    const intercept = meanY - slope * meanX;
 
-  let xMin = Infinity;
-  let xMax = -Infinity;
-  let yMin = Infinity;
-  let yMax = -Infinity;
-  for (let i = 0; i < n; i += 1) {
-    if (px[i] < xMin) xMin = px[i];
-    if (px[i] > xMax) xMax = px[i];
-    if (py[i] < yMin) yMin = py[i];
-    if (py[i] > yMax) yMax = py[i];
-  }
+    // ssRes = syy - slope * sxy follows from the normal equations and needs no third
+    // pass. Clamped at 0: with exact arithmetic it cannot be negative, but a
+    // floating-point cancellation on a near-perfect fit can produce -1e-17, and
+    // Math.sqrt of that is NaN.
+    const ssRes = Math.max(0, syy - slope * sxy);
+    const r2 = syy === 0 ? 1 : 1 - ssRes / syy;
+    const residSd = Math.sqrt(ssRes / (n - 2));
 
-  return { n, meanX, meanY, slope, intercept, r2, residSd, xMin, xMax, yMin, yMax };
+    let xMin = Infinity;
+    let xMax = -Infinity;
+    let yMin = Infinity;
+    let yMax = -Infinity;
+    for (let i = 0; i < n; i += 1) {
+        if (px[i] < xMin) xMin = px[i];
+        if (px[i] > xMax) xMax = px[i];
+        if (py[i] < yMin) yMin = py[i];
+        if (py[i] > yMax) yMax = py[i];
+    }
+
+    return {
+        n,
+        meanX,
+        meanY,
+        slope,
+        intercept,
+        r2,
+        residSd,
+        xMin,
+        xMax,
+        yMin,
+        yMax,
+    };
 }
 
 /**
@@ -212,17 +227,23 @@ export function fitLinear(xs: readonly number[], ys: readonly number[]): LinearF
  * 0.4 is "extrapolated" for the warm relation even though months that cold exist in
  * the dataset. That is the correct meaning — the line was not fitted there.
  */
-export function projectAnomaly(relation: NinoRelation, nino34Anomaly: number): NinoProjection {
-  if (!Number.isFinite(nino34Anomaly)) {
-    throw new Error(`projectAnomaly: nino34Anomaly must be finite, got ${nino34Anomaly}.`);
-  }
-  const value = relation.slope * nino34Anomaly + relation.intercept;
-  return {
-    value,
-    lo: value - relation.residSd,
-    hi: value + relation.residSd,
-    extrapolated: nino34Anomaly < relation.xMin || nino34Anomaly > relation.xMax,
-  };
+export function projectAnomaly(
+    relation: NinoRelation,
+    nino34Anomaly: number,
+): NinoProjection {
+    if (!Number.isFinite(nino34Anomaly)) {
+        throw new Error(
+            `projectAnomaly: nino34Anomaly must be finite, got ${nino34Anomaly}.`,
+        );
+    }
+    const value = relation.slope * nino34Anomaly + relation.intercept;
+    return {
+        value,
+        lo: value - relation.residSd,
+        hi: value + relation.residSd,
+        extrapolated:
+            nino34Anomaly < relation.xMin || nino34Anomaly > relation.xMax,
+    };
 }
 
 /**
@@ -242,50 +263,50 @@ export function projectAnomaly(relation: NinoRelation, nino34Anomaly: number): N
  * slider positions.
  */
 export const NINO_RELATIONS: readonly NinoRelation[] = [
-  {
-    regionId: 'nino12',
-    subset: 'all',
-    n: 918,
-    slope: 0.8699175326090761,
-    intercept: -0.08815224776137148,
-    r2: 0.4713525385193774,
-    residSd: 0.803653628693984,
-    xMin: -2.45,
-    xMax: 2.72,
-  },
-  {
-    regionId: 'nino12',
-    subset: 'warm',
-    n: 181,
-    slope: 1.155607599959169,
-    intercept: -0.25204338136877236,
-    r2: 0.2885724419372131,
-    residSd: 0.9824540884715575,
-    xMin: 0.5,
-    xMax: 2.72,
-  },
-  {
-    regionId: 'nino4',
-    subset: 'all',
-    n: 918,
-    slope: 0.7021634581282746,
-    intercept: -0.11978286363133442,
-    r2: 0.7868732070014388,
-    residSd: 0.3187759480922505,
-    xMin: -2.45,
-    xMax: 2.72,
-  },
-  {
-    regionId: 'nino4',
-    subset: 'warm',
-    n: 181,
-    slope: 0.32437059345513547,
-    intercept: 0.20741137766178214,
-    r2: 0.20922651873081777,
-    residSd: 0.3414468569834548,
-    xMin: 0.5,
-    xMax: 2.72,
-  },
+    {
+        regionId: "nino12",
+        subset: "all",
+        n: 918,
+        slope: 0.8699175326090761,
+        intercept: -0.08815224776137148,
+        r2: 0.4713525385193774,
+        residSd: 0.803653628693984,
+        xMin: -2.45,
+        xMax: 2.72,
+    },
+    {
+        regionId: "nino12",
+        subset: "warm",
+        n: 181,
+        slope: 1.155607599959169,
+        intercept: -0.25204338136877236,
+        r2: 0.2885724419372131,
+        residSd: 0.9824540884715575,
+        xMin: 0.5,
+        xMax: 2.72,
+    },
+    {
+        regionId: "nino4",
+        subset: "all",
+        n: 918,
+        slope: 0.7021634581282746,
+        intercept: -0.11978286363133442,
+        r2: 0.7868732070014388,
+        residSd: 0.3187759480922505,
+        xMin: -2.45,
+        xMax: 2.72,
+    },
+    {
+        regionId: "nino4",
+        subset: "warm",
+        n: 181,
+        slope: 0.32437059345513547,
+        intercept: 0.20741137766178214,
+        r2: 0.20922651873081777,
+        residSd: 0.3414468569834548,
+        xMin: 0.5,
+        xMax: 2.72,
+    },
 ];
 
 /**
@@ -303,9 +324,13 @@ export const NINO_RELATIONS: readonly NinoRelation[] = [
  * the slider. That is a real extrapolation, not a rounding artefact.
  */
 export function pickRelation(regionId: NinoRelationRegion): NinoRelation {
-  const relation = NINO_RELATIONS.find((r) => r.regionId === regionId && r.subset === 'warm');
-  if (!relation) {
-    throw new Error(`pickRelation: no warm-subset relation for region "${regionId}".`);
-  }
-  return relation;
+    const relation = NINO_RELATIONS.find(
+        (r) => r.regionId === regionId && r.subset === "warm",
+    );
+    if (!relation) {
+        throw new Error(
+            `pickRelation: no warm-subset relation for region "${regionId}".`,
+        );
+    }
+    return relation;
 }

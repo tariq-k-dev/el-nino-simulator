@@ -17,9 +17,9 @@ export const SUN_DIRECTION: [number, number, number] = [0.72, 0.36, 0.59];
 
 /** Key light position: the sun direction pushed out far enough to be parallel. */
 export const SUN_POSITION: [number, number, number] = [
-  SUN_DIRECTION[0] * 8,
-  SUN_DIRECTION[1] * 8,
-  SUN_DIRECTION[2] * 8,
+    SUN_DIRECTION[0] * 8,
+    SUN_DIRECTION[1] * 8,
+    SUN_DIRECTION[2] * 8,
 ];
 
 /** Earth radius in scene units. Every shell scale is expressed relative to it. */
@@ -27,16 +27,16 @@ export const EARTH_RADIUS = 1;
 
 /** Shell scales, outermost first. */
 export const SHELLS = {
-  /**
-   * Atmosphere shell. Sized at 1.1 R rather than 1.028 R so the visible annulus
-   * is wide enough for the alpha profile to fade to zero before the geometry
-   * edge. At 1.028 the annulus measured ~9 px at the default camera distance,
-   * which is narrower than the ramp needs: the glow arrived at full strength and
-   * stopped at a step. The shader reaches exactly 0 at this radius, so the extra
-   * width is used for fade-out, not for a thicker band of colour.
-   */
-  atmosphere: 1.1,
-  clouds: 1.004,
-  surface: 1.0,
-  overlay: 1.0012,
+    /**
+     * Atmosphere shell. Sized at 1.1 R rather than 1.028 R so the visible annulus
+     * is wide enough for the alpha profile to fade to zero before the geometry
+     * edge. At 1.028 the annulus measured ~9 px at the default camera distance,
+     * which is narrower than the ramp needs: the glow arrived at full strength and
+     * stopped at a step. The shader reaches exactly 0 at this radius, so the extra
+     * width is used for fade-out, not for a thicker band of colour.
+     */
+    atmosphere: 1.1,
+    clouds: 1.004,
+    surface: 1.0,
+    overlay: 1.0012,
 } as const;
