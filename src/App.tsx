@@ -309,6 +309,96 @@ export default function App() {
         }
     }, [scenario, analytics, activeRegion, telemetry, units]);
 
+    /**
+     * PNG-only export: compose the snapshot and download it, without opening the report.
+     *
+     * Shares the composer path with `handleExport` so the two outputs cannot drift: the same
+     * `composeSnapshot` call, the same fallback to a raw capture, the same filename stamp. The
+     * only difference is that the HTML report is not built or opened.
+     */
+    const handleExportPng = useCallback(async () => {
+        setExporting(true);
+        try {
+            const source = captureCanvasElement();
+            if (!source) return;
+            try {
+                const blob = await composeSnapshot({
+                    source,
+                    metrics: analytics.metrics,
+                    region: activeRegion ? REGION_MAP[activeRegion] : null,
+                    telemetry: telemetry ?? null,
+                    units,
+                    regionMetrics: activeRegion
+                        ? regionSnapshotMetrics(activeRegion, analytics.metrics)
+                        : null,
+                });
+                const url = URL.createObjectURL(blob);
+                const stamp = new Date()
+                    .toISOString()
+                    .replace(/[:.]/g, "-")
+                    .slice(0, 19);
+                downloadPng(url, `super-el-nino-snapshot-${stamp}.png`);
+                setTimeout(() => URL.revokeObjectURL(url), 1000);
+            } catch {
+                const snapshot = captureCanvas();
+                if (snapshot) {
+                    downloadPng(
+                        snapshot,
+                        `el-nino-snapshot-${fixed(scenario.sstAnomaly, 2)}C.png`,
+                    );
+                }
+            }
+        } finally {
+            setExporting(false);
+        }
+    }, [scenario, analytics, activeRegion, telemetry, units]);
+
+    /**
+     * Report-only export: build the HTML report and open it, without downloading a PNG.
+     *
+     * The report still embeds a snapshot when one can be composed — the report is a citation
+     * document and an image is part of that — but the PNG is not separately downloaded here.
+     */
+    const handleExportReport = useCallback(async () => {
+        setExporting(true);
+        try {
+            const source = captureCanvasElement();
+            let snapshot: string | null = null;
+            if (source) {
+                try {
+                    const blob = await composeSnapshot({
+                        source,
+                        metrics: analytics.metrics,
+                        region: activeRegion
+                            ? REGION_MAP[activeRegion]
+                            : null,
+                        telemetry: telemetry ?? null,
+                        units,
+                        regionMetrics: activeRegion
+                            ? regionSnapshotMetrics(
+                                  activeRegion,
+                                  analytics.metrics,
+                              )
+                            : null,
+                    });
+                    snapshot = URL.createObjectURL(blob);
+                } catch {
+                    snapshot = captureCanvas();
+                }
+            }
+            const html = buildReportHtml({
+                scenario,
+                metrics: analytics.metrics,
+                analytics,
+                activeRegion,
+                snapshot,
+            });
+            openReport(html);
+        } finally {
+            setExporting(false);
+        }
+    }, [scenario, analytics, activeRegion, telemetry, units]);
+
     const timeline = analytics.timeline.map((p) => p.anomaly);
 
     return (
