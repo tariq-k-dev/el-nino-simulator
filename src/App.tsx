@@ -263,6 +263,12 @@ export default function App() {
                             : null,
                         telemetry: telemetry ?? null,
                         units,
+                        regionMetrics: activeRegion
+                            ? regionSnapshotMetrics(
+                                  activeRegion,
+                                  analytics.metrics,
+                              )
+                            : null,
                     });
                     const url = URL.createObjectURL(blob);
                     const stamp = new Date()
