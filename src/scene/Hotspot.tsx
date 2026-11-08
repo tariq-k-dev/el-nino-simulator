@@ -1,61 +1,61 @@
 import {
-  useEffect,
-  useMemo,
-  useRef,
-  useState,
-  useSyncExternalStore,
-  type MutableRefObject,
-} from "react"
-import { useFrame } from "@react-three/fiber"
-import { Html } from "@react-three/drei"
-import * as THREE from "three"
-import type { RegionDefinition } from "@/types/enso"
-import { thermalColor, thermalVector } from "@/lib/model"
-import { latLonToVector3 } from "@/lib/regions"
-import { hotspotFragment, hotspotVertex } from "@/scene/shaders"
+    useEffect,
+    useMemo,
+    useRef,
+    useState,
+    useSyncExternalStore,
+    type MutableRefObject,
+} from "react";
+import { useFrame } from "@react-three/fiber";
+import { Html } from "@react-three/drei";
+import * as THREE from "three";
+import type { RegionDefinition } from "@/types/enso";
+import { thermalColor, thermalVector } from "@/lib/model";
+import { latLonToVector3 } from "@/lib/regions";
+import { hotspotFragment, hotspotVertex } from "@/scene/shaders";
 import {
-  GLOBE_LOOK,
-  getLookFlags,
-  subscribeLookFlags,
-} from "@/scene/globeLook"
-import { lookTime } from "@/scene/lookTime"
+    GLOBE_LOOK,
+    getLookFlags,
+    subscribeLookFlags,
+} from "@/scene/globeLook";
+import { lookTime } from "@/scene/lookTime";
 import {
-  HIT_PX,
-  HIT_PX_COARSE,
-  PIN_HIT_CLAMP_R,
-  PIN_HIT_GATE,
-  pinFacesCamera,
-} from "@/scene/pinVisibilityBands"
+    HIT_PX,
+    HIT_PX_COARSE,
+    PIN_HIT_CLAMP_R,
+    PIN_HIT_GATE,
+    pinFacesCamera,
+} from "@/scene/pinVisibilityBands";
 
 interface HotspotProps {
-  region: RegionDefinition
-  sst: number
-  active: boolean
-  headline: string
-  onSelect: (id: RegionDefinition["id"]) => void
-  /**
-   * The group that carries the planet's spin — i.e. the globe's WORLD centre holder.
-   *
-   * The hit proxy's gate is `dot(nWorld, normalize(cameraWorld - globeCenterWorld))`, and
-   * `globeCenterWorld` must be this group's world position rather than the world origin. In this scene
-   * the group sits at the origin so the two agree today, but writing the origin in would make the gate
-   * silently wrong the moment anything translates the earth, and the unit tests cover that case
-   * explicitly. `matrixWorld` is read at raycast time, so a spin (or a future offset) is honoured.
-   */
-  earthRef: MutableRefObject<THREE.Group | null>
-  /**
-   * Render the pin as a DOT ONLY: no DOM label, and no hit proxy.
-   *
-   * Added for the Niño box pins (step 2.3c-1), which are visual markers whose only trigger is a card
-   * button. Defaults to `false`, and the two branches it adds are `? <label> : null` and
-   * `? <proxy> : null`, so for every existing region the rendered tree is unchanged — the prop is
-   * absent, both conditions are true, and every element and its props are identical.
-   *
-   * With `true` the pin keeps the mesh, the ring, the glow and the same limb-fade rule (the fade is
-   * driven by `labelWrapRef`, which simply does not exist, and the guard is already `if
-   * (labelWrapRef.current)`), so a dot hides at the limb exactly like a labelled pin.
-   */
-  dotOnly?: boolean
+    region: RegionDefinition;
+    sst: number;
+    active: boolean;
+    headline: string;
+    onSelect: (id: RegionDefinition["id"]) => void;
+    /**
+     * The group that carries the planet's spin — i.e. the globe's WORLD centre holder.
+     *
+     * The hit proxy's gate is `dot(nWorld, normalize(cameraWorld - globeCenterWorld))`, and
+     * `globeCenterWorld` must be this group's world position rather than the world origin. In this scene
+     * the group sits at the origin so the two agree today, but writing the origin in would make the gate
+     * silently wrong the moment anything translates the earth, and the unit tests cover that case
+     * explicitly. `matrixWorld` is read at raycast time, so a spin (or a future offset) is honoured.
+     */
+    earthRef: MutableRefObject<THREE.Group | null>;
+    /**
+     * Render the pin as a DOT ONLY: no DOM label, and no hit proxy.
+     *
+     * Added for the Niño box pins (step 2.3c-1), which are visual markers whose only trigger is a card
+     * button. Defaults to `false`, and the two branches it adds are `? <label> : null` and
+     * `? <proxy> : null`, so for every existing region the rendered tree is unchanged — the prop is
+     * absent, both conditions are true, and every element and its props are identical.
+     *
+     * With `true` the pin keeps the mesh, the ring, the glow and the same limb-fade rule (the fade is
+     * driven by `labelWrapRef`, which simply does not exist, and the guard is already `if
+     * (labelWrapRef.current)`), so a dot hides at the limb exactly like a labelled pin.
+     */
+    dotOnly?: boolean;
 }
 
 /*
@@ -65,9 +65,9 @@ interface HotspotProps {
  * call would churn the heap for the whole life of the page. Hoisted to module scope: the override is
  * synchronous and never re-entrant, so one pair is enough.
  */
-const SCRATCH_NORMAL = new THREE.Vector3()
-const SCRATCH_CENTRE = new THREE.Vector3()
-const SCRATCH_PROXY = new THREE.Vector3()
+const SCRATCH_NORMAL = new THREE.Vector3();
+const SCRATCH_CENTRE = new THREE.Vector3();
+const SCRATCH_PROXY = new THREE.Vector3();
 
 /*
  * Scratch for the per-frame screen projection of the proxy centre.
@@ -76,15 +76,15 @@ const SCRATCH_PROXY = new THREE.Vector3()
  * `Vector3` per frame would allocate for the whole life of the page. `project()` mutates in place, so one
  * module-scope vector is enough — the frame loop is synchronous and never re-entrant.
  */
-const SCRATCH_NDC = new THREE.Vector3()
+const SCRATCH_NDC = new THREE.Vector3();
 
 /** Seconds of on-screen travel the hit radius leads by. Roughly one input-to-pointerdown latency. */
-const MOTION_LEAD_S = 0.2
+const MOTION_LEAD_S = 0.2;
 /** Ceiling on the motion allowance, in CSS px. */
-const MOTION_EXTRA_MAX_PX = 40
+const MOTION_EXTRA_MAX_PX = 40;
 
 /** A label `click` this soon after a label `pointerdown` is the same gesture, already handled. */
-const LABEL_DOWN_CLICK_WINDOW_MS = 1000
+const LABEL_DOWN_CLICK_WINDOW_MS = 1000;
 
 /**
  * Does this browser report a coarse primary pointer (a thumb rather than a cursor tip)?
@@ -94,9 +94,12 @@ const LABEL_DOWN_CLICK_WINDOW_MS = 1000
  * the render loop. `22 px` vs `14 px` is the whole difference.
  */
 function coarsePointer(): boolean {
-  if (typeof window === "undefined" || typeof window.matchMedia !== "function")
-    return false
-  return window.matchMedia("(pointer: coarse)").matches
+    if (
+        typeof window === "undefined" ||
+        typeof window.matchMedia !== "function"
+    )
+        return false;
+    return window.matchMedia("(pointer: coarse)").matches;
 }
 
 /**
@@ -105,402 +108,429 @@ function coarsePointer(): boolean {
  * constellation shifts from cyan to red as the slider moves.
  */
 export function Hotspot({
-  region,
-  sst,
-  active,
-  headline,
-  onSelect,
-  earthRef,
-  dotOnly = false,
+    region,
+    sst,
+    active,
+    headline,
+    onSelect,
+    earthRef,
+    dotOnly = false,
 }: HotspotProps) {
-  const [hovered, setHovered] = useState(false)
-  const ringRef = useRef<THREE.Mesh>(null)
-  const pinRef = useRef<THREE.Group>(null)
-  const proxyRef = useRef<THREE.Mesh>(null)
-  const labelWrapRef = useRef<HTMLDivElement>(null)
-  const facingRef = useRef(1)
-  /* Last frame's proxy centre in CSS px, and the current motion allowance in px. */
-  const prevScreenRef = useRef<{ x: number; y: number } | null>(null)
-  const motionExtraRef = useRef(0)
-  /* Read once per mount: see `coarsePointer`. */
-  const hitPx = useMemo(() => (coarsePointer() ? HIT_PX_COARSE : HIT_PX), [])
+    const [hovered, setHovered] = useState(false);
+    const ringRef = useRef<THREE.Mesh>(null);
+    const pinRef = useRef<THREE.Group>(null);
+    const proxyRef = useRef<THREE.Mesh>(null);
+    const labelWrapRef = useRef<HTMLDivElement>(null);
+    const facingRef = useRef(1);
+    /* Last frame's proxy centre in CSS px, and the current motion allowance in px. */
+    const prevScreenRef = useRef<{ x: number; y: number } | null>(null);
+    const motionExtraRef = useRef(0);
+    /* Read once per mount: see `coarsePointer`. */
+    const hitPx = useMemo(() => (coarsePointer() ? HIT_PX_COARSE : HIT_PX), []);
 
-  const position = useMemo(
-    () =>
-      latLonToVector3(region.lat, region.lon, GLOBE_LOOK.pins.anchorRadius),
-    [region],
-  )
-  /*
-   * The gate reads the pin's BASE normal: the core is offset along the same radial, so the direction is
-   * identical and `position` (the anchor at `anchorRadius`) is the cheap source for it. Un-normalised —
-   * the pure function normalises.
-   */
-  const baseNormal = useMemo(() => new THREE.Vector3(...position), [position])
-  const quaternion = useMemo(() => {
-    // Orient the ring's +Z along the surface normal at this lat/lon.
-    const normal = new THREE.Vector3(...position).normalize()
-    return new THREE.Quaternion().setFromUnitVectors(
-      new THREE.Vector3(0, 0, 1),
-      normal,
-    )
-  }, [position])
-
-  // Stem geometry: a short dark collar from the surface up to the core, oriented
-  // along the surface normal. It exists for CONTRAST, not decoration — an amber
-  // core measured only ~1.2:1 luminance against a sunlit cloud deck, so the pin
-  // needs something dark to sit on. A dark stem gets that without emitting light
-  // onto the surface, which is exactly what the old <pointLight> got wrong.
-  const look = useSyncExternalStore(
-    subscribeLookFlags,
-    getLookFlags,
-    getLookFlags,
-  )
-
-  const uniforms = useMemo(
-    () => ({
-      uColor: { value: new THREE.Color(region.accent) },
-      uTime: { value: 0 },
-      uPhase: { value: Math.random() },
-    }),
-    [region.accent],
-  )
-
-  useFrame((state, delta) => {
+    const position = useMemo(
+        () =>
+            latLonToVector3(
+                region.lat,
+                region.lon,
+                GLOBE_LOOK.pins.anchorRadius,
+            ),
+        [region],
+    );
     /*
-     * Same rule as the atmosphere: a pulsing shader ring is a function of this uniform, and a
-     * frozen scene is only frozen if every time-driven term stops. `animate:true` (the live
-     * product) leaves the value identical to the raw clock.
+     * The gate reads the pin's BASE normal: the core is offset along the same radial, so the direction is
+     * identical and `position` (the anchor at `anchorRadius`) is the cheap source for it. Un-normalised —
+     * the pure function normalises.
      */
-    uniforms.uTime.value = lookTime(look.animate, state.clock.elapsedTime)
-    const [r, g, b] = thermalVector(sst)
-    ;(uniforms.uColor.value as THREE.Color).setRGB(r, g, b)
+    const baseNormal = useMemo(
+        () => new THREE.Vector3(...position),
+        [position],
+    );
+    const quaternion = useMemo(() => {
+        // Orient the ring's +Z along the surface normal at this lat/lon.
+        const normal = new THREE.Vector3(...position).normalize();
+        return new THREE.Quaternion().setFromUnitVectors(
+            new THREE.Vector3(0, 0, 1),
+            normal,
+        );
+    }, [position]);
 
-    if (ringRef.current) {
-      const targetScale = active ? 1.55 : hovered ? 1.25 : 1
-      ringRef.current.scale.lerp(
-        new THREE.Vector3(targetScale, targetScale, targetScale),
-        Math.min(1, delta * 6),
-      )
-    }
-    if (pinRef.current) {
-      const lift =
-        active || hovered
-          ? GLOBE_LOOK.pins.activeLift
-          : GLOBE_LOOK.pins.idleLift
-      pinRef.current.position.set(
-        position[0] * lift,
-        position[1] * lift,
-        position[2] * lift,
-      )
-    }
+    // Stem geometry: a short dark collar from the surface up to the core, oriented
+    // along the surface normal. It exists for CONTRAST, not decoration — an amber
+    // core measured only ~1.2:1 luminance against a sunlit cloud deck, so the pin
+    // needs something dark to sit on. A dark stem gets that without emitting light
+    // onto the surface, which is exactly what the old <pointLight> got wrong.
+    const look = useSyncExternalStore(
+        subscribeLookFlags,
+        getLookFlags,
+        getLookFlags,
+    );
 
-    /*
-     * Keep the hit proxy's PROJECTED radius at `hitPx`, whatever the camera distance is.
-     *
-     * A sphere of world radius `r` at distance `d` from the camera subtends `r * focalPx / d` CSS px, so
-     * `r = hitPx * d / focalPx` is the world radius that measures exactly `hitPx` on screen. Recomputed
-     * every frame (never React state): a wheel zoom changes `d` continuously and a radius kept in state
-     * would lag the camera by a render.
-     *
-     * The proxy's POSITION is deliberately static — it sits on the idle head, the point `__globe.pins()`
-     * reports and the specs project. If it followed the hover/active lift, hovering would move the proxy
-     * out from under the cursor and the pointer-out it caused would move it back: a feedback loop that
-     * flickers the cursor. The active lift is 0.025 R (7.6 px at d_fit), well inside the 18 px radius, so
-     * a click aimed at the projected head still lands after a selection.
-     *
-     * `motionExtraPx` widens the radius by the pin's recent screen speed times `MOTION_LEAD_S` (capped at
-     * `MOTION_EXTRA_MAX_PX`), so a click aimed at a moving pin still lands.
-     */
-    const proxy = proxyRef.current
-    if (proxy) {
-      const cam = state.camera as THREE.PerspectiveCamera
-      proxy.getWorldPosition(SCRATCH_PROXY)
-      const focalPx =
-        state.size.height / 2 / Math.tan(((cam.fov ?? 42) * Math.PI) / 360)
-      const dist = cam.position.distanceTo(SCRATCH_PROXY)
-
-      /*
-       * Pin velocity in CSS px/s: project the proxy centre to the screen, then diff it against last frame's
-       * position. This is the pin's apparent motion (camera flight plus planet spin), which is what moves
-       * it out from under an aimed pointer. Never React state, for the same reason as the radius.
-       */
-      SCRATCH_NDC.copy(SCRATCH_PROXY).project(cam)
-      if (SCRATCH_NDC.z > 1 || !Number.isFinite(SCRATCH_NDC.x + SCRATCH_NDC.y)) {
-        /* Behind the camera or degenerate: no meaningful velocity. */
-        prevScreenRef.current = null
-        motionExtraRef.current = 0
-      } else {
-        const sx = (SCRATCH_NDC.x * 0.5 + 0.5) * state.size.width
-        const sy = (-SCRATCH_NDC.y * 0.5 + 0.5) * state.size.height
-        const prev = prevScreenRef.current
-        let raw = 0
-        if (prev && delta > 1e-4) {
-          const speed = Math.hypot(sx - prev.x, sy - prev.y) / delta
-          raw = Math.min(MOTION_EXTRA_MAX_PX, speed * MOTION_LEAD_S)
-        }
-        prevScreenRef.current = { x: sx, y: sy }
-        /* Rise instantly (a moving pin needs the allowance now), decay smoothly (no flicker as it slows). */
-        motionExtraRef.current =
-          raw > motionExtraRef.current
-            ? raw
-            : motionExtraRef.current +
-              (raw - motionExtraRef.current) * Math.min(1, delta * 10)
-      }
-      const motionExtraPx = motionExtraRef.current
-
-      const effectiveHitPx = hitPx * 2.5 + motionExtraPx
-      const worldR =
-        focalPx > 0 ? (effectiveHitPx * dist) / focalPx : PIN_HIT_CLAMP_R
-      proxy.scale.setScalar(Math.min(worldR, PIN_HIT_CLAMP_R * 2.5))
-    }
-
-    // Fade labels that face away from the camera.
-    //
-    // drei <Html> draws in screen space with no depth test against the globe, so
-    // a marker on the far side rendered its label on top of the near side — the
-    // visible result was two labels colliding over the same patch of ocean.
-    // Test the marker's world normal against the camera direction and hide the
-    // back hemisphere; the active region is always kept visible so the thing the
-    // user just clicked never disappears.
-    if (labelWrapRef.current) {
-      // Marker normal in world space — the parent group carries the planet's spin.
-      const normal = new THREE.Vector3(
-        position[0],
-        position[1],
-        position[2],
-      ).normalize()
-      const parent = pinRef.current?.parent
-      if (parent) {
-        parent.updateWorldMatrix(true, false)
-        normal.transformDirection(parent.matrixWorld)
-      }
-      const facing = normal.dot(state.camera.position.clone().normalize())
-      // Smooth 0..1 across the limb rather than a hard pop. The active region is
-      // always 1 so the label you just clicked never fades out.
-      const target = active
-        ? 1
-        : THREE.MathUtils.smoothstep(facing, 0.02, 0.22)
-      facingRef.current +=
-        (target - facingRef.current) * Math.min(1, delta * 8)
-
-      const el = labelWrapRef.current
-      el.style.opacity = facingRef.current.toFixed(3)
-      el.style.pointerEvents = facingRef.current > 0.35 ? "auto" : "none"
-      el.style.visibility = facingRef.current < 0.03 ? "hidden" : "visible"
-    }
-  })
-
-  /**
-   * Forward wheel over the label to the canvas.
-   *
-   * OrbitControls attaches its `wheel` listener to the renderer's `domElement`.
-   * The drei `<Html>` label is a SIBLING of the canvas, not a descendant, and it
-   * is `pointer-events: auto`, so a wheel aimed at a pin reaches neither the
-   * canvas listener nor open space. Pointing straight at a hotspot and scrolling
-   * therefore did nothing — the most likely place a user tries to zoom.
-   *
-   * A NATIVE listener, not React's `onWheel`: drei renders `<Html>` into a DOM
-   * portal outside the React root that owns this component, so React's synthetic
-   * delegation never sees the event and an `onWheel` prop here is silently dead.
-   * Verified — the canvas received no re-dispatched event.
-   *
-   * Re-dispatching carries the real `deltaY`, so OrbitControls' zoomSpeed and
-   * damping apply exactly as over open space. `bubbles: false` keeps the
-   * re-dispatched event from looping back into this handler.
-   *
-   * ## The label selects on POINTERDOWN, not on `click`
-   *
-   * The hit proxy already selects on pointerdown (see its `onPointerDown`), and the label has to do the
-   * same or the two targets disagree about what a press means. The failure this fixes is specific: the
-   * label is repositioned every frame while the camera flies, so a press that starts on the button can
-   * have the button move out from under the pointer before pointerup — the browser then fires no `click`
-   * at all, R3F never saw the press (the label is DOM, not a scene object), and the proxy is never hit.
-   * Nothing is selected and the box stays pressed.
-   *
-   * `click` is kept for the keyboard: Enter or Space produces a `click` with no preceding pointerdown, so
-   * `lastDownSelectAt` is stale and the click selects normally. A click that DOES follow a pointerdown
-   * within `LABEL_DOWN_CLICK_WINDOW_MS` is the same gesture and is ignored, so a press cannot select
-   * twice — a second `onSelect` would bump the focus nonce and re-fly the camera.
-   */
-  useEffect(() => {
-    const el = labelWrapRef.current
-    if (!el) return
-
-    const onWheel = (e: WheelEvent) => {
-      const canvas = document.querySelector("#globe-canvas canvas")
-      if (!canvas) return
-      canvas.dispatchEvent(
-        new WheelEvent("wheel", {
-          deltaY: e.deltaY,
-          deltaMode: e.deltaMode,
-          clientX: e.clientX,
-          clientY: e.clientY,
-          bubbles: false,
-          cancelable: true,
+    const uniforms = useMemo(
+        () => ({
+            uColor: { value: new THREE.Color(region.accent) },
+            uTime: { value: 0 },
+            uPhase: { value: Math.random() },
         }),
-      )
-    }
+        [region.accent],
+    );
 
-    const btn = el.querySelector("button")
-    let lastDownSelectAt = -Infinity
-    const onDown = (e: PointerEvent) => {
-      if (e.button !== 0) return
-      e.stopPropagation()
-      lastDownSelectAt = performance.now()
-      onSelect(region.id)
-    }
-    const onClick = (e: MouseEvent) => {
-      e.stopPropagation()
-      /* The press already selected; do not select twice (a second select would re-trigger the focus nonce). */
-      if (performance.now() - lastDownSelectAt < LABEL_DOWN_CLICK_WINDOW_MS) return
-      onSelect(region.id)
-    }
-    const onEnter = () => setHovered(true)
-    const onLeave = () => setHovered(false)
+    useFrame((state, delta) => {
+        /*
+         * Same rule as the atmosphere: a pulsing shader ring is a function of this uniform, and a
+         * frozen scene is only frozen if every time-driven term stops. `animate:true` (the live
+         * product) leaves the value identical to the raw clock.
+         */
+        uniforms.uTime.value = lookTime(look.animate, state.clock.elapsedTime);
+        const [r, g, b] = thermalVector(sst);
+        (uniforms.uColor.value as THREE.Color).setRGB(r, g, b);
 
-    el.addEventListener("wheel", onWheel, { passive: true })
-    if (btn) {
-      btn.addEventListener("pointerdown", onDown)
-      btn.addEventListener("click", onClick)
-      btn.addEventListener("pointerenter", onEnter)
-      btn.addEventListener("pointerleave", onLeave)
-    }
+        if (ringRef.current) {
+            const targetScale = active ? 1.55 : hovered ? 1.25 : 1;
+            ringRef.current.scale.lerp(
+                new THREE.Vector3(targetScale, targetScale, targetScale),
+                Math.min(1, delta * 6),
+            );
+        }
+        if (pinRef.current) {
+            const lift =
+                active || hovered
+                    ? GLOBE_LOOK.pins.activeLift
+                    : GLOBE_LOOK.pins.idleLift;
+            pinRef.current.position.set(
+                position[0] * lift,
+                position[1] * lift,
+                position[2] * lift,
+            );
+        }
 
-    return () => {
-      el.removeEventListener("wheel", onWheel)
-      if (btn) {
-        btn.removeEventListener("pointerdown", onDown)
-        btn.removeEventListener("click", onClick)
-        btn.removeEventListener("pointerenter", onEnter)
-        btn.removeEventListener("pointerleave", onLeave)
-      }
-    }
-  }, [region.id, onSelect])
+        /*
+         * Keep the hit proxy's PROJECTED radius at `hitPx`, whatever the camera distance is.
+         *
+         * A sphere of world radius `r` at distance `d` from the camera subtends `r * focalPx / d` CSS px, so
+         * `r = hitPx * d / focalPx` is the world radius that measures exactly `hitPx` on screen. Recomputed
+         * every frame (never React state): a wheel zoom changes `d` continuously and a radius kept in state
+         * would lag the camera by a render.
+         *
+         * The proxy's POSITION is deliberately static — it sits on the idle head, the point `__globe.pins()`
+         * reports and the specs project. If it followed the hover/active lift, hovering would move the proxy
+         * out from under the cursor and the pointer-out it caused would move it back: a feedback loop that
+         * flickers the cursor. The active lift is 0.025 R (7.6 px at d_fit), well inside the 18 px radius, so
+         * a click aimed at the projected head still lands after a selection.
+         *
+         * `motionExtraPx` widens the radius by the pin's recent screen speed times `MOTION_LEAD_S` (capped at
+         * `MOTION_EXTRA_MAX_PX`), so a click aimed at a moving pin still lands.
+         */
+        const proxy = proxyRef.current;
+        if (proxy) {
+            const cam = state.camera as THREE.PerspectiveCamera;
+            proxy.getWorldPosition(SCRATCH_PROXY);
+            const focalPx =
+                state.size.height /
+                2 /
+                Math.tan(((cam.fov ?? 42) * Math.PI) / 360);
+            const dist = cam.position.distanceTo(SCRATCH_PROXY);
 
-  // Two forms of the same ramp: a THREE.Color for materials/lights (three would
-  // ignore an rgba alpha and warn), and a CSS rgba for the DOM label.
-  const glowColor = useMemo(() => {
-    const [r, g, b] = thermalVector(sst)
-    return new THREE.Color(r, g, b)
-  }, [sst])
-  const glowCss = thermalColor(sst, active ? 0.95 : 0.75)
+            /*
+             * Pin velocity in CSS px/s: project the proxy centre to the screen, then diff it against last frame's
+             * position. This is the pin's apparent motion (camera flight plus planet spin), which is what moves
+             * it out from under an aimed pointer. Never React state, for the same reason as the radius.
+             */
+            SCRATCH_NDC.copy(SCRATCH_PROXY).project(cam);
+            if (
+                SCRATCH_NDC.z > 1 ||
+                !Number.isFinite(SCRATCH_NDC.x + SCRATCH_NDC.y)
+            ) {
+                /* Behind the camera or degenerate: no meaningful velocity. */
+                prevScreenRef.current = null;
+                motionExtraRef.current = 0;
+            } else {
+                const sx = (SCRATCH_NDC.x * 0.5 + 0.5) * state.size.width;
+                const sy = (-SCRATCH_NDC.y * 0.5 + 0.5) * state.size.height;
+                const prev = prevScreenRef.current;
+                let raw = 0;
+                if (prev && delta > 1e-4) {
+                    const speed = Math.hypot(sx - prev.x, sy - prev.y) / delta;
+                    raw = Math.min(MOTION_EXTRA_MAX_PX, speed * MOTION_LEAD_S);
+                }
+                prevScreenRef.current = { x: sx, y: sy };
+                /* Rise instantly (a moving pin needs the allowance now), decay smoothly (no flicker as it slows). */
+                motionExtraRef.current =
+                    raw > motionExtraRef.current
+                        ? raw
+                        : motionExtraRef.current +
+                          (raw - motionExtraRef.current) *
+                              Math.min(1, delta * 10);
+            }
+            const motionExtraPx = motionExtraRef.current;
 
-  const headPosition = useMemo<[number, number, number]>(() => {
-    /* The same point `__globe.pins()` reports and the specs project: anchor x idleLift + coreOffset. */
-    const r =
-      GLOBE_LOOK.pins.anchorRadius * GLOBE_LOOK.pins.idleLift +
-      GLOBE_LOOK.pins.coreOffset
-    return latLonToVector3(region.lat, region.lon, r)
-  }, [region])
+            const effectiveHitPx = hitPx * 2.5 + motionExtraPx;
+            const worldR =
+                focalPx > 0
+                    ? (effectiveHitPx * dist) / focalPx
+                    : PIN_HIT_CLAMP_R;
+            proxy.scale.setScalar(Math.min(worldR, PIN_HIT_CLAMP_R * 2.5));
+        }
 
-  /**
-   * The proxy's raycast: the facing gate, then the ordinary sphere test.
-   *
-   * Why an override rather than a filter after the fact: A3 requires a back pin to produce NO hit, so
-   * the intersection list has to be empty before R3F decides hover, cursor and click. A veto applied in
-   * `onClick` would still hover, still set the pointer cursor over a pin the user cannot see, and would
-   * still count as a hit for `onPointerMissed`'s bookkeeping.
-   *
-   * `nWorld` is recomputed here, at raycast time, from the pin's base direction through the earth
-   * group's current world matrix — that is what keeps the answer right while the planet spins. The
-   * camera side is `raycaster.ray.origin` (the ray's own origin, not `camera.position`, which differ by
-   * the near plane) and the globe centre is the earth group's world position.
-   */
-  const proxyRaycast = useMemo(
-    () => (raycaster: THREE.Raycaster, intersects: THREE.Intersection[]) => {
-      const proxy = proxyRef.current
-      if (!proxy) return
-      const earth = earthRef.current
+        // Fade labels that face away from the camera.
+        //
+        // drei <Html> draws in screen space with no depth test against the globe, so
+        // a marker on the far side rendered its label on top of the near side — the
+        // visible result was two labels colliding over the same patch of ocean.
+        // Test the marker's world normal against the camera direction and hide the
+        // back hemisphere; the active region is always kept visible so the thing the
+        // user just clicked never disappears.
+        if (labelWrapRef.current) {
+            // Marker normal in world space — the parent group carries the planet's spin.
+            const normal = new THREE.Vector3(
+                position[0],
+                position[1],
+                position[2],
+            ).normalize();
+            const parent = pinRef.current?.parent;
+            if (parent) {
+                parent.updateWorldMatrix(true, false);
+                normal.transformDirection(parent.matrixWorld);
+            }
+            const facing = normal.dot(
+                state.camera.position.clone().normalize(),
+            );
+            // Smooth 0..1 across the limb rather than a hard pop. The active region is
+            // always 1 so the label you just clicked never fades out.
+            const target = active
+                ? 1
+                : THREE.MathUtils.smoothstep(facing, 0.02, 0.22);
+            facingRef.current +=
+                (target - facingRef.current) * Math.min(1, delta * 8);
 
-      /* Fresh world matrices: update proxy and all ancestors (including earth) */
-      proxy.updateWorldMatrix(true, false)
+            const el = labelWrapRef.current;
+            el.style.opacity = facingRef.current.toFixed(3);
+            el.style.pointerEvents = facingRef.current > 0.35 ? "auto" : "none";
+            el.style.visibility =
+                facingRef.current < 0.03 ? "hidden" : "visible";
+        }
+    });
 
-      SCRATCH_NORMAL.copy(baseNormal)
-      const carrier = earth ?? proxy.parent
-      if (carrier) SCRATCH_NORMAL.transformDirection(carrier.matrixWorld)
-      else SCRATCH_NORMAL.normalize()
+    /**
+     * Forward wheel over the label to the canvas.
+     *
+     * OrbitControls attaches its `wheel` listener to the renderer's `domElement`.
+     * The drei `<Html>` label is a SIBLING of the canvas, not a descendant, and it
+     * is `pointer-events: auto`, so a wheel aimed at a pin reaches neither the
+     * canvas listener nor open space. Pointing straight at a hotspot and scrolling
+     * therefore did nothing — the most likely place a user tries to zoom.
+     *
+     * A NATIVE listener, not React's `onWheel`: drei renders `<Html>` into a DOM
+     * portal outside the React root that owns this component, so React's synthetic
+     * delegation never sees the event and an `onWheel` prop here is silently dead.
+     * Verified — the canvas received no re-dispatched event.
+     *
+     * Re-dispatching carries the real `deltaY`, so OrbitControls' zoomSpeed and
+     * damping apply exactly as over open space. `bubbles: false` keeps the
+     * re-dispatched event from looping back into this handler.
+     *
+     * ## The label selects on POINTERDOWN, not on `click`
+     *
+     * The hit proxy already selects on pointerdown (see its `onPointerDown`), and the label has to do the
+     * same or the two targets disagree about what a press means. The failure this fixes is specific: the
+     * label is repositioned every frame while the camera flies, so a press that starts on the button can
+     * have the button move out from under the pointer before pointerup — the browser then fires no `click`
+     * at all, R3F never saw the press (the label is DOM, not a scene object), and the proxy is never hit.
+     * Nothing is selected and the box stays pressed.
+     *
+     * `click` is kept for the keyboard: Enter or Space produces a `click` with no preceding pointerdown, so
+     * `lastDownSelectAt` is stale and the click selects normally. A click that DOES follow a pointerdown
+     * within `LABEL_DOWN_CLICK_WINDOW_MS` is the same gesture and is ignored, so a press cannot select
+     * twice — a second `onSelect` would bump the focus nonce and re-fly the camera.
+     */
+    useEffect(() => {
+        const el = labelWrapRef.current;
+        if (!el) return;
 
-      if (earth) earth.getWorldPosition(SCRATCH_CENTRE)
-      else proxy.getWorldPosition(SCRATCH_CENTRE)
+        const onWheel = (e: WheelEvent) => {
+            const canvas = document.querySelector("#globe-canvas canvas");
+            if (!canvas) return;
+            canvas.dispatchEvent(
+                new WheelEvent("wheel", {
+                    deltaY: e.deltaY,
+                    deltaMode: e.deltaMode,
+                    clientX: e.clientX,
+                    clientY: e.clientY,
+                    bubbles: false,
+                    cancelable: true,
+                }),
+            );
+        };
 
-      /*
-       * TEMPORARY DIAGNOSTIC — `__pinRay`.
-       *
-       * Records the gate's three inputs and its verdict for every raycast, so a report can tell "the
-       * ray never reached this pin" from "the ray reached it and the gate refused it". Those are
-       * different defects with the same symptom (a press that selects nothing), and nothing else in
-       * the page distinguishes them: `__globe.pins()` reports the pin's position, not whether a ray
-       * was ever cast at it.
-       *
-       * Bounded to the last 240 entries. A pointer move raycasts every pin, so an unbounded log would
-       * grow for the life of the page — and a growing array is itself a timing change in the thing
-       * being measured.
-       *
-       * Remove with the rest of the `__pinRay` / `__pinDown` instrumentation.
-       */
-      const facing = pinFacesCamera(
-        SCRATCH_NORMAL,
-        raycaster.ray.origin,
-        SCRATCH_CENTRE,
-        PIN_HIT_GATE,
-      )
-      if (import.meta.env.VITE_E2E === "1") {
-        const w = window as unknown as Record<string, unknown>
-        const log = (w.__pinRay as Array<Record<string, unknown>> | undefined) ?? []
-        log.push({
-          id: region.id,
-          facing,
-          gate: PIN_HIT_GATE,
-          n: [
-            +SCRATCH_NORMAL.x.toFixed(4),
-            +SCRATCH_NORMAL.y.toFixed(4),
-            +SCRATCH_NORMAL.z.toFixed(4),
-          ],
-          origin: [
-            +raycaster.ray.origin.x.toFixed(4),
-            +raycaster.ray.origin.y.toFixed(4),
-            +raycaster.ray.origin.z.toFixed(4),
-          ],
-          centre: [
-            +SCRATCH_CENTRE.x.toFixed(4),
-            +SCRATCH_CENTRE.y.toFixed(4),
-            +SCRATCH_CENTRE.z.toFixed(4),
-          ],
-          t: +performance.now().toFixed(1),
-        })
-        if (log.length > 240) log.splice(0, log.length - 240)
-        w.__pinRay = log
-      }
+        const btn = el.querySelector("button");
+        let lastDownSelectAt = -Infinity;
+        const onDown = (e: PointerEvent) => {
+            if (e.button !== 0) return;
+            e.stopPropagation();
+            lastDownSelectAt = performance.now();
+            onSelect(region.id);
+        };
+        const onClick = (e: MouseEvent) => {
+            e.stopPropagation();
+            /* The press already selected; do not select twice (a second select would re-trigger the focus nonce). */
+            if (
+                performance.now() - lastDownSelectAt <
+                LABEL_DOWN_CLICK_WINDOW_MS
+            )
+                return;
+            onSelect(region.id);
+        };
+        const onEnter = () => setHovered(true);
+        const onLeave = () => setHovered(false);
 
-      if (!facing) return
+        el.addEventListener("wheel", onWheel, { passive: true });
+        if (btn) {
+            btn.addEventListener("pointerdown", onDown);
+            btn.addEventListener("click", onClick);
+            btn.addEventListener("pointerenter", onEnter);
+            btn.addEventListener("pointerleave", onLeave);
+        }
 
-      THREE.Mesh.prototype.raycast.call(proxy, raycaster, intersects)
-    },
-    [baseNormal, earthRef, region.id],
-  )
+        return () => {
+            el.removeEventListener("wheel", onWheel);
+            if (btn) {
+                btn.removeEventListener("pointerdown", onDown);
+                btn.removeEventListener("click", onClick);
+                btn.removeEventListener("pointerenter", onEnter);
+                btn.removeEventListener("pointerleave", onLeave);
+            }
+        };
+    }, [region.id, onSelect]);
 
-  return (
-    <group>
-      {/* Pulsing ring anchored to the surface. It is NOT the click target any more (step 3B2-FIX2):
+    // Two forms of the same ramp: a THREE.Color for materials/lights (three would
+    // ignore an rgba alpha and warn), and a CSS rgba for the DOM label.
+    const glowColor = useMemo(() => {
+        const [r, g, b] = thermalVector(sst);
+        return new THREE.Color(r, g, b);
+    }, [sst]);
+    const glowCss = thermalColor(sst, active ? 0.95 : 0.75);
+
+    const headPosition = useMemo<[number, number, number]>(() => {
+        /* The same point `__globe.pins()` reports and the specs project: anchor x idleLift + coreOffset. */
+        const r =
+            GLOBE_LOOK.pins.anchorRadius * GLOBE_LOOK.pins.idleLift +
+            GLOBE_LOOK.pins.coreOffset;
+        return latLonToVector3(region.lat, region.lon, r);
+    }, [region]);
+
+    /**
+     * The proxy's raycast: the facing gate, then the ordinary sphere test.
+     *
+     * Why an override rather than a filter after the fact: A3 requires a back pin to produce NO hit, so
+     * the intersection list has to be empty before R3F decides hover, cursor and click. A veto applied in
+     * `onClick` would still hover, still set the pointer cursor over a pin the user cannot see, and would
+     * still count as a hit for `onPointerMissed`'s bookkeeping.
+     *
+     * `nWorld` is recomputed here, at raycast time, from the pin's base direction through the earth
+     * group's current world matrix — that is what keeps the answer right while the planet spins. The
+     * camera side is `raycaster.ray.origin` (the ray's own origin, not `camera.position`, which differ by
+     * the near plane) and the globe centre is the earth group's world position.
+     */
+    const proxyRaycast = useMemo(
+        () =>
+            (raycaster: THREE.Raycaster, intersects: THREE.Intersection[]) => {
+                const proxy = proxyRef.current;
+                if (!proxy) return;
+                const earth = earthRef.current;
+
+                /* Fresh world matrices: update proxy and all ancestors (including earth) */
+                proxy.updateWorldMatrix(true, false);
+
+                SCRATCH_NORMAL.copy(baseNormal);
+                const carrier = earth ?? proxy.parent;
+                if (carrier)
+                    SCRATCH_NORMAL.transformDirection(carrier.matrixWorld);
+                else SCRATCH_NORMAL.normalize();
+
+                if (earth) earth.getWorldPosition(SCRATCH_CENTRE);
+                else proxy.getWorldPosition(SCRATCH_CENTRE);
+
+                /*
+                 * TEMPORARY DIAGNOSTIC — `__pinRay`.
+                 *
+                 * Records the gate's three inputs and its verdict for every raycast, so a report can tell "the
+                 * ray never reached this pin" from "the ray reached it and the gate refused it". Those are
+                 * different defects with the same symptom (a press that selects nothing), and nothing else in
+                 * the page distinguishes them: `__globe.pins()` reports the pin's position, not whether a ray
+                 * was ever cast at it.
+                 *
+                 * Bounded to the last 240 entries. A pointer move raycasts every pin, so an unbounded log would
+                 * grow for the life of the page — and a growing array is itself a timing change in the thing
+                 * being measured.
+                 *
+                 * Remove with the rest of the `__pinRay` / `__pinDown` instrumentation.
+                 */
+                const facing = pinFacesCamera(
+                    SCRATCH_NORMAL,
+                    raycaster.ray.origin,
+                    SCRATCH_CENTRE,
+                    PIN_HIT_GATE,
+                );
+                if (import.meta.env.VITE_E2E === "1") {
+                    const w = window as unknown as Record<string, unknown>;
+                    const log =
+                        (w.__pinRay as
+                            | Array<Record<string, unknown>>
+                            | undefined) ?? [];
+                    log.push({
+                        id: region.id,
+                        facing,
+                        gate: PIN_HIT_GATE,
+                        n: [
+                            +SCRATCH_NORMAL.x.toFixed(4),
+                            +SCRATCH_NORMAL.y.toFixed(4),
+                            +SCRATCH_NORMAL.z.toFixed(4),
+                        ],
+                        origin: [
+                            +raycaster.ray.origin.x.toFixed(4),
+                            +raycaster.ray.origin.y.toFixed(4),
+                            +raycaster.ray.origin.z.toFixed(4),
+                        ],
+                        centre: [
+                            +SCRATCH_CENTRE.x.toFixed(4),
+                            +SCRATCH_CENTRE.y.toFixed(4),
+                            +SCRATCH_CENTRE.z.toFixed(4),
+                        ],
+                        t: +performance.now().toFixed(1),
+                    });
+                    if (log.length > 240) log.splice(0, log.length - 240);
+                    w.__pinRay = log;
+                }
+
+                if (!facing) return;
+
+                THREE.Mesh.prototype.raycast.call(proxy, raycaster, intersects);
+            },
+        [baseNormal, earthRef, region.id],
+    );
+
+    return (
+        <group>
+            {/* Pulsing ring anchored to the surface. It is NOT the click target any more (step 3B2-FIX2):
           its 0.22-unit quad is tangent to the sphere, so it turns edge-on and its screen footprint
           collapses exactly where the limb is — which is why clicking a pin was hit-or-miss. The ring is
           drawn only; the hit proxy below is the target. */}
-      {look.hotspotRings && (
-        <mesh ref={ringRef} position={position} quaternion={quaternion}>
-          <planeGeometry args={[0.22, 0.22]} />
-          <shaderMaterial
-            vertexShader={hotspotVertex}
-            fragmentShader={hotspotFragment}
-            uniforms={uniforms}
-            transparent
-            depthWrite={false}
-            side={THREE.DoubleSide}
-            blending={THREE.AdditiveBlending}
-          />
-        </mesh>
-      )}
+            {look.hotspotRings && (
+                <mesh ref={ringRef} position={position} quaternion={quaternion}>
+                    <planeGeometry args={[0.22, 0.22]} />
+                    <shaderMaterial
+                        vertexShader={hotspotVertex}
+                        fragmentShader={hotspotFragment}
+                        uniforms={uniforms}
+                        transparent
+                        depthWrite={false}
+                        side={THREE.DoubleSide}
+                        blending={THREE.AdditiveBlending}
+                    />
+                </mesh>
+            )}
 
-      {/*
+            {/*
         The HIT PROXY — the only click/hover/cursor target for this pin.
 
         A non-rendering sphere centred on the pin HEAD and scaled every frame so its projected radius is
@@ -532,59 +562,64 @@ export function Hotspot({
         now agree about what a press means. Keyboard activation is unaffected: it goes through the label
         button's `click`, which has no preceding pointerdown.
       */}
-      <mesh
-        ref={proxyRef}
-        name={`pin-hit-${region.id}`}
-        position={headPosition}
-        scale={[2.2, 2.2, 2.2]}
-        raycast={proxyRaycast}
-        visible={false}
-        onPointerDown={
-          dotOnly
-            ? undefined
-            : (e) => {
-                /*
-                 * TEMPORARY DIAGNOSTIC — `__pinDown`.
-                 *
-                 * Counts how many times a real pointer press reached a pin's handler. Zero after a
-                 * click aimed at a pin means the press never got here (the ray missed, the gate
-                 * refused it, or something else took the event); non-zero means it did arrive and the
-                 * failure is downstream of this line. Nothing else in the page can tell those apart.
-                 *
-                 * Remove with the rest of the `__pinRay` / `__pinDown` instrumentation.
-                 */
-                if (import.meta.env.VITE_E2E === "1") {
-                  const w = window as unknown as Record<string, unknown>
-                  w.__pinDown = ((w.__pinDown as number | undefined) ?? 0) + 1
+            <mesh
+                ref={proxyRef}
+                name={`pin-hit-${region.id}`}
+                position={headPosition}
+                scale={[2.2, 2.2, 2.2]}
+                raycast={proxyRaycast}
+                visible={false}
+                onPointerDown={
+                    dotOnly
+                        ? undefined
+                        : (e) => {
+                              /*
+                               * TEMPORARY DIAGNOSTIC — `__pinDown`.
+                               *
+                               * Counts how many times a real pointer press reached a pin's handler. Zero after a
+                               * click aimed at a pin means the press never got here (the ray missed, the gate
+                               * refused it, or something else took the event); non-zero means it did arrive and the
+                               * failure is downstream of this line. Nothing else in the page can tell those apart.
+                               *
+                               * Remove with the rest of the `__pinRay` / `__pinDown` instrumentation.
+                               */
+                              if (import.meta.env.VITE_E2E === "1") {
+                                  const w = window as unknown as Record<
+                                      string,
+                                      unknown
+                                  >;
+                                  w.__pinDown =
+                                      ((w.__pinDown as number | undefined) ??
+                                          0) + 1;
+                              }
+                              e.stopPropagation();
+                              e.nativeEvent?.stopImmediatePropagation?.();
+                              onSelect(region.id);
+                          }
                 }
-                e.stopPropagation()
-                e.nativeEvent?.stopImmediatePropagation?.()
-                onSelect(region.id)
-              }
-        }
-        onPointerOver={
-          dotOnly
-            ? undefined
-            : (e) => {
-                e.stopPropagation()
-                setHovered(true)
-                document.body.style.cursor = "pointer"
-              }
-        }
-        onPointerOut={
-          dotOnly
-            ? undefined
-            : () => {
-                setHovered(false)
-                document.body.style.cursor = "auto"
-              }
-        }
-      >
-        <sphereGeometry args={[1, 12, 8]} />
-        <meshBasicMaterial transparent opacity={0} depthWrite={false} />
-      </mesh>
+                onPointerOver={
+                    dotOnly
+                        ? undefined
+                        : (e) => {
+                              e.stopPropagation();
+                              setHovered(true);
+                              document.body.style.cursor = "pointer";
+                          }
+                }
+                onPointerOut={
+                    dotOnly
+                        ? undefined
+                        : () => {
+                              setHovered(false);
+                              document.body.style.cursor = "auto";
+                          }
+                }
+            >
+                <sphereGeometry args={[1, 12, 8]} />
+                <meshBasicMaterial transparent opacity={0} depthWrite={false} />
+            </mesh>
 
-      {/* Pin stem + head.
+            {/* Pin stem + head.
           There is deliberately NO light in here. The old <pointLight>
           (intensity 0.9 active / 0.35 idle, distance 0.5) sat on the surface at
           1.012 R and lit the cloud and surface shells from ~0.1 unit away, which
@@ -600,26 +635,28 @@ export function Hotspot({
           before this change, which is why the pin had no self-illumination at
           all and relied on the light. `toneMapped={false}` keeps the amber from
           being dimmed by ACES so the intended colour reaches the screen. */}
-      {look.pins && (
-        <group ref={pinRef} position={position} quaternion={quaternion}>
-          {/* Dark collar: gives the core something to contrast against.
+            {look.pins && (
+                <group ref={pinRef} position={position} quaternion={quaternion}>
+                    {/* Dark collar: gives the core something to contrast against.
               The cylinder is Y-up by default; rotate it so its axis is the
               group's +Z (the surface normal) and push it out by half its height
               so it stands on the surface. */}
-          <mesh
-            position={[0, 0, 0.025]}
-            rotation={[Math.PI / 2, 0, 0]}
-            renderOrder={6}
-          >
-            <cylinderGeometry args={[0.0055, 0.0075, 0.05, 10, 1, true]} />
-            <meshBasicMaterial
-              color={GLOBE_LOOK.pins.housingColor}
-              toneMapped={false}
-              transparent
-              opacity={0.92}
-            />
-          </mesh>
-          {/* Housing: a flat dark DISC behind the core, so the core never sits on
+                    <mesh
+                        position={[0, 0, 0.025]}
+                        rotation={[Math.PI / 2, 0, 0]}
+                        renderOrder={6}
+                    >
+                        <cylinderGeometry
+                            args={[0.0055, 0.0075, 0.05, 10, 1, true]}
+                        />
+                        <meshBasicMaterial
+                            color={GLOBE_LOOK.pins.housingColor}
+                            toneMapped={false}
+                            transparent
+                            opacity={0.92}
+                        />
+                    </mesh>
+                    {/* Housing: a flat dark DISC behind the core, so the core never sits on
               a bright surface without a dark boundary around it.
               
               It has to be a disc at a smaller radius-in-z, not a concentric
@@ -629,44 +666,50 @@ export function Hotspot({
               amber should be. A circle facing outward, pushed back along the
               normal, leaves the core showing through the middle with a dark ring
               around it — which is the contrast this exists for. */}
-          <mesh
-            position={[0, 0, GLOBE_LOOK.pins.coreOffset - 0.006]}
-            renderOrder={7}
-          >
-            <circleGeometry
-              args={[
-                (active ? 0.016 : 0.011) * GLOBE_LOOK.pins.housingScale,
-                24,
-              ]}
-            />
-            <meshBasicMaterial
-              color={GLOBE_LOOK.pins.housingColor}
-              toneMapped={false}
-              side={THREE.DoubleSide}
-            />
-          </mesh>
-          {/* The core itself. Colour comes from the SST ramp so the whole
+                    <mesh
+                        position={[0, 0, GLOBE_LOOK.pins.coreOffset - 0.006]}
+                        renderOrder={7}
+                    >
+                        <circleGeometry
+                            args={[
+                                (active ? 0.016 : 0.011) *
+                                    GLOBE_LOOK.pins.housingScale,
+                                24,
+                            ]}
+                        />
+                        <meshBasicMaterial
+                            color={GLOBE_LOOK.pins.housingColor}
+                            toneMapped={false}
+                            side={THREE.DoubleSide}
+                        />
+                    </mesh>
+                    {/* The core itself. Colour comes from the SST ramp so the whole
               constellation shifts cyan -> amber -> red with the slider; the
               emissive intensity is what makes it readable on both limbs. */}
-          <mesh position={[0, 0, GLOBE_LOOK.pins.coreOffset]} renderOrder={8}>
-            <sphereGeometry args={[active ? 0.016 : 0.011, 16, 16]} />
-            <meshStandardMaterial
-              color={glowColor}
-              emissive={glowColor}
-              emissiveIntensity={
-                active
-                  ? GLOBE_LOOK.pins.activeEmissiveIntensity
-                  : GLOBE_LOOK.pins.emissiveIntensity
-              }
-              roughness={0.45}
-              metalness={0}
-              toneMapped={false}
-            />
-          </mesh>
-        </group>
-      )}
+                    <mesh
+                        position={[0, 0, GLOBE_LOOK.pins.coreOffset]}
+                        renderOrder={8}
+                    >
+                        <sphereGeometry
+                            args={[active ? 0.016 : 0.011, 16, 16]}
+                        />
+                        <meshStandardMaterial
+                            color={glowColor}
+                            emissive={glowColor}
+                            emissiveIntensity={
+                                active
+                                    ? GLOBE_LOOK.pins.activeEmissiveIntensity
+                                    : GLOBE_LOOK.pins.emissiveIntensity
+                            }
+                            roughness={0.45}
+                            metalness={0}
+                            toneMapped={false}
+                        />
+                    </mesh>
+                </group>
+            )}
 
-      {/* Label.
+            {/* Label.
           drei <Html> renders real DOM outside the WebGL canvas, so it inherits
           none of the scene's colour management. Over a bright atmosphere the
           old translucent-white pill (bg-white/15) had roughly 1.2:1 contrast
@@ -674,59 +717,66 @@ export function Hotspot({
           keeps it legible against any backdrop, including the sun glint.
 
           `dotOnly` pins render no label at all — they are dots. */}
-      {dotOnly ? null : (
-        <Html
-          position={[
-            position[0] * 1.1,
-            position[1] * 1.1 + 0.045,
-            position[2] * 1.1,
-          ]}
-          center
-          distanceFactor={1.55}
-          zIndexRange={[40, 30]}
-          style={{ pointerEvents: "auto" }}
-        >
-          <div
-            ref={labelWrapRef}
-            style={{ transition: "opacity 120ms linear" }}
-          >
-            <button
-              type="button"
-              onClick={() => onSelect(region.id)}
-              onPointerEnter={() => setHovered(true)}
-              onPointerLeave={() => setHovered(false)}
-              className={[
-                "group flex -translate-y-1 items-center gap-1.5 whitespace-nowrap rounded-full border px-2 py-[3px]",
-                "font-mono text-[9px] font-medium uppercase tracking-[0.14em] transition-all duration-200",
-                active
-                  ? "border-[rgba(255,255,255,0.38)] text-white"
-                  : "border-[rgba(255,255,255,0.15)] text-[rgba(226,238,255,0.92)] hover:border-[rgba(255,255,255,0.34)] hover:text-white",
-              ].join(" ")}
-              style={{
-                // Solid enough to guarantee contrast over white cloud or sun glint.
-                background: "rgba(10, 15, 25, 0.85)",
-                backdropFilter: "blur(8px)",
-                WebkitBackdropFilter: "blur(8px)",
-                // Two-layer shadow: a dark halo for contrast, a warm bloom when active.
-                boxShadow: active
-                  ? `0 1px 2px rgba(0,0,0,0.9), 0 4px 14px rgba(0,0,0,0.55), 0 0 18px -4px ${glowCss}`
-                  : "0 1px 2px rgba(0,0,0,0.9), 0 4px 12px rgba(0,0,0,0.45)",
-                textShadow: "0 1px 2px rgba(0,0,0,0.95)",
-              }}
-              title={`${region.name} — ${headline}`}
-            >
-              <span
-                className="h-1.5 w-1.5 shrink-0 rounded-full transition-colors"
-                style={{
-                  background: glowCss,
-                  boxShadow: `0 0 8px ${glowCss}`,
-                }}
-              />
-              {region.shortName}
-            </button>
-          </div>
-        </Html>
-      )}
-    </group>
-  )
+            {dotOnly ? null : (
+                <Html
+                    position={[
+                        position[0] * 1.1,
+                        position[1] * 1.1 + 0.045,
+                        position[2] * 1.1,
+                    ]}
+                    center
+                    distanceFactor={1.55}
+                    zIndexRange={[40, 30]}
+                    eps={0.00001}
+                    style={{
+                        pointerEvents: "auto",
+                        transform: "translate3d(0, 0, 0)",
+                    }}
+                >
+                    <div
+                        ref={labelWrapRef}
+                        style={{
+                            transition: "opacity 120ms linear",
+                            willChange: "transform, opacity",
+                        }}
+                    >
+                        <button
+                            type="button"
+                            onClick={() => onSelect(region.id)}
+                            onPointerEnter={() => setHovered(true)}
+                            onPointerLeave={() => setHovered(false)}
+                            className={[
+                                "group flex -translate-y-1 items-center gap-1.5 whitespace-nowrap rounded-full border px-2 py-[3px]",
+                                "font-mono text-[9px] font-medium uppercase tracking-[0.14em] transition-colors duration-200",
+                                active
+                                    ? "border-[rgba(255,255,255,0.38)] text-white"
+                                    : "border-[rgba(255,255,255,0.15)] text-[rgba(226,238,255,0.92)] hover:border-[rgba(255,255,255,0.34)] hover:text-white",
+                            ].join(" ")}
+                            style={{
+                                // Solid enough to guarantee contrast over white cloud or sun glint.
+                                background: "rgba(10, 15, 25, 0.85)",
+                                backdropFilter: "blur(8px)",
+                                WebkitBackdropFilter: "blur(8px)",
+                                // Two-layer shadow: a dark halo for contrast, a warm bloom when active.
+                                boxShadow: active
+                                    ? `0 1px 2px rgba(0,0,0,0.9), 0 4px 14px rgba(0,0,0,0.55), 0 0 18px -4px ${glowCss}`
+                                    : "0 1px 2px rgba(0,0,0,0.9), 0 4px 12px rgba(0,0,0,0.45)",
+                                textShadow: "0 1px 2px rgba(0,0,0,0.95)",
+                            }}
+                            title={`${region.name} — ${headline}`}
+                        >
+                            <span
+                                className="h-1.5 w-1.5 shrink-0 rounded-full transition-colors"
+                                style={{
+                                    background: glowCss,
+                                    boxShadow: `0 0 8px ${glowCss}`,
+                                }}
+                            />
+                            {region.shortName}
+                        </button>
+                    </div>
+                </Html>
+            )}
+        </group>
+    );
 }
