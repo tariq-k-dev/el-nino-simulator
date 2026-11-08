@@ -18,239 +18,301 @@
  *
  * This file runs under vitest, so it is part of `pnpm tsc -b && pnpm lint && pnpm test`.
  */
-import { readFile, readdir } from 'node:fs/promises';
-import path from 'node:path';
-import { describe, expect, it } from 'vitest';
+import { readFile, readdir } from "node:fs/promises";
+import path from "node:path";
+import { describe, expect, it } from "vitest";
 
-const REPO = path.resolve(__dirname, '..', '..');
+const REPO = path.resolve(__dirname, "..", "..");
 
 /** Directories whose sources the guards apply to. */
-const ROOTS = ['tests/e2e', 'src', 'scripts'];
+const ROOTS = ["tests/e2e", "src", "scripts"];
 
 async function walk(dir: string): Promise<string[]> {
-  const out: string[] = [];
-  const entries = await readdir(dir, { withFileTypes: true });
-  for (const entry of entries) {
-    const full = path.join(dir, entry.name);
-    if (entry.isDirectory()) {
-      out.push(...(await walk(full)));
-    } else if (/\.(ts|tsx|mts|mjs|js)$/.test(entry.name)) {
-      out.push(full);
+    const out: string[] = [];
+    const entries = await readdir(dir, { withFileTypes: true });
+    for (const entry of entries) {
+        const full = path.join(dir, entry.name);
+        if (entry.isDirectory()) {
+            out.push(...(await walk(full)));
+        } else if (/\.(ts|tsx|mts|mjs|js)$/.test(entry.name)) {
+            out.push(full);
+        }
     }
-  }
-  return out;
+    return out;
 }
 
 /** Every source file the guards police, as repo-relative POSIX paths. */
 async function sources(): Promise<Array<{ abs: string; rel: string }>> {
-  const out: Array<{ abs: string; rel: string }> = [];
-  for (const root of ROOTS) {
-    for (const abs of await walk(path.join(REPO, root))) {
-      out.push({ abs, rel: path.relative(REPO, abs).split(path.sep).join('/') });
+    const out: Array<{ abs: string; rel: string }> = [];
+    for (const root of ROOTS) {
+        for (const abs of await walk(path.join(REPO, root))) {
+            out.push({
+                abs,
+                rel: path.relative(REPO, abs).split(path.sep).join("/"),
+            });
+        }
     }
-  }
-  return out;
+    return out;
 }
 
 /** Strip block and line comments, so a guard never fires on prose describing the rule. */
 function stripComments(src: string): string {
-  return src.replace(/\/\*[\s\S]*?\*\//g, (m) => m.replace(/[^\n]/g, ' ')).replace(/\/\/[^\n]*/g, '');
+    return src
+        .replace(/\/\*[\s\S]*?\*\//g, (m) => m.replace(/[^\n]/g, " "))
+        .replace(/\/\/[^\n]*/g, "");
 }
 
 // ---------------------------------------------------------------- skip guards ---
 
 /** `test.fixme(`, `test.skip(`, `it.only(`, `describe.only(`, `test.slow(`. */
 const SKIP_PATTERNS: Array<{ name: string; re: RegExp }> = [
-  { name: 'test.fixme', re: /\btest\.fixme\s*\(/ },
-  { name: 'test.skip', re: /\btest\.skip\s*\(/ },
-  { name: '.only(', re: /\b(?:test|it|describe)\.(?:only|concurrent\.only)\s*\(/ },
-  { name: 'test.slow', re: /\btest\.slow\s*\(/ },
+    { name: "test.fixme", re: /\btest\.fixme\s*\(/ },
+    { name: "test.skip", re: /\btest\.skip\s*\(/ },
+    {
+        name: ".only(",
+        re: /\b(?:test|it|describe)\.(?:only|concurrent\.only)\s*\(/,
+    },
+    { name: "test.slow", re: /\btest\.slow\s*\(/ },
 ];
 
 /** The escape hatch. Must be on the same line, with a non-empty reason. */
 const ALLOW = /\/\/\s*allow-skip:\s*\S+/;
 
-describe('no silently skipped tests', () => {
-  it('every fixme/skip/only/slow carries a written // allow-skip reason', async () => {
-    const violations: string[] = [];
-    for (const { abs, rel } of await sources()) {
-      // This file's own pattern literals are not skip calls.
-      if (rel === 'tests/e2e/source-guards.test.ts') continue;
-      const lines = (await readFile(abs, 'utf8')).split(/\r?\n/);
-      lines.forEach((line, i) => {
-        // A pattern inside a comment is documentation, not a skip.
-        if (/^\s*(\*|\/\/)/.test(line)) return;
-        for (const { name, re } of SKIP_PATTERNS) {
-          if (!re.test(line)) continue;
-          if (ALLOW.test(line)) continue;
-          violations.push(`${rel}:${i + 1} uses ${name} without a '// allow-skip: <reason>'`);
+describe("no silently skipped tests", () => {
+    it("every fixme/skip/only/slow carries a written // allow-skip reason", async () => {
+        const violations: string[] = [];
+        for (const { abs, rel } of await sources()) {
+            // This file's own pattern literals are not skip calls.
+            if (rel === "tests/e2e/source-guards.test.ts") continue;
+            const lines = (await readFile(abs, "utf8")).split(/\r?\n/);
+            lines.forEach((line, i) => {
+                // A pattern inside a comment is documentation, not a skip.
+                if (/^\s*(\*|\/\/)/.test(line)) return;
+                for (const { name, re } of SKIP_PATTERNS) {
+                    if (!re.test(line)) continue;
+                    if (ALLOW.test(line)) continue;
+                    violations.push(
+                        `${rel}:${i + 1} uses ${name} without a '// allow-skip: <reason>'`,
+                    );
+                }
+            });
         }
-      });
-    }
-    expect(
-      violations,
-      `Skipped tests must state why, or they hide in a green run:\n  ${violations.join('\n  ')}`,
-    ).toEqual([]);
-  });
+        expect(
+            violations,
+            `Skipped tests must state why, or they hide in a green run:\n  ${violations.join("\n  ")}`,
+        ).toEqual([]);
+    });
 
-  it('no negative test is parked: the fixme set is empty', async () => {
-    /*
-     * This guard used to assert that N4 — and only N4 — was still `test.fixme`, and that its
-     * justification still carried its measurements. Both facts changed in 2B-C2B.
-     *
-     * N4 is no longer parked. It was parked because 3.3's ratio gate could not see a 3/255
-     * blue lift, and the reason for THAT was that the defect restored only half of itself:
-     * the cool fill light without the material specular that made it visible. The original
-     * defect — recovered from git as `2e27939^` (light, position (-5.2,-2.2,-4.6), intensity
-     * 0.32, #2f6fb8) plus `38aa091^` (specularIntensity 0.18, roughness floor 0) — moves W1
-     * far past 1.15, so the metric is untouched and the test now runs and fails correctly.
-     *
-     * The rule this file enforces is unchanged: a `fixme` is permitted only with a name, the
-     * measurements that justify it, and a plan. The set is now empty, and this asserts that
-     * literally — an empty set is what "no negative test is parked" means, and it fails if
-     * anyone adds one back without the written justification the other guards demand.
-     */
-    const src = await readFile(path.join(REPO, 'tests/e2e/negative.spec.ts'), 'utf8');
-    const fixmes = [
-      ...src.matchAll(/\btest\.fixme\s*\([^\n]*\n\s*'([^']+)'/g),
-      ...src.matchAll(/\btest\.fixme\s*\(\s*'([^']+)'/g),
-    ].map((m) => m[1]);
-    expect(fixmes, `unexpected fixme set: ${fixmes.join(', ')}`).toEqual([]);
+    it("no negative test is parked: the fixme set is empty", async () => {
+        /*
+         * This guard used to assert that N4 — and only N4 — was still `test.fixme`, and that its
+         * justification still carried its measurements. Both facts changed in 2B-C2B.
+         *
+         * N4 is no longer parked. It was parked because 3.3's ratio gate could not see a 3/255
+         * blue lift, and the reason for THAT was that the defect restored only half of itself:
+         * the cool fill light without the material specular that made it visible. The original
+         * defect — recovered from git as `2e27939^` (light, position (-5.2,-2.2,-4.6), intensity
+         * 0.32, #2f6fb8) plus `38aa091^` (specularIntensity 0.18, roughness floor 0) — moves W1
+         * far past 1.15, so the metric is untouched and the test now runs and fails correctly.
+         *
+         * The rule this file enforces is unchanged: a `fixme` is permitted only with a name, the
+         * measurements that justify it, and a plan. The set is now empty, and this asserts that
+         * literally — an empty set is what "no negative test is parked" means, and it fails if
+         * anyone adds one back without the written justification the other guards demand.
+         */
+        const src = await readFile(
+            path.join(REPO, "tests/e2e/negative.spec.ts"),
+            "utf8",
+        );
+        const fixmes = [
+            ...src.matchAll(/\btest\.fixme\s*\([^\n]*\n\s*'([^']+)'/g),
+            ...src.matchAll(/\btest\.fixme\s*\(\s*'([^']+)'/g),
+        ].map((m) => m[1]);
+        expect(fixmes, `unexpected fixme set: ${fixmes.join(", ")}`).toEqual(
+            [],
+        );
 
-    /*
-     * And the faithful defect must still carry its git provenance. These strings are the
-     * evidence that the defect is the REAL one rather than one restated to pass; editing them
-     * out would turn N4 back into a test that proves nothing about the look.
-     */
-    for (const required of ['2e27939', '38aa091', '0.18', '1.15']) {
-      expect(src, `N4 lost its provenance string "${required}"`).toContain(required);
-    }
-    /*
-     * The light's exact place and level live in the defect engine, not in the spec — the spec
-     * passes params only for the material half, so the caller cannot restate the defect. Pin
-     * the coordinates where they actually are.
-     */
-    const engine = await readFile(path.join(REPO, 'tests/e2e/look/acquire.ts'), 'utf8');
-    for (const required of ['-5.2, -2.2, -4.6', '0x2f6fb8', '0.32']) {
-      expect(engine, `the faithful N4 defect lost "${required}"`).toContain(required);
-    }
-  });
+        /*
+         * And the faithful defect must still carry its git provenance. These strings are the
+         * evidence that the defect is the REAL one rather than one restated to pass; editing them
+         * out would turn N4 back into a test that proves nothing about the look.
+         */
+        for (const required of ["2e27939", "38aa091", "0.18", "1.15"]) {
+            expect(
+                src,
+                `N4 lost its provenance string "${required}"`,
+            ).toContain(required);
+        }
+        /*
+         * The light's exact place and level live in the defect engine, not in the spec — the spec
+         * passes params only for the material half, so the caller cannot restate the defect. Pin
+         * the coordinates where they actually are.
+         */
+        const engine = await readFile(
+            path.join(REPO, "tests/e2e/look/acquire.ts"),
+            "utf8",
+        );
+        for (const required of ["-5.2, -2.2, -4.6", "0x2f6fb8", "0.32"]) {
+            expect(
+                engine,
+                `the faithful N4 defect lost "${required}"`,
+            ).toContain(required);
+        }
+    });
 });
 
 // --------------------------------------------------- no forced specular override ---
 
-describe('the specular mask measures the shipped state', () => {
-  /**
-   * `measureSpecularMask` must not FORCE a specular intensity.
-   *
-   * It did: `window.__look.specularIntensity(0.18)` before the "on" capture. That was right
-   * while 0.18 was shipped and silently wrong once 38aa091 set it to 0 — the mask then
-   * described a material lobe the product does not render (105,313 px, wide enough to excuse
-   * regions the shipped overlay never lights). A numeric argument is the whole defect, so the
-   * guard is `specularIntensity(<number>)` appearing anywhere inside the function.
-   *
-   * Restoring the state that was FOUND is still required: a sentinel that leaves the scene on a
-   * different look poisons whatever runs next.
-   */
-  it('measureSpecularMask never sets a numeric specularIntensity', async () => {
-    const src = await readFile(path.join(REPO, 'tests/e2e/look/measure.ts'), 'utf8');
-    const start = src.indexOf('export async function measureSpecularMask(');
-    expect(start, 'measureSpecularMask is missing').toBeGreaterThan(-1);
-    // The function ends at the next top-level divider comment.
-    const end = src.indexOf('// ------------------------------------------------------- 3.3 blue-circle guard');
-    expect(end).toBeGreaterThan(start);
-    /*
-     * Comments are stripped first: the doc block legitimately NAMES the old override to explain
-     * why it was wrong, and a guard that cannot tell prose from code would forbid documenting
-     * the bug it exists to prevent.
+describe("the specular mask measures the shipped state", () => {
+    /**
+     * `measureSpecularMask` must not FORCE a specular intensity.
+     *
+     * It did: `window.__look.specularIntensity(0.18)` before the "on" capture. That was right
+     * while 0.18 was shipped and silently wrong once 38aa091 set it to 0 — the mask then
+     * described a material lobe the product does not render (105,313 px, wide enough to excuse
+     * regions the shipped overlay never lights). A numeric argument is the whole defect, so the
+     * guard is `specularIntensity(<number>)` appearing anywhere inside the function.
+     *
+     * Restoring the state that was FOUND is still required: a sentinel that leaves the scene on a
+     * different look poisons whatever runs next.
      */
-    const body = stripComments(src.slice(start, end));
+    it("measureSpecularMask never sets a numeric specularIntensity", async () => {
+        const src = await readFile(
+            path.join(REPO, "tests/e2e/look/measure.ts"),
+            "utf8",
+        );
+        const start = src.indexOf("export async function measureSpecularMask(");
+        expect(start, "measureSpecularMask is missing").toBeGreaterThan(-1);
+        // The function ends at the next top-level divider comment.
+        const end = src.indexOf(
+            "// ------------------------------------------------------- 3.3 blue-circle guard",
+        );
+        expect(end).toBeGreaterThan(start);
+        /*
+         * Comments are stripped first: the doc block legitimately NAMES the old override to explain
+         * why it was wrong, and a guard that cannot tell prose from code would forbid documenting
+         * the bug it exists to prevent.
+         */
+        const body = stripComments(src.slice(start, end));
 
-    /*
-     * `specularIntensity(0)` is REQUIRED — it is the "off" half of the difference. What is
-     * forbidden is a NON-ZERO literal, which can only be a forced "on" state.
-     */
-    const forced = [...body.matchAll(/specularIntensity\(\s*(\d*\.?\d+)\s*\)/g)]
-      .map((m) => Number(m[1]))
-      .filter((v) => v !== 0);
-    expect(
-      forced,
-      `measureSpecularMask forces a specular intensity: ${forced.join(', ')}. ` +
-        `It must capture the shipped state as found — the only permitted argument is a variable.`,
-    ).toEqual([]);
+        /*
+         * `specularIntensity(0)` is REQUIRED — it is the "off" half of the difference. What is
+         * forbidden is a NON-ZERO literal, which can only be a forced "on" state.
+         */
+        const forced = [
+            ...body.matchAll(/specularIntensity\(\s*(\d*\.?\d+)\s*\)/g),
+        ]
+            .map((m) => Number(m[1]))
+            .filter((v) => v !== 0);
+        expect(
+            forced,
+            `measureSpecularMask forces a specular intensity: ${forced.join(", ")}. ` +
+                `It must capture the shipped state as found — the only permitted argument is a variable.`,
+        ).toEqual([]);
 
-    // And it must read the state rather than assume it.
-    expect(body, 'the mask no longer reads the live specular state').toContain('specularIntensity()');
-    // And it must put it back.
-    expect(body, 'the mask does not restore the state it found').toContain('specularIntensity(state.intensity');
-  });
+        // And it must read the state rather than assume it.
+        expect(
+            body,
+            "the mask no longer reads the live specular state",
+        ).toContain("specularIntensity()");
+        // And it must put it back.
+        expect(body, "the mask does not restore the state it found").toContain(
+            "specularIntensity(state.intensity",
+        );
+    });
 
-  it('no test forces the pre-fix 0.18 look outside a negative defect', async () => {
-    /*
-     * 0.18 is the PRE-FIX value. It may appear as a negative defect's restored state (N4's
-     * whole point is reproducing the old clipping), but it must never be presented as the
-     * shipped look — and the glint sentinel must never set it, or the sentinel would guard a
-     * render the product does not produce.
-     */
-    const offenders: string[] = [];
-    for (const { abs, rel } of await sources()) {
-      if (!rel.startsWith('tests/') && !rel.startsWith('src/')) continue;
-      // The defect engine owns the restored value on purpose.
-      if (rel === 'tests/e2e/look/acquire.ts') continue;
-      // Pure docs of the rule's constants.
-      if (rel === 'tests/e2e/source-guards.test.ts') continue;
-      const src = stripComments(await readFile(abs, 'utf8'));
-      if (/specularIntensity\(\s*0\.18\s*\)/.test(src)) offenders.push(rel);
-    }
-    expect(
-      offenders,
-      `These files force specularIntensity(0.18), the pre-fix look:\n  ${offenders.join('\n  ')}`,
-    ).toEqual([]);
-  });
+    it("no test forces the pre-fix 0.18 look outside a negative defect", async () => {
+        /*
+         * 0.18 is the PRE-FIX value. It may appear as a negative defect's restored state (N4's
+         * whole point is reproducing the old clipping), but it must never be presented as the
+         * shipped look — and the glint sentinel must never set it, or the sentinel would guard a
+         * render the product does not produce.
+         */
+        const offenders: string[] = [];
+        for (const { abs, rel } of await sources()) {
+            if (!rel.startsWith("tests/") && !rel.startsWith("src/")) continue;
+            // The defect engine owns the restored value on purpose.
+            if (rel === "tests/e2e/look/acquire.ts") continue;
+            // Pure docs of the rule's constants.
+            if (rel === "tests/e2e/source-guards.test.ts") continue;
+            const src = stripComments(await readFile(abs, "utf8"));
+            if (/specularIntensity\(\s*0\.18\s*\)/.test(src))
+                offenders.push(rel);
+        }
+        expect(
+            offenders,
+            `These files force specularIntensity(0.18), the pre-fix look:\n  ${offenders.join("\n  ")}`,
+        ).toEqual([]);
+    });
 });
 
 // ------------------------------------------------ retired terminator gates ---
 
-describe('the retired 3.4 gates are not asserted anywhere', () => {
-  /**
-   * Two metrics were RETIRED in 2B-C2B-P2FIX and must not come back as gates:
-   *
-   *   - the `width >= 6 % R_fit` gate (segment endpoints of a Lambert profile that has no plateau),
-   *   - the fixed `16/255` cross-terminator step (inherited from a metric that no longer exists, and
-   *     at az 60 it measured texture noise where the terminator is off the planet).
-   *
-   * Both survive as INFORMATIONAL columns in the report — printed, never asserted. This guard is what
-   * keeps that distinction from eroding: a `toBeGreaterThanOrEqual(6)` on widthPctR, or a
-   * `toBeLessThanOrEqual(16)` around a crossTerminatorStep, is a gate no matter what the comment says.
-   */
-  it('no spec asserts widthPctR >= 6 % or a 16/255 step', async () => {
-    const offenders: string[] = [];
-    for (const { abs, rel } of await sources()) {
-      if (!rel.startsWith('tests/e2e/')) continue;
-      if (rel === 'tests/e2e/source-guards.test.ts') continue;
-      const src = stripComments(await readFile(abs, 'utf8'));
-      // A width gate on the retired percentage.
-      if (/widthPctR[^;]*toBe(GreaterThanOrEqual|LessThanOrEqual)\(\s*\d/.test(src)) offenders.push(`${rel}: widthPctR assertion`);
-      // A step gate on the retired constant, or on the derived 16.
-      if (/crossTerminatorStep[^;]*toBe(GreaterThanOrEqual|LessThanOrEqual)\(/.test(src)) {
-        offenders.push(`${rel}: crossTerminatorStep assertion`);
-      }
-    }
-    expect(
-      offenders,
-      `These retired 3.4 gates are still asserted:\n  ${offenders.join('\n  ')}`,
-    ).toEqual([]);
-  });
+describe("the retired 3.4 gates are not asserted anywhere", () => {
+    /**
+     * Two metrics were RETIRED in 2B-C2B-P2FIX and must not come back as gates:
+     *
+     *   - the `width >= 6 % R_fit` gate (segment endpoints of a Lambert profile that has no plateau),
+     *   - the fixed `16/255` cross-terminator step (inherited from a metric that no longer exists, and
+     *     at az 60 it measured texture noise where the terminator is off the planet).
+     *
+     * Both survive as INFORMATIONAL columns in the report — printed, never asserted. This guard is what
+     * keeps that distinction from eroding: a `toBeGreaterThanOrEqual(6)` on widthPctR, or a
+     * `toBeLessThanOrEqual(16)` around a crossTerminatorStep, is a gate no matter what the comment says.
+     */
+    it("no spec asserts widthPctR >= 6 % or a 16/255 step", async () => {
+        const offenders: string[] = [];
+        for (const { abs, rel } of await sources()) {
+            if (!rel.startsWith("tests/e2e/")) continue;
+            if (rel === "tests/e2e/source-guards.test.ts") continue;
+            const src = stripComments(await readFile(abs, "utf8"));
+            // A width gate on the retired percentage.
+            if (
+                /widthPctR[^;]*toBe(GreaterThanOrEqual|LessThanOrEqual)\(\s*\d/.test(
+                    src,
+                )
+            )
+                offenders.push(`${rel}: widthPctR assertion`);
+            // A step gate on the retired constant, or on the derived 16.
+            if (
+                /crossTerminatorStep[^;]*toBe(GreaterThanOrEqual|LessThanOrEqual)\(/.test(
+                    src,
+                )
+            ) {
+                offenders.push(`${rel}: crossTerminatorStep assertion`);
+            }
+        }
+        expect(
+            offenders,
+            `These retired 3.4 gates are still asserted:\n  ${offenders.join("\n  ")}`,
+        ).toEqual([]);
+    });
 
-  it('the replacement gate exists and is unit-tested', async () => {
-    // Presence only: the definitions live in terminatorProfile.ts and are tested in terminator.test.ts.
-    const impl = await readFile(path.join(REPO, 'tests/e2e/look/terminatorProfile.ts'), 'utf8');
-    for (const required of ['evaluateTerminator', 'softMaxS', 'visibleMinA', 'rOverROracle']) {
-      expect(impl, `terminatorProfile.ts lost "${required}"`).toContain(required);
-    }
-    const tests = await readFile(path.join(REPO, 'tests/e2e/look/terminator.test.ts'), 'utf8');
-    expect(tests, 'the terminator gate has no synthetic-curve tests').toContain('synthetic curves');
-  });
+    it("the replacement gate exists and is unit-tested", async () => {
+        // Presence only: the definitions live in terminatorProfile.ts and are tested in terminator.test.ts.
+        const impl = await readFile(
+            path.join(REPO, "tests/e2e/look/terminatorProfile.ts"),
+            "utf8",
+        );
+        for (const required of [
+            "evaluateTerminator",
+            "softMaxS",
+            "visibleMinA",
+            "rOverROracle",
+        ]) {
+            expect(impl, `terminatorProfile.ts lost "${required}"`).toContain(
+                required,
+            );
+        }
+        const tests = await readFile(
+            path.join(REPO, "tests/e2e/look/terminator.test.ts"),
+            "utf8",
+        );
+        expect(
+            tests,
+            "the terminator gate has no synthetic-curve tests",
+        ).toContain("synthetic curves");
+    });
 });
 
 // ------------------------------------------------------------- spread guards ---
@@ -262,136 +324,149 @@ describe('the retired 3.4 gates are not asserted anywhere', () => {
  * bounded by scene geometry (4-5 window offsets, one RGB triple, a handful of lights) is
  * fine; anything iterating pixels or components is not.
  */
-describe('no Math.min/max spread over an unbounded array', () => {
-  /**
-   * Known-safe call sites, each with the bound that makes it safe.
-   *
-   * An entry is a claim; if the code moves on without the claim holding, remove it and fix
-   * the site rather than widening the list.
-   */
-  const SAFE: Record<string, string> = {
-    'src/components/ui/Sparkline.tsx':
-      'data is the chart series (one value per render point, tens not pixels); replace with a reduce if it ever grows',
-    'src/lib/dataset.test.ts': 'test fixture of a handful of anomalies',
-    'src/lib/engine/textureTimeline.ts': 'one timestamp per texture (5 textures)',
-    'src/lib/look/helpers.test.ts': 'a synthetic profile of a few dozen points',
-    'tests/e2e/look.spec.ts': 'one entry per azimuth (12)',
-    'tests/e2e/globe.spec.ts': 'one entry per marker hit (a handful)',
-    'tests/e2e/boot.spec.ts': 'one entry per long task (a handful)',
-    'tests/e2e/acceptance-matrix.mjs': 'one entry per sample run (a handful)',
-    'tests/e2e/wire-bytes.mjs': 'one entry per recorded response (a handful)',
-    'tests/e2e/look/clipped-probe.mjs': 'one entry per blob (a handful)',
-    'tests/e2e/look/edge-attribution.mjs': 'one entry per fitted ray (360 at most)',
-  };
-
-  it('every remaining spread is on a known-bounded array', async () => {
-    const offenders: string[] = [];
-    for (const { abs, rel } of await sources()) {
-      const src = stripComments(await readFile(abs, 'utf8'));
-      if (!/Math\.(?:min|max)\s*\(\s*\.\.\./.test(src)) continue;
-      if (SAFE[rel]) continue;
-      offenders.push(rel);
-    }
-    expect(
-      offenders,
-      `These files spread an array into Math.min/max without a recorded bound. ` +
-        `An all-white 1280x800 frame is one ~1M-point component and blows the stack:\n  ` +
-        offenders.join('\n  '),
-    ).toEqual([]);
-  });
-
-  it('labelBlobs bounds its component by loop, and survives a 1M-point component', async () => {
-    /*
-     * The functional half: not "does the code look right" but "does it actually run on the
-     * case that broke it". A 1000x1000 all-connected block is ~1M points in one component —
-     * the exact shape N5 feeds 3.2.
+describe("no Math.min/max spread over an unbounded array", () => {
+    /**
+     * Known-safe call sites, each with the bound that makes it safe.
+     *
+     * An entry is a claim; if the code moves on without the claim holding, remove it and fix
+     * the site rather than widening the list.
      */
-    const { labelBlobs } = await import('../../src/lib/look/helpers');
-    const points: Array<[number, number]> = [];
-    for (let y = 0; y < 1000; y += 1) {
-      for (let x = 0; x < 1000; x += 1) points.push([x, y]);
-    }
-    const blobs = labelBlobs(points);
-    expect(blobs).toHaveLength(1);
-    expect(blobs[0].size).toBe(1_000_000);
-    expect(blobs[0].x0).toBe(0);
-    expect(blobs[0].x1).toBe(999);
-    expect(blobs[0].width).toBe(1000);
-    expect(blobs[0].height).toBe(1000);
-  });
+    const SAFE: Record<string, string> = {
+        "src/components/ui/Sparkline.tsx":
+            "data is the chart series (one value per render point, tens not pixels); replace with a reduce if it ever grows",
+        "src/lib/dataset.test.ts": "test fixture of a handful of anomalies",
+        "src/lib/engine/textureTimeline.ts":
+            "one timestamp per texture (5 textures)",
+        "src/lib/look/helpers.test.ts":
+            "a synthetic profile of a few dozen points",
+        "tests/e2e/look.spec.ts": "one entry per azimuth (12)",
+        "tests/e2e/globe.spec.ts": "one entry per marker hit (a handful)",
+        "tests/e2e/boot.spec.ts": "one entry per long task (a handful)",
+        "tests/e2e/acceptance-matrix.mjs":
+            "one entry per sample run (a handful)",
+        "tests/e2e/wire-bytes.mjs":
+            "one entry per recorded response (a handful)",
+        "tests/e2e/look/clipped-probe.mjs": "one entry per blob (a handful)",
+        "tests/e2e/look/edge-attribution.mjs":
+            "one entry per fitted ray (360 at most)",
+    };
 
-  it('labelBlobs bounds match a straightforward loop reference on random blobs', async () => {
-    // Bounds are the only thing the loop rewrite changed; assert they agree with the
-    // obvious definition on a case with several disjoint components.
-    const { labelBlobs } = await import('../../src/lib/look/helpers');
-    const points: Array<[number, number]> = [
-      [0, 0], [1, 0], [0, 1],
-      [50, 50], [51, 50],
-      [10, 10],
-    ];
-    const blobs = labelBlobs(points);
-    const sizes = blobs.map((b) => b.size).sort((a, b) => b - a);
-    expect(sizes).toEqual([3, 2, 1]);
-    const three = blobs.find((b) => b.size === 3)!;
-    expect([three.x0, three.x1, three.y0, three.y1]).toEqual([0, 1, 0, 1]);
-  });
+    it("every remaining spread is on a known-bounded array", async () => {
+        const offenders: string[] = [];
+        for (const { abs, rel } of await sources()) {
+            const src = stripComments(await readFile(abs, "utf8"));
+            if (!/Math\.(?:min|max)\s*\(\s*\.\.\./.test(src)) continue;
+            if (SAFE[rel]) continue;
+            offenders.push(rel);
+        }
+        expect(
+            offenders,
+            `These files spread an array into Math.min/max without a recorded bound. ` +
+                `An all-white 1280x800 frame is one ~1M-point component and blows the stack:\n  ` +
+                offenders.join("\n  "),
+        ).toEqual([]);
+    });
+
+    it("labelBlobs bounds its component by loop, and survives a 1M-point component", async () => {
+        /*
+         * The functional half: not "does the code look right" but "does it actually run on the
+         * case that broke it". A 1000x1000 all-connected block is ~1M points in one component —
+         * the exact shape N5 feeds 3.2.
+         */
+        const { labelBlobs } = await import("../../src/lib/look/helpers");
+        const points: Array<[number, number]> = [];
+        for (let y = 0; y < 1000; y += 1) {
+            for (let x = 0; x < 1000; x += 1) points.push([x, y]);
+        }
+        const blobs = labelBlobs(points);
+        expect(blobs).toHaveLength(1);
+        expect(blobs[0].size).toBe(1_000_000);
+        expect(blobs[0].x0).toBe(0);
+        expect(blobs[0].x1).toBe(999);
+        expect(blobs[0].width).toBe(1000);
+        expect(blobs[0].height).toBe(1000);
+    }, 15_000);
+
+    it("labelBlobs bounds match a straightforward loop reference on random blobs", async () => {
+        // Bounds are the only thing the loop rewrite changed; assert they agree with the
+        // obvious definition on a case with several disjoint components.
+        const { labelBlobs } = await import("../../src/lib/look/helpers");
+        const points: Array<[number, number]> = [
+            [0, 0],
+            [1, 0],
+            [0, 1],
+            [50, 50],
+            [51, 50],
+            [10, 10],
+        ];
+        const blobs = labelBlobs(points);
+        const sizes = blobs.map((b) => b.size).sort((a, b) => b - a);
+        expect(sizes).toEqual([3, 2, 1]);
+        const three = blobs.find((b) => b.size === 3)!;
+        expect([three.x0, three.x1, three.y0, three.y1]).toEqual([0, 1, 0, 1]);
+    });
 });
 
 // ------------------------------------------------------- app/bundle boundary ---
 
-describe('the app must not import the test-side measurement library', () => {
-  /**
-   * `src/lib/look/helpers.ts` imports `pngjs`, which is Node-only. Anything under `src/`
-   * that imports it drags pngjs into the browser bundle and the app stops booting — which
-   * is exactly what happened when `tsEngine.ts` imported `maxOf` from there: no page error,
-   * no build failure, every e2e spec timing out on `window.__globe` never appearing.
-   *
-   * The build cannot catch it (Rollup bundles pngjs happily) and the unit tests cannot
-   * catch it (they run in Node, where pngjs works). Only this can.
-   */
-  it('no src/ module imports src/lib/look/helpers', async () => {
-    const offenders: string[] = [];
-    for (const { abs, rel } of await sources()) {
-      if (!rel.startsWith('src/')) continue;
-      // The helpers module itself, and its own test, are the only legitimate holders.
-      if (rel === 'src/lib/look/helpers.ts' || rel === 'src/lib/look/helpers.test.ts') continue;
-      /*
-       * TEST FILES under src/ are not app modules — they are never bundled. `terminatorGeometry
-       * .test.ts` legitimately imports the helpers, because that is what it tests. The rule this
-       * guard enforces is about what ships to a browser (pngjs in the bundle), and a *.test.ts
-       * cannot ship. Excluding them keeps the guard about its actual subject.
-       */
-      if (/\.test\.tsx?$/.test(rel)) continue;
-      const src = await readFile(abs, 'utf8');
-      if (/from\s+['"][^'"]*lib\/look\/helpers['"]/.test(src)) offenders.push(rel);
-    }
-    expect(
-      offenders,
-      `These app modules import the test-side helpers (which pull pngjs into the bundle):\n  ` +
-        offenders.join('\n  '),
-    ).toEqual([]);
-  });
-
-  it('the production bundle contains no pngjs', async () => {
-    /*
-     * The functional half of the same rule, asserted on the artefact rather than the source.
-     * Skipped when dist/ has not been built, so the guard never fails for the wrong reason.
+describe("the app must not import the test-side measurement library", () => {
+    /**
+     * `src/lib/look/helpers.ts` imports `pngjs`, which is Node-only. Anything under `src/`
+     * that imports it drags pngjs into the browser bundle and the app stops booting — which
+     * is exactly what happened when `tsEngine.ts` imported `maxOf` from there: no page error,
+     * no build failure, every e2e spec timing out on `window.__globe` never appearing.
+     *
+     * The build cannot catch it (Rollup bundles pngjs happily) and the unit tests cannot
+     * catch it (they run in Node, where pngjs works). Only this can.
      */
-    const assetsDir = path.join(REPO, 'dist', 'assets');
-    let files: string[];
-    try {
-      files = (await readdir(assetsDir)).filter((f) => /\.js$/.test(f));
-    } catch {
-      return; // no dist/ — nothing to assert
-    }
-    const leaks: string[] = [];
-    for (const f of files) {
-      const src = await readFile(path.join(assetsDir, f), 'utf8');
-      if (/PNG\.sync\.read|pngjs/.test(src)) leaks.push(f);
-    }
-    expect(
-      leaks,
-      `pngjs is in the browser bundle (the app will not boot):\n  ${leaks.join('\n  ')}`,
-    ).toEqual([]);
-  });
+    it("no src/ module imports src/lib/look/helpers", async () => {
+        const offenders: string[] = [];
+        for (const { abs, rel } of await sources()) {
+            if (!rel.startsWith("src/")) continue;
+            // The helpers module itself, and its own test, are the only legitimate holders.
+            if (
+                rel === "src/lib/look/helpers.ts" ||
+                rel === "src/lib/look/helpers.test.ts"
+            )
+                continue;
+            /*
+             * TEST FILES under src/ are not app modules — they are never bundled. `terminatorGeometry
+             * .test.ts` legitimately imports the helpers, because that is what it tests. The rule this
+             * guard enforces is about what ships to a browser (pngjs in the bundle), and a *.test.ts
+             * cannot ship. Excluding them keeps the guard about its actual subject.
+             */
+            if (/\.test\.tsx?$/.test(rel)) continue;
+            const src = await readFile(abs, "utf8");
+            if (/from\s+['"][^'"]*lib\/look\/helpers['"]/.test(src))
+                offenders.push(rel);
+        }
+        expect(
+            offenders,
+            `These app modules import the test-side helpers (which pull pngjs into the bundle):\n  ` +
+                offenders.join("\n  "),
+        ).toEqual([]);
+    });
+
+    it("the production bundle contains no pngjs", async () => {
+        /*
+         * The functional half of the same rule, asserted on the artefact rather than the source.
+         * Skipped when dist/ has not been built, so the guard never fails for the wrong reason.
+         */
+        const assetsDir = path.join(REPO, "dist", "assets");
+        let files: string[];
+        try {
+            files = (await readdir(assetsDir)).filter((f) => /\.js$/.test(f));
+        } catch {
+            return; // no dist/ — nothing to assert
+        }
+        const leaks: string[] = [];
+        for (const f of files) {
+            const src = await readFile(path.join(assetsDir, f), "utf8");
+            if (/PNG\.sync\.read|pngjs/.test(src)) leaks.push(f);
+        }
+        expect(
+            leaks,
+            `pngjs is in the browser bundle (the app will not boot):\n  ${leaks.join("\n  ")}`,
+        ).toEqual([]);
+    });
 });
