@@ -16,6 +16,7 @@ import type {
     RegionId,
     ScenarioMetrics,
     ScenarioState,
+    UnitSystem,
 } from "@/types/enso";
 import { REGION_MAP } from "@/lib/regions";
 import { thermalColor } from "@/lib/model";
@@ -69,6 +70,7 @@ export interface ReportInput {
     analytics: AnalyticsPayload;
     activeRegion: RegionId | null;
     snapshot: string | null;
+    units: UnitSystem;
 }
 
 export function buildReportHtml({
@@ -77,6 +79,7 @@ export function buildReportHtml({
     analytics,
     activeRegion,
     snapshot,
+    units,
 }: ReportInput): string {
     const generated = new Date().toLocaleString(undefined, {
         dateStyle: "long",
@@ -86,6 +89,9 @@ export function buildReportHtml({
     const region: RegionDefinition | null = activeRegion
         ? REGION_MAP[activeRegion]
         : null;
+    const sstValue =
+        units === "imperial" ? scenario.sstAnomaly * 1.8 : scenario.sstAnomaly;
+    const sstUnit = units === "imperial" ? "°F" : "°C";
 
     const rows = metricRows(metrics)
         .map(
@@ -169,7 +175,7 @@ export function buildReportHtml({
     </div>
     <div style="text-align:right">
       <div class="pill">${metrics.riskTier}</div>
-      <div class="eyebrow" style="margin-top:8px">Global SST +${fixed(scenario.sstAnomaly, 2)} °C</div>
+      <div class="eyebrow" style="margin-top:8px">Global SST +${fixed(sstValue, 2)} ${sstUnit}</div>
     </div>
   </header>
 
@@ -177,7 +183,7 @@ export function buildReportHtml({
   <div class="grid">
     <div class="card">
       <div class="k">Global SST anomaly</div>
-      <div class="big">+${fixed(scenario.sstAnomaly, 2)} °C</div>
+      <div class="big">+${fixed(sstValue, 2)} ${sstUnit}</div>
     </div>
     <div class="card">
       <div class="k">Jet displacement / ag weight</div>
@@ -234,5 +240,7 @@ export function openReport(html: string): void {
     if (!win) return;
     win.document.open();
     win.document.write(html);
+    win.document.title =
+        html.match(/<title>(.*?)<\/title>/)?.[1] ?? "Super El Niño Report";
     win.document.close();
 }
