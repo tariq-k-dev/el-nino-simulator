@@ -64,9 +64,8 @@ Rather than relying on latency-heavy server-side spatial database clusters, this
 * **Solution:** Embedded DuckDB-WASM inside a dedicated Web Worker. Pre-compiled Snappy-compressed Parquet datasets are fetched once, cached in IndexedDB, and queried via SQL in memory. Nearest-neighbor analog queries run with sub-millisecond execution, completely offloading the main UI thread.
 
 ### 2. High-DPI Canvas Capture & Composite Export
-
-- **Problem:** WebGL canvas buffers automatically clear upon presentation (`preserveDrawingBuffer: false` for memory efficiency), causing standard `canvas.toDataURL()` calls to export empty images.
-- **Solution:** Implemented a synchronous renderer registration pattern (`src/lib/canvasCapture.ts`). The export pipeline coordinates a single dedicated WebGL render call in lockstep with the off-screen compositor before reading the data URL, wrapping the visual state with client-side query timing, observation bounds, and nearest historical analogs into an instant HTML diagnostic report.
+* **Problem:** WebGL canvas buffers automatically clear upon presentation (`preserveDrawingBuffer: false` for memory efficiency), causing standard `canvas.toDataURL()` calls to export empty images.
+* **Solution:** Implemented a synchronous renderer registration pattern (`src/lib/canvasCapture.ts`). The export pipeline coordinates a single dedicated WebGL render call in lockstep with the off-screen compositor before reading the data URL, wrapping the visual state with client-side query timing, observation bounds, and nearest historical analogs into an instant HTML diagnostic report.
 
 ### 3. Camera Framing & Viewport Inset Mathematics
 * **Problem:** On mobile and tablet devices, responsive drawers cover up to 50% of the viewport, throwing the globe off-center and causing camera oscillation (jitter) when switching regions.
