@@ -203,6 +203,7 @@ export function AtmosphericRiver({
                             transition: "opacity 120ms linear",
                             transform: "translateZ(0)",
                         }}
+                        data-snapshot-river="true"
                     >
                         <span className="text-sky-400 font-sans text-[9px]">
                             ≈

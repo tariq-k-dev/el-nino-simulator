@@ -108,6 +108,139 @@ function drawValue(
 }
 
 /**
+ * Draw vector stand-ins for the DOM labels that live outside the WebGL canvas.
+ *
+ * The pin labels and the atmospheric-river pill are drei `<Html>` elements — real
+ * DOM siblings of the canvas, not scene objects — so `drawImage(source, …)` never
+ * captures them. Without this pass the snapshot shows bare pins and a river with
+ * no caption, which reads as a rendering bug rather than a design choice.
+ *
+ * The elements are found by the `data-snapshot-*` attributes the components set,
+ * and their viewport rects are mapped into the 1920×1080 output with the same
+ * `cover` crop the background uses, so a label lands on the pin it belongs to.
+ * Anything off-canvas, hidden, or faded to zero is skipped — the limb-fade rule
+ * the components apply per frame is honoured here by reading the live opacity.
+ */
+function drawDomLabels(
+    ctx: CanvasRenderingContext2D,
+    source: HTMLCanvasElement,
+): void {
+    if (typeof document === "undefined") return;
+
+    const canvasRect = source.getBoundingClientRect();
+    if (canvasRect.width <= 0 || canvasRect.height <= 0) return;
+
+    /* Same `cover` crop as the background, so label and pin stay aligned. */
+    const srcAspect = source.width / source.height;
+    const outAspect = OUT_W / OUT_H;
+    let sx = 0;
+    let sy = 0;
+    let sw = source.width;
+    let sh = source.height;
+    if (srcAspect > outAspect) {
+        sw = source.height * outAspect;
+        sx = (source.width - sw) / 2;
+    } else if (srcAspect < outAspect) {
+        sh = source.width / outAspect;
+        sy = (source.height - sh) / 2;
+    }
+    const scaleX = OUT_W / sw;
+    const scaleY = OUT_H / sh;
+
+    const toOut = (rect: DOMRect) => ({
+        x: (rect.left - canvasRect.left - sx) * scaleX + rect.width * scaleX / 2,
+        y: (rect.top - canvasRect.top - sy) * scaleY + rect.height * scaleY / 2,
+    });
+
+    const onCanvas = (rect: DOMRect) =>
+        rect.right >= canvasRect.left &&
+        rect.left <= canvasRect.right &&
+        rect.bottom >= canvasRect.top &&
+        rect.top <= canvasRect.bottom;
+
+    const isVisible = (el: HTMLElement) => {
+        if (!el.offsetParent) return false;
+        const opacity = parseFloat(el.style.opacity || "1");
+        return Number.isFinite(opacity) && opacity > 0.05;
+    };
+
+    document
+        .querySelectorAll<HTMLElement>("[data-snapshot-pin]")
+        .forEach((el) => {
+            if (!isVisible(el)) return;
+            const rect = el.getBoundingClientRect();
+            if (!onCanvas(rect)) return;
+
+            const { x, y } = toOut(rect);
+            const active = el.getAttribute("data-snapshot-active") === "true";
+            const label = (
+                el.getAttribute("data-snapshot-pin") ||
+                el.textContent ||
+                ""
+            ).toUpperCase();
+
+            ctx.font = "600 16px ui-monospace, 'JetBrains Mono', monospace";
+            const textW = ctx.measureText(label).width;
+            const pillW = textW + 44;
+            const pillH = 26;
+
+            ctx.beginPath();
+            ctx.roundRect(x - pillW / 2, y - pillH / 2, pillW, pillH, pillH / 2);
+            ctx.fillStyle = "rgba(10, 15, 25, 0.88)";
+            ctx.fill();
+            ctx.strokeStyle = active
+                ? "rgba(255, 255, 255, 0.45)"
+                : "rgba(255, 255, 255, 0.2)";
+            ctx.lineWidth = 1;
+            ctx.stroke();
+
+            ctx.beginPath();
+            ctx.arc(x - pillW / 2 + 14, y, 4, 0, Math.PI * 2);
+            ctx.fillStyle = active ? "#f59e0b" : "#0284c7";
+            ctx.fill();
+
+            ctx.fillStyle = "#ffffff";
+            ctx.textAlign = "left";
+            ctx.textBaseline = "middle";
+            ctx.fillText(label, x - pillW / 2 + 24, y);
+        });
+
+    const riverEl = document.querySelector<HTMLElement>(
+        "[data-snapshot-river]",
+    );
+    if (riverEl && isVisible(riverEl)) {
+        const rect = riverEl.getBoundingClientRect();
+        if (onCanvas(rect)) {
+            const { x, y } = toOut(rect);
+            const label = (riverEl.textContent || "ATMOSPHERIC RIVER")
+                .replace(/\s+/g, " ")
+                .trim();
+
+            ctx.font = "600 16px ui-monospace, 'JetBrains Mono', monospace";
+            const textW = ctx.measureText(label).width;
+            const pillW = textW + 32;
+            const pillH = 26;
+
+            ctx.beginPath();
+            ctx.roundRect(x - pillW / 2, y - pillH / 2, pillW, pillH, pillH / 2);
+            ctx.fillStyle = "rgba(10, 15, 25, 0.88)";
+            ctx.fill();
+            ctx.strokeStyle = "rgba(2, 132, 199, 0.3)";
+            ctx.lineWidth = 1;
+            ctx.stroke();
+
+            ctx.fillStyle = "#93c5fd";
+            ctx.textAlign = "center";
+            ctx.textBaseline = "middle";
+            ctx.fillText(label, x, y);
+        }
+    }
+
+    ctx.textAlign = "left";
+    ctx.textBaseline = "alphabetic";
+}
+
+/**
  * Draw the composed snapshot onto a caller-supplied 2D context.
  *
  * Shared by `composeSnapshot` (Blob) and `composeSnapshotToDataUrl` (string) so
@@ -341,7 +474,10 @@ function composeSnapshotToCanvas(
         );
     }
 
-    // 5. Footer: provenance, left and right.
+    // 5. DOM labels: pins and the atmospheric-river pill, drawn as vectors.
+    drawDomLabels(ctx, source);
+
+    // 6. Footer: provenance, left and right.
     const now = new Date();
     const stamp = now
         .toISOString()

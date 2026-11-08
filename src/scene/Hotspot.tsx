@@ -739,6 +739,8 @@ export function Hotspot({
                             transition: "opacity 120ms linear",
                             willChange: "transform, opacity",
                         }}
+                        data-snapshot-pin={region.shortName}
+                        data-snapshot-active={active ? "true" : "false"}
                     >
                         <button
                             type="button"
