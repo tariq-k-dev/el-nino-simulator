@@ -391,7 +391,7 @@ export const SnapSheet = forwardRef<SnapSheetHandle, SnapSheetProps>(
                                     className="num text-[20px] font-semibold leading-none"
                                     style={{ color: accent }}
                                 >
-                                    {formatAnomaly(scenarioSst)}
+                                    {formatAnomaly(scenarioSst, units)}
                                 </span>
                                 <span
                                     className="rounded-full px-1.5 py-[1px] font-mono text-[8.5px] uppercase tracking-[0.12em]"

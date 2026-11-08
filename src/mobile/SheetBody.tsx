@@ -125,7 +125,13 @@ export function SheetBody({
                         <span className="mb-1 flex items-center justify-between font-mono text-[9px] uppercase tracking-[0.14em] text-slate-500">
                             <span>Global SST anomaly</span>
                             <span className="text-slate-300">
-                                {fixed(scenarioSst, 2)} °C
+                                {fixed(
+                                    units === "imperial"
+                                        ? scenarioSst * 1.8
+                                        : scenarioSst,
+                                    2,
+                                )}{" "}
+                                {units === "imperial" ? "°F" : "°C"}
                             </span>
                         </span>
                         <input
