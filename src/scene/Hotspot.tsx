@@ -305,7 +305,21 @@ export function Hotspot({
 
             const el = labelWrapRef.current;
             el.style.opacity = facingRef.current.toFixed(3);
-            el.style.pointerEvents = facingRef.current > 0.35 ? "auto" : "none";
+            /*
+             * The WRAPPER stays non-interactive; only the button inside it takes pointer events.
+             *
+             * The wrapper is a full-size div around the pill, so `pointerEvents: "auto"` on it made the whole
+             * box a click target — including the transparent margin around the button. A press aimed at the
+             * pin head that landed in that margin hit the wrapper, not the proxy, and the proxy's
+             * `onPointerDown` never ran. Keeping the wrapper `none` and toggling the button alone means a
+             * click passes through to the canvas unless it is actually on the pill.
+             */
+            el.style.pointerEvents = "none";
+            const btn = el.querySelector("button");
+            if (btn) {
+                btn.style.pointerEvents =
+                    facingRef.current > 0.35 ? "auto" : "none";
+            }
             el.style.visibility =
                 facingRef.current < 0.03 ? "hidden" : "visible";
         }
@@ -450,57 +464,12 @@ export function Hotspot({
                 if (earth) earth.getWorldPosition(SCRATCH_CENTRE);
                 else proxy.getWorldPosition(SCRATCH_CENTRE);
 
-                /*
-                 * TEMPORARY DIAGNOSTIC — `__pinRay`.
-                 *
-                 * Records the gate's three inputs and its verdict for every raycast, so a report can tell "the
-                 * ray never reached this pin" from "the ray reached it and the gate refused it". Those are
-                 * different defects with the same symptom (a press that selects nothing), and nothing else in
-                 * the page distinguishes them: `__globe.pins()` reports the pin's position, not whether a ray
-                 * was ever cast at it.
-                 *
-                 * Bounded to the last 240 entries. A pointer move raycasts every pin, so an unbounded log would
-                 * grow for the life of the page — and a growing array is itself a timing change in the thing
-                 * being measured.
-                 *
-                 * Remove with the rest of the `__pinRay` / `__pinDown` instrumentation.
-                 */
                 const facing = pinFacesCamera(
                     SCRATCH_NORMAL,
                     raycaster.ray.origin,
                     SCRATCH_CENTRE,
                     PIN_HIT_GATE,
                 );
-                if (import.meta.env.VITE_E2E === "1") {
-                    const w = window as unknown as Record<string, unknown>;
-                    const log =
-                        (w.__pinRay as
-                            | Array<Record<string, unknown>>
-                            | undefined) ?? [];
-                    log.push({
-                        id: region.id,
-                        facing,
-                        gate: PIN_HIT_GATE,
-                        n: [
-                            +SCRATCH_NORMAL.x.toFixed(4),
-                            +SCRATCH_NORMAL.y.toFixed(4),
-                            +SCRATCH_NORMAL.z.toFixed(4),
-                        ],
-                        origin: [
-                            +raycaster.ray.origin.x.toFixed(4),
-                            +raycaster.ray.origin.y.toFixed(4),
-                            +raycaster.ray.origin.z.toFixed(4),
-                        ],
-                        centre: [
-                            +SCRATCH_CENTRE.x.toFixed(4),
-                            +SCRATCH_CENTRE.y.toFixed(4),
-                            +SCRATCH_CENTRE.z.toFixed(4),
-                        ],
-                        t: +performance.now().toFixed(1),
-                    });
-                    if (log.length > 240) log.splice(0, log.length - 240);
-                    w.__pinRay = log;
-                }
 
                 if (!facing) return;
 
@@ -573,25 +542,6 @@ export function Hotspot({
                     dotOnly
                         ? undefined
                         : (e) => {
-                              /*
-                               * TEMPORARY DIAGNOSTIC — `__pinDown`.
-                               *
-                               * Counts how many times a real pointer press reached a pin's handler. Zero after a
-                               * click aimed at a pin means the press never got here (the ray missed, the gate
-                               * refused it, or something else took the event); non-zero means it did arrive and the
-                               * failure is downstream of this line. Nothing else in the page can tell those apart.
-                               *
-                               * Remove with the rest of the `__pinRay` / `__pinDown` instrumentation.
-                               */
-                              if (import.meta.env.VITE_E2E === "1") {
-                                  const w = window as unknown as Record<
-                                      string,
-                                      unknown
-                                  >;
-                                  w.__pinDown =
-                                      ((w.__pinDown as number | undefined) ??
-                                          0) + 1;
-                              }
                               e.stopPropagation();
                               e.nativeEvent?.stopImmediatePropagation?.();
                               onSelect(region.id);
@@ -729,16 +679,19 @@ export function Hotspot({
                     zIndexRange={[40, 30]}
                     eps={0.00001}
                     style={{
-                        pointerEvents: "auto",
+                        pointerEvents: "none",
                         transform: "translate3d(0, 0, 0)",
                     }}
                 >
                     <div
                         ref={labelWrapRef}
                         style={{
+                            pointerEvents: "none",
                             transition: "opacity 120ms linear",
                             willChange: "transform, opacity",
                         }}
+                        data-snapshot-pin={region.shortName}
+                        data-snapshot-active={active ? "true" : "false"}
                     >
                         <button
                             type="button"
@@ -757,6 +710,7 @@ export function Hotspot({
                                 background: "rgba(10, 15, 25, 0.85)",
                                 backdropFilter: "blur(8px)",
                                 WebkitBackdropFilter: "blur(8px)",
+                                pointerEvents: "auto",
                                 // Two-layer shadow: a dark halo for contrast, a warm bloom when active.
                                 boxShadow: active
                                     ? `0 1px 2px rgba(0,0,0,0.9), 0 4px 14px rgba(0,0,0,0.55), 0 0 18px -4px ${glowCss}`

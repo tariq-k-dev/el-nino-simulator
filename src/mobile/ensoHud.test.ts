@@ -109,6 +109,30 @@ describe("formatAnomaly", () => {
     });
 });
 
+describe("formatAnomaly — imperial", () => {
+    it("converts a delta by ×1.8 and prints °F", () => {
+        expect(formatAnomaly(1.5, "imperial")).toBe("+2.7°F");
+        expect(formatAnomaly(0.1, "imperial")).toBe("+0.2°F");
+    });
+
+    it("uses the real minus sign for negative imperial values", () => {
+        const out = formatAnomaly(-1.0, "imperial");
+        expect(out).toBe(`${MINUS}1.8°F`);
+        expect(out.charCodeAt(0)).toBe(0x2212);
+    });
+
+    it("normalizes zero to 0.0°F with no sign", () => {
+        expect(formatAnomaly(0, "imperial")).toBe("0.0°F");
+        expect(formatAnomaly(-0, "imperial")).toBe("0.0°F");
+        expect(formatAnomaly(-0.02, "imperial")).toBe("0.0°F");
+        expect(formatAnomaly(0.02, "imperial")).toBe("0.0°F");
+    });
+
+    it("defaults to metric when units is omitted", () => {
+        expect(formatAnomaly(1.5)).toBe("+1.5°C");
+    });
+});
+
 describe("formatIsland", () => {
     it("is the step example verbatim", () => {
         expect(formatIsland(1.5)).toBe("ENSO: +1.5°C | STRONG EL NIÑO");
@@ -130,6 +154,16 @@ describe("formatIsland", () => {
                 `ENSO: ${formatAnomaly(v)} | ${ensoLabel(ensoCategory(v))}`,
             );
         }
+    });
+
+    it("formats the anomaly in the requested units but classifies in °C", () => {
+        expect(formatIsland(1.5, "imperial")).toBe(
+            "ENSO: +2.7°F | STRONG EL NIÑO",
+        );
+        expect(formatIsland(-1.0, "imperial")).toBe(
+            `ENSO: ${MINUS}1.8°F | MODERATE LA NIÑA`,
+        );
+        expect(formatIsland(0, "imperial")).toBe("ENSO: 0.0°F | NEUTRAL");
     });
 
     it("never prints an empty or lowercase label", () => {

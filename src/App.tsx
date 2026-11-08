@@ -20,10 +20,16 @@ import {
     downloadPng,
     openReport,
 } from "@/lib/report";
+import { captureCanvasElement } from "@/lib/canvasCapture";
+import {
+    composeSnapshot,
+    composeSnapshotToDataUrl,
+} from "@/lib/snapshotComposer";
 import { isNinoUiEnabled } from "@/lib/ninoFlag";
 import { submitNinoFocus } from "@/scene/cameraIntents";
-import type { RegionId } from "@/types/enso";
+import type { RegionId, ScenarioMetrics } from "@/types/enso";
 import { fixed } from "@/lib/format";
+import type { SnapshotRegionMetrics } from "@/lib/snapshotComposer";
 
 /**
  * The `?nino=1` flag, read exactly once at module load.
@@ -36,6 +42,56 @@ import { fixed } from "@/lib/format";
 const NINO_UI = isNinoUiEnabled(
     typeof location === "undefined" ? "" : location.search,
 );
+
+/**
+ * Per-region numbers for the snapshot's right-hand panel.
+ *
+ * Mirrors the fields `RegionDrawer.buildHud` reads, but flattened into the
+ * shape `composeSnapshot` expects. Kept here rather than exported from the
+ * drawer because the drawer's `RegionHud` is a presentation shape (headline,
+ * stats, bars, narrative) and the composer wants raw numbers.
+ *
+ * Regions without a temperature or jet term report `0` for those fields —
+ * the composer draws them as `+0.0 °C` / `0.0%`, which is honest: the model
+ * genuinely has no such term for them.
+ */
+function regionSnapshotMetrics(
+    region: RegionId,
+    metrics: ScenarioMetrics,
+): SnapshotRegionMetrics {
+    const base: SnapshotRegionMetrics = {
+        precipChange: 0,
+        tempDeviation: 0,
+        basePrecip: 0,
+        jetContribution: 0,
+        snowpackProxy: 0,
+        signalTier: metrics.riskTier,
+    };
+    switch (region) {
+        case "pacific":
+            return { ...base, precipChange: metrics.pacificSstDev };
+        case "us-west":
+            return {
+                ...base,
+                precipChange: metrics.usPrecip,
+                tempDeviation: metrics.usTempDevF,
+                basePrecip: metrics.usPrecipBase,
+                jetContribution: metrics.usPrecip - metrics.usPrecipBase,
+                snowpackProxy: Math.min(
+                    100,
+                    Math.max(0, metrics.usPrecip * 1.1),
+                ),
+            };
+        case "se-asia":
+            return { ...base, precipChange: metrics.asiaPrecip };
+        case "horn-africa":
+            return { ...base, precipChange: metrics.africaPrecip };
+        case "amazon-basin":
+            return { ...base, precipChange: metrics.amazonPrecip };
+        case "gulf-coast":
+            return { ...base, precipChange: metrics.gulfPrecip };
+    }
+}
 
 export default function App() {
     const {
@@ -180,15 +236,81 @@ export default function App() {
         [activeNinoBox, clearSelection, selectRegion],
     );
 
-    const handleExport = useCallback(async () => {
+    /**
+     * PNG-only export: compose the snapshot and download it, without opening the report.
+     *
+     * Shares the composer path with `handleExport` so the two outputs cannot drift: the same
+     * `composeSnapshot` call, the same fallback to a raw capture, the same filename stamp. The
+     * only difference is that the HTML report is not built or opened.
+     */
+    const handleExportPng = useCallback(async () => {
         setExporting(true);
         try {
-            const snapshot = captureCanvas();
-            if (snapshot) {
-                downloadPng(
-                    snapshot,
-                    `el-nino-snapshot-${fixed(scenario.sstAnomaly, 2)}C.png`,
-                );
+            const source = captureCanvasElement();
+            if (!source) return;
+            try {
+                const blob = await composeSnapshot({
+                    source,
+                    metrics: analytics.metrics,
+                    region: activeRegion ? REGION_MAP[activeRegion] : null,
+                    telemetry: telemetry ?? null,
+                    units,
+                    regionMetrics: activeRegion
+                        ? regionSnapshotMetrics(activeRegion, analytics.metrics)
+                        : null,
+                });
+                const url = URL.createObjectURL(blob);
+                const stamp = new Date()
+                    .toISOString()
+                    .replace(/[:.]/g, "-")
+                    .slice(0, 19);
+                downloadPng(url, `super-el-nino-snapshot-${stamp}.png`);
+                setTimeout(() => URL.revokeObjectURL(url), 1000);
+            } catch {
+                const snapshot = captureCanvas();
+                if (snapshot) {
+                    downloadPng(
+                        snapshot,
+                        `el-nino-snapshot-${fixed(scenario.sstAnomaly, 2)}C.png`,
+                    );
+                }
+            }
+        } finally {
+            setExporting(false);
+        }
+    }, [scenario, analytics, activeRegion, telemetry, units]);
+
+    /**
+     * Report-only export: build the HTML report and open it, without downloading a PNG.
+     *
+     * The report still embeds a snapshot when one can be composed — the report is a citation
+     * document and an image is part of that — but the PNG is not separately downloaded here.
+     */
+    const handleExportReport = useCallback(async () => {
+        setExporting(true);
+        try {
+            const source = captureCanvasElement();
+            let snapshot: string | null = null;
+            if (source) {
+                try {
+                    snapshot = await composeSnapshotToDataUrl({
+                        source,
+                        metrics: analytics.metrics,
+                        region: activeRegion
+                            ? REGION_MAP[activeRegion]
+                            : null,
+                        telemetry: telemetry ?? null,
+                        units,
+                        regionMetrics: activeRegion
+                            ? regionSnapshotMetrics(
+                                  activeRegion,
+                                  analytics.metrics,
+                              )
+                            : null,
+                    });
+                } catch {
+                    snapshot = captureCanvas();
+                }
             }
             const html = buildReportHtml({
                 scenario,
@@ -196,12 +318,13 @@ export default function App() {
                 analytics,
                 activeRegion,
                 snapshot,
+                units,
             });
             openReport(html);
         } finally {
             setExporting(false);
         }
-    }, [scenario, analytics, activeRegion]);
+    }, [scenario, analytics, activeRegion, telemetry, units]);
 
     const timeline = analytics.timeline.map((p) => p.anomaly);
 
@@ -281,7 +404,8 @@ export default function App() {
                     metrics={analytics.metrics}
                     units={units}
                     onToggleUnits={toggleUnits}
-                    onExport={handleExport}
+                    onExportPng={handleExportPng}
+                    onOpenReport={handleExportReport}
                     exporting={exporting}
                     onClearSelection={clearSelection}
                     telemetry={telemetry}
@@ -437,7 +561,8 @@ export default function App() {
                     onScenarioChange={setScenario}
                     exporting={exporting}
                     onToggleUnits={toggleUnits}
-                    onExport={handleExport}
+                    onExportPng={handleExportPng}
+                    onExportReport={handleExportReport}
                     activeNinoBox={activeNinoBox}
                     onShowOnGlobe={showNinoOnGlobe}
                     telemetry={telemetry}
@@ -445,13 +570,27 @@ export default function App() {
             ) : null}
 
             {/*
-        Bottom-centre hint — desktop only, because it names a mouse. The condition is `!isMobile`, the same one
-        the desktop header and panels use: the old `hidden lg:block` pair let Tailwind's 1024 decide, which is
-        the breakpoint TABLET-PORTRAIT deliberately decoupled from the mode law.
-      */}
+            Desktop telemetry status & attribution bar. Embeds camera navigation hotkeys directly
+            in the center slot to preserve unoccluded viewport sightlines to the globe's southern limb.
+            */}
             {!isMobile ? (
-                <div className="pointer-events-none absolute bottom-3 left-1/2 z-20 -translate-x-1/2 block">
-                    <div className="flex items-center gap-3 rounded-full border border-white/[0.06] bg-black/30 px-3 py-1 backdrop-blur-sm">
+                <footer className="pointer-events-auto absolute bottom-0 left-0 right-0 z-20 flex flex-col md:flex-row items-center justify-between gap-3 border-t border-white/[0.06] bg-slate-950/80 px-4 py-2 backdrop-blur-md font-mono text-[11px] text-slate-400">
+                    {/* Left: Attribution & Engine */}
+                    <div className="flex flex-wrap items-center gap-x-2 text-[10.5px]">
+                        <span className="font-medium text-slate-200">
+                            © 2026 Tariq Khan
+                        </span>
+                        <span className="text-slate-600">·</span>
+                        <span>
+                            Architected with React Three Fiber, DuckDB-WASM
+                            &amp; TypeScript
+                        </span>
+                        <span className="text-slate-600">·</span>
+                        <span className="text-slate-500">Cloudflare Pages</span>
+                    </div>
+
+                    {/* Center: Navigation Hotkeys (No globe overlap) */}
+                    <div className="hidden lg:flex items-center gap-3 rounded-full border border-white/[0.06] bg-white/[0.02] px-3 py-0.5">
                         {[
                             ["Drag", "orbit"],
                             ["Scroll", "zoom"],
@@ -459,16 +598,46 @@ export default function App() {
                         ].map(([k, v]) => (
                             <span
                                 key={k}
-                                className="flex items-center gap-1 text-[8.5px] uppercase tracking-[0.12em] text-slate-500"
+                                className="flex items-center gap-1 text-[8.5px] uppercase tracking-[0.12em] text-slate-400"
                             >
-                                <kbd className="rounded border border-white/12 bg-white/[0.06] px-1 py-[1px] font-mono text-[8px] text-slate-300">
+                                <kbd className="rounded border border-white/12 bg-white/[0.06] px-1 py-[1px] font-mono text-[8px] text-slate-200">
                                     {k}
                                 </kbd>
                                 {v}
                             </span>
                         ))}
                     </div>
-                </div>
+
+                    {/* Right: Recruiter Pathways */}
+                    <div className="flex items-center gap-3 text-slate-300 text-[10.5px]">
+                        <a
+                            href="https://tariqkhan.dev"
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            className="underline decoration-slate-700 underline-offset-2 transition-colors hover:text-cyan-400"
+                        >
+                            Portfolio
+                        </a>
+                        <span className="text-slate-600">·</span>
+                        <a
+                            href="https://github.com/tariq-k-dev/el-nino-simulator"
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            className="underline decoration-slate-700 underline-offset-2 transition-colors hover:text-cyan-400"
+                        >
+                            GitHub
+                        </a>
+                        <span className="text-slate-600">·</span>
+                        <a
+                            href="https://www.linkedin.com/in/tariqakhan"
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            className="underline decoration-slate-700 underline-offset-2 transition-colors hover:text-cyan-400"
+                        >
+                            LinkedIn
+                        </a>
+                    </div>
+                </footer>
             ) : null}
         </div>
     );

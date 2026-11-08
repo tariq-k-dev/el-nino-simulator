@@ -20,6 +20,29 @@ export function registerRenderer(next: RendererHandle | null): void {
     handle = next;
 }
 
+/**
+ * Returns the live WebGL canvas element, after forcing one render into the
+ * drawing buffer.
+ *
+ * Used by the snapshot composer, which needs to `drawImage` the frame into a
+ * larger offscreen canvas rather than read it as a data URL. Same
+ * `preserveDrawingBuffer` caveat as `captureCanvas`: the render must happen in
+ * the same task as the read, or the compositor clears the buffer first.
+ */
+export function captureCanvasElement(): HTMLCanvasElement | null {
+    if (!handle) {
+        return document.querySelector<HTMLCanvasElement>(
+            "#globe-canvas canvas",
+        );
+    }
+    try {
+        handle.render();
+        return handle.domElement;
+    } catch {
+        return null;
+    }
+}
+
 export function captureCanvas(type = "image/png"): string | null {
     if (!handle) {
         // Fall back to the selector in case the handle was never registered.

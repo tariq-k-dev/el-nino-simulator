@@ -25,7 +25,7 @@
  * business.
  */
 
-import { useEffect, useRef } from "react";
+import { useEffect, useRef, useState } from "react";
 import type {
     AnalyticsPayload,
     RegionDefinition,
@@ -38,6 +38,7 @@ import type {
 import { HeaderCompact } from "@/mobile/HeaderCompact";
 import { LandscapeDock } from "@/mobile/LandscapeDock";
 import { SnapSheet, type SnapSheetHandle } from "@/mobile/SnapSheet";
+import type { Tier } from "@/mobile/snapMath";
 import type { LayoutMode2 } from "@/mobile/layoutMath";
 import { NINO_BOXES } from "@/lib/regions";
 import { isNinoUiEnabled } from "@/lib/ninoFlag";
@@ -69,7 +70,10 @@ interface MobileShellProps {
     units: UnitSystem;
     exporting: boolean;
     onToggleUnits: () => void;
-    onExport: () => void;
+    /** Download the composed 1920×1080 PNG snapshot. */
+    onExportPng: () => void;
+    /** Open the HTML diagnostic report in a new tab. */
+    onExportReport: () => void;
     onSelect: (id: RegionId | null) => void;
     onClearSelection: () => void;
     onScenarioChange: (patch: Partial<ScenarioState>) => void;
@@ -93,7 +97,8 @@ export function MobileShell({
     units,
     exporting,
     onToggleUnits,
-    onExport,
+    onExportPng,
+    onExportReport,
     onSelect,
     onClearSelection,
     onScenarioChange,
@@ -102,6 +107,8 @@ export function MobileShell({
     telemetry,
 }: MobileShellProps) {
     const sheetRef = useRef<SnapSheetHandle>(null);
+    /** The sheet's current tier, mirrored here so the header can hide the chip at full. */
+    const [sheetTier, setSheetTier] = useState<Tier>("peek");
 
     /*
      * The tier reset on portrait entry.
@@ -230,10 +237,12 @@ export function MobileShell({
                 anomalyC={scenario.sstAnomaly}
                 units={units}
                 onToggleUnits={onToggleUnits}
-                onExport={onExport}
+                onExportPng={onExportPng}
+                onExportReport={onExportReport}
                 exporting={exporting}
                 onClearSelection={onClearSelection}
                 onSstChange={(value) => onScenarioChange({ sstAnomaly: value })}
+                hideChip={mode === "portrait" && sheetTier === "full"}
             />
 
             {mode === "portrait" ? (
@@ -254,6 +263,7 @@ export function MobileShell({
                     }
                     onChangeScenario={(patch) => onScenarioChange(patch)}
                     telemetry={telemetry}
+                    onTierChange={setSheetTier}
                 />
             ) : null}
 
