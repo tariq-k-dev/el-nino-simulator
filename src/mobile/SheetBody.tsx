@@ -114,7 +114,14 @@ export function SheetBody({
                     No impact zone selected. Tap a pin or pick a region below.
                     The global signal is{" "}
                     <span style={{ color: accent }}>{ensoLabel(category)}</span>{" "}
-                    at {fixed(scenarioSst, 2)} °C.
+                    at{" "}
+                    {fixed(
+                        units === "imperial"
+                            ? scenarioSst * 1.8
+                            : scenarioSst,
+                        2,
+                    )}{" "}
+                    {units === "imperial" ? "°F" : "°C"}.
                 </p>
             ) : null}
 
