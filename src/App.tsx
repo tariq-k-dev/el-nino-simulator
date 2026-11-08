@@ -445,13 +445,27 @@ export default function App() {
             ) : null}
 
             {/*
-        Bottom-centre hint — desktop only, because it names a mouse. The condition is `!isMobile`, the same one
-        the desktop header and panels use: the old `hidden lg:block` pair let Tailwind's 1024 decide, which is
-        the breakpoint TABLET-PORTRAIT deliberately decoupled from the mode law.
-      */}
+            Desktop telemetry status & attribution bar. Embeds camera navigation hotkeys directly
+            in the center slot to preserve unoccluded viewport sightlines to the globe's southern limb.
+            */}
             {!isMobile ? (
-                <div className="pointer-events-none absolute bottom-3 left-1/2 z-20 -translate-x-1/2 block">
-                    <div className="flex items-center gap-3 rounded-full border border-white/[0.06] bg-black/30 px-3 py-1 backdrop-blur-sm">
+                <footer className="pointer-events-auto absolute bottom-0 left-0 right-0 z-20 flex flex-col md:flex-row items-center justify-between gap-3 border-t border-white/[0.06] bg-slate-950/80 px-4 py-2 backdrop-blur-md font-mono text-[11px] text-slate-400">
+                    {/* Left: Attribution & Engine */}
+                    <div className="flex flex-wrap items-center gap-x-2 text-[10.5px]">
+                        <span className="font-medium text-slate-200">
+                            © 2026 Tariq Khan
+                        </span>
+                        <span className="text-slate-600">·</span>
+                        <span>
+                            Architected with React Three Fiber, DuckDB-WASM
+                            &amp; TypeScript
+                        </span>
+                        <span className="text-slate-600">·</span>
+                        <span className="text-slate-500">Cloudflare Pages</span>
+                    </div>
+
+                    {/* Center: Navigation Hotkeys (No globe overlap) */}
+                    <div className="hidden lg:flex items-center gap-3 rounded-full border border-white/[0.06] bg-white/[0.02] px-3 py-0.5">
                         {[
                             ["Drag", "orbit"],
                             ["Scroll", "zoom"],
@@ -459,16 +473,46 @@ export default function App() {
                         ].map(([k, v]) => (
                             <span
                                 key={k}
-                                className="flex items-center gap-1 text-[8.5px] uppercase tracking-[0.12em] text-slate-500"
+                                className="flex items-center gap-1 text-[8.5px] uppercase tracking-[0.12em] text-slate-400"
                             >
-                                <kbd className="rounded border border-white/12 bg-white/[0.06] px-1 py-[1px] font-mono text-[8px] text-slate-300">
+                                <kbd className="rounded border border-white/12 bg-white/[0.06] px-1 py-[1px] font-mono text-[8px] text-slate-200">
                                     {k}
                                 </kbd>
                                 {v}
                             </span>
                         ))}
                     </div>
-                </div>
+
+                    {/* Right: Recruiter Pathways */}
+                    <div className="flex items-center gap-3 text-slate-300 text-[10.5px]">
+                        <a
+                            href="https://tariqkhan.dev"
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            className="underline decoration-slate-700 underline-offset-2 transition-colors hover:text-cyan-400"
+                        >
+                            Portfolio
+                        </a>
+                        <span className="text-slate-600">·</span>
+                        <a
+                            href="https://github.com/tariq-k-dev/el-nino-simulator"
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            className="underline decoration-slate-700 underline-offset-2 transition-colors hover:text-cyan-400"
+                        >
+                            GitHub
+                        </a>
+                        <span className="text-slate-600">·</span>
+                        <a
+                            href="https://www.linkedin.com/in/tariqakhan"
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            className="underline decoration-slate-700 underline-offset-2 transition-colors hover:text-cyan-400"
+                        >
+                            LinkedIn
+                        </a>
+                    </div>
+                </footer>
             ) : null}
         </div>
     );
