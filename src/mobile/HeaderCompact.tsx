@@ -467,7 +467,7 @@ function EnsoChip({
                     data-testid="enso-chip-text"
                     className="whitespace-nowrap font-mono text-[9px] uppercase tracking-[0.08em] text-slate-200"
                 >
-                    {formatIsland(anomalyC)}
+                    {formatIsland(anomalyC, units)}
                 </span>
             </button>
 
