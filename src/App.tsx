@@ -316,6 +316,7 @@ export default function App() {
                 analytics,
                 activeRegion,
                 snapshot,
+                units,
             });
             openReport(html);
         } finally {

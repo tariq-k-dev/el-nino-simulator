@@ -334,18 +334,18 @@ export async function composeSnapshot({
         .toISOString()
         .replace("T", " ")
         .replace(/\..+/, " UTC");
-    ctx.fillStyle = TEXT_DIM;
-    ctx.font = "400 14px ui-monospace, 'JetBrains Mono', monospace";
+    ctx.fillStyle = "rgba(226, 232, 240, 0.85)";
+    ctx.font = "600 18px ui-monospace, 'SF Mono', Menlo, Consolas, monospace";
     ctx.fillText(
         `Dataset: NOAA CPC ERSSTv5 · Generated: ${stamp}`,
         CARD_PADDING,
-        OUT_H - 30,
+        OUT_H - 28,
     );
     ctx.textAlign = "right";
     ctx.fillText(
         "Tariq Khan · tariqkhan.dev · R3F + DuckDB-WASM",
         OUT_W - CARD_PADDING,
-        OUT_H - 30,
+        OUT_H - 28,
     );
     ctx.textAlign = "left";
 
