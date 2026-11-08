@@ -477,7 +477,8 @@ export default function App() {
                     metrics={analytics.metrics}
                     units={units}
                     onToggleUnits={toggleUnits}
-                    onExport={handleExport}
+                    onExportPng={handleExportPng}
+                    onOpenReport={handleExportReport}
                     exporting={exporting}
                     onClearSelection={clearSelection}
                     telemetry={telemetry}

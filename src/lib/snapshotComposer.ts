@@ -34,8 +34,9 @@ import { fixed } from "@/lib/format";
 const OUT_W = 1920;
 const OUT_H = 1080;
 
-const CARD_BG = "rgba(10, 16, 26, 0.82)";
-const CARD_BORDER = "rgba(56, 189, 248, 0.25)";
+const CARD_BG = "rgba(10, 16, 26, 0.92)";
+const CARD_BORDER = "rgba(56, 189, 248, 0.35)";
+const CARD_PADDING = 60;
 const TEXT_PRIMARY = "#f1f5f9";
 const TEXT_MUTED = "#94a3b8";
 const TEXT_DIM = "#64748b";
@@ -91,8 +92,14 @@ function drawLabel(
     y: number,
 ): void {
     ctx.fillStyle = TEXT_DIM;
-    ctx.font = "500 11px ui-monospace, 'JetBrains Mono', monospace";
+    ctx.font = "500 16px ui-monospace, 'JetBrains Mono', monospace";
     ctx.fillText(text.toUpperCase(), x, y);
+```
+
+```typescript
+    ctx.fillStyle = TEXT_PRIMARY;
+    ctx.font = "600 30px ui-monospace, 'JetBrains Mono', monospace";
+    ctx.fillText(text, x, y);
 }
 
 function drawValue(
@@ -148,33 +155,41 @@ export async function composeSnapshot({
 
     // 2. Header card: title, risk tier, active region.
     const accent = thermalColor(metrics.sst, 0.95);
-    drawCard(ctx, 40, 40, 620, 132);
+    drawCard(ctx, CARD_PADDING, CARD_PADDING, 720, 180);
     ctx.fillStyle = TEXT_PRIMARY;
-    ctx.font = "600 22px ui-sans-serif, -apple-system, 'Segoe UI', sans-serif";
-    ctx.fillText("Super El Niño Global Impact Simulator", 64, 78);
+    ctx.font = "600 32px ui-sans-serif, -apple-system, 'Segoe UI', sans-serif";
+    ctx.fillText(
+        "SUPER EL NIÑO GLOBAL IMPACT SIMULATOR",
+        CARD_PADDING + 24,
+        CARD_PADDING + 60,
+    );
     ctx.fillStyle = TEXT_MUTED;
-    ctx.font = "400 13px ui-sans-serif, -apple-system, 'Segoe UI', sans-serif";
+    ctx.font = "400 18px ui-sans-serif, -apple-system, 'Segoe UI', sans-serif";
     ctx.fillText(
         region
             ? `Focus: ${region.name}`
             : "Global view · no region selected",
-        64,
-        102,
+        CARD_PADDING + 24,
+        CARD_PADDING + 96,
     );
     // Risk pill.
     ctx.beginPath();
-    ctx.roundRect(64, 118, 168, 30, 15);
+    ctx.roundRect(CARD_PADDING + 24, CARD_PADDING + 120, 220, 40, 20);
     ctx.fillStyle = `${accent}22`;
     ctx.fill();
     ctx.strokeStyle = `${accent}88`;
     ctx.lineWidth = 1;
     ctx.stroke();
     ctx.fillStyle = accent;
-    ctx.font = "600 12px ui-monospace, 'JetBrains Mono', monospace";
-    ctx.fillText(metrics.riskTier.toUpperCase(), 80, 138);
+    ctx.font = "600 16px ui-monospace, 'JetBrains Mono', monospace";
+    ctx.fillText(
+        metrics.riskTier.toUpperCase(),
+        CARD_PADDING + 44,
+        CARD_PADDING + 147,
+    );
 
     // 3. Metrics card: the four headline numbers.
-    drawCard(ctx, 40, 196, 620, 200);
+    drawCard(ctx, CARD_PADDING, CARD_PADDING + 200, 720, 260);
     const unitLabel = units === "imperial" ? "°F" : "°C";
     const sstValue =
         units === "imperial"
@@ -204,50 +219,63 @@ export async function composeSnapshot({
         },
     ];
     cols.forEach((col, i) => {
-        const colX = 64 + (i % 2) * 300;
-        const rowY = 232 + Math.floor(i / 2) * 78;
+        const colX = CARD_PADDING + 24 + (i % 2) * 360;
+        const rowY = CARD_PADDING + 240 + Math.floor(i / 2) * 100;
         drawLabel(ctx, col.label, colX, rowY);
-        drawValue(ctx, col.value, colX, rowY + 30);
+        drawValue(ctx, col.value, colX, rowY + 40);
     });
 
     // 4. Telemetry card: live NOAA reading, or a "model only" note.
-    drawCard(ctx, 40, 420, 620, 96);
-    drawLabel(ctx, "Live telemetry", 64, 452);
+    drawCard(ctx, CARD_PADDING, OUT_H - 200 - CARD_PADDING, 720, 200);
+    drawLabel(
+        ctx,
+        "Live telemetry",
+        CARD_PADDING + 24,
+        OUT_H - 200 - CARD_PADDING + 50,
+    );
     if (telemetry && telemetry.tao.status === "active") {
         ctx.fillStyle = "#34d399";
-        ctx.font = "600 15px ui-monospace, 'JetBrains Mono', monospace";
+        ctx.font = "600 20px ui-monospace, 'JetBrains Mono', monospace";
         ctx.fillText(
-            `Niño 3.4 ${fixed(telemetry.tao.nino34_sst, 2)} °C · ${telemetry.tao.status}`,
-            64,
-            480,
+            `NIÑO 3.4 SST: ${fixed(telemetry.tao.nino34_sst, 2)} °C · ${telemetry.tao.status.toUpperCase()}`,
+            CARD_PADDING + 24,
+            OUT_H - 200 - CARD_PADDING + 100,
         );
         ctx.fillStyle = TEXT_MUTED;
-        ctx.font = "400 11px ui-monospace, 'JetBrains Mono', monospace";
-        ctx.fillText(telemetry.timestamp, 64, 500);
+        ctx.font = "400 14px ui-monospace, 'JetBrains Mono', monospace";
+        ctx.fillText(
+            telemetry.timestamp,
+            CARD_PADDING + 24,
+            OUT_H - 200 - CARD_PADDING + 130,
+        );
     } else {
         ctx.fillStyle = TEXT_MUTED;
-        ctx.font = "400 13px ui-sans-serif, -apple-system, 'Segoe UI', sans-serif";
+        ctx.font =
+            "400 18px ui-sans-serif, -apple-system, 'Segoe UI', sans-serif";
         ctx.fillText(
             "No live reading — scenario values are model output.",
-            64,
-            480,
+            CARD_PADDING + 24,
+            OUT_H - 200 - CARD_PADDING + 100,
         );
     }
 
     // 4b. Region card: the active region's own numbers, right-hand column.
+    //     When no region is selected, a "Global baseline" card takes its place
+    //     so the right column is never empty.
+    const rightX = OUT_W - 720 - CARD_PADDING;
     if (region && regionMetrics) {
-        drawCard(ctx, OUT_W - 660, 40, 620, 200);
+        drawCard(ctx, rightX, CARD_PADDING, 720, 260);
         ctx.fillStyle = TEXT_PRIMARY;
         ctx.font =
-            "600 22px ui-sans-serif, -apple-system, 'Segoe UI', sans-serif";
-        ctx.fillText(region.name, OUT_W - 636, 78);
+            "600 28px ui-sans-serif, -apple-system, 'Segoe UI', sans-serif";
+        ctx.fillText(region.name.toUpperCase(), rightX + 24, CARD_PADDING + 60);
         ctx.fillStyle = TEXT_MUTED;
         ctx.font =
-            "400 13px ui-sans-serif, -apple-system, 'Segoe UI', sans-serif";
+            "400 16px ui-sans-serif, -apple-system, 'Segoe UI', sans-serif";
         ctx.fillText(
             `${fixed(region.lat, 1)}, ${fixed(region.lon, 1)}`,
-            OUT_W - 636,
-            102,
+            rightX + 24,
+            CARD_PADDING + 92,
         );
 
         const tempValue =
@@ -275,14 +303,35 @@ export async function composeSnapshot({
             },
         ];
         regionCols.forEach((col, i) => {
-            const colX = OUT_W - 636 + (i % 2) * 300;
-            const rowY = 132 + Math.floor(i / 2) * 52;
+            const colX = rightX + 24 + (i % 2) * 360;
+            const rowY = CARD_PADDING + 140 + Math.floor(i / 2) * 60;
             drawLabel(ctx, col.label, colX, rowY);
             ctx.fillStyle = TEXT_PRIMARY;
             ctx.font =
-                "600 18px ui-monospace, 'JetBrains Mono', monospace";
-            ctx.fillText(col.value, colX, rowY + 24);
+                "600 22px ui-monospace, 'JetBrains Mono', monospace";
+            ctx.fillText(col.value, colX, rowY + 30);
         });
+    } else {
+        drawCard(ctx, rightX, CARD_PADDING, 720, 180);
+        ctx.fillStyle = TEXT_PRIMARY;
+        ctx.font =
+            "600 28px ui-sans-serif, -apple-system, 'Segoe UI', sans-serif";
+        ctx.fillText("GLOBAL BASELINE", rightX + 24, CARD_PADDING + 60);
+        ctx.fillStyle = TEXT_MUTED;
+        ctx.font =
+            "400 16px ui-sans-serif, -apple-system, 'Segoe UI', sans-serif";
+        ctx.fillText(
+            "No region selected — showing global aggregates.",
+            rightX + 24,
+            CARD_PADDING + 96,
+        );
+        ctx.fillStyle = TEXT_PRIMARY;
+        ctx.font = "600 22px ui-monospace, 'JetBrains Mono', monospace";
+        ctx.fillText(
+            `Impact index: ${fixed(metrics.globalImpactIndex, 1)} / 100`,
+            rightX + 24,
+            CARD_PADDING + 140,
+        );
     }
 
     // 5. Footer: provenance, left and right.
@@ -292,17 +341,17 @@ export async function composeSnapshot({
         .replace("T", " ")
         .replace(/\..+/, " UTC");
     ctx.fillStyle = TEXT_DIM;
-    ctx.font = "400 12px ui-monospace, 'JetBrains Mono', monospace";
+    ctx.font = "400 14px ui-monospace, 'JetBrains Mono', monospace";
     ctx.fillText(
         `Dataset: NOAA CPC ERSSTv5 · Generated: ${stamp}`,
-        40,
-        OUT_H - 40,
+        CARD_PADDING,
+        OUT_H - 30,
     );
     ctx.textAlign = "right";
     ctx.fillText(
         "Tariq Khan · tariqkhan.dev · R3F + DuckDB-WASM",
-        OUT_W - 40,
-        OUT_H - 40,
+        OUT_W - CARD_PADDING,
+        OUT_H - 30,
     );
     ctx.textAlign = "left";
 
