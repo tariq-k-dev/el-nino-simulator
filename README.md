@@ -1,4 +1,3 @@
-~~~markdown
 # El Niño Global Impact Simulator
 
 [![Live Application](https://img.shields.io/badge/Live_App-Cloudflare_Pages-F38020?style=for-the-badge&logo=cloudflare&logoColor=white)](https://el-nino-simulator.pages.dev)
@@ -54,7 +53,9 @@ Rather than relying on latency-heavy server-side spatial database clusters, this
 │   ├── Atmospheric River Ribbons       ├── Dynamic Regional Metrics     │
 │   └── Camera Director & Inset Easing  └── High-DPI Report Canvas Export│
 └────────────────────────────────────────────────────────────────────────┘
-~~~
+```
+
+---
 
 ## 🔬 Core Engineering Challenges & Graphics Pipeline
 
@@ -80,22 +81,20 @@ Rather than relying on latency-heavy server-side spatial database clusters, this
 
 ## 🛠️ Tech Stack
 
-| **Domain**              | **Technologies**                                     | **Details / Rationale**                                      |
-| ----------------------- | ---------------------------------------------------- | ------------------------------------------------------------ |
-| **Frontend Framework**  | React 18, TypeScript (Strict), Vite 5, Tailwind CSS  | Modular component architecture, strict type boundaries       |
+| Domain | Technologies | Details / Rationale |
+| :--- | :--- | :--- |
+| **Frontend Framework** | React 18, TypeScript (Strict), Vite 5, Tailwind CSS | Modular component architecture, strict type boundaries |
 | **3D & WebGL Graphics** | Three.js, React Three Fiber (R3F), Drei, Custom GLSL | Declarative scene graph, single controlled `useFrame` render loop |
-| **Data Engine & OLAP**  | DuckDB-WASM, Apache Parquet, Web Workers             | Zero-latency in-memory SQL execution directly in browser     |
-| **Edge & Telemetry**    | Cloudflare Workers, Cloudflare KV, Wrangler          | Scheduled cron ingestion of live NOAA buoys and IVT feeds    |
-| **Testing & CI/CD**     | Vitest (JSDOM), Playwright E2E, ESLint               | Deterministic pixel assertions, bandwidth throttling validation |
-| **Edge Hosting**        | Cloudflare Pages                                     | Edge-distributed static SPA delivery with strict asset gates |
+| **Data Engine & OLAP** | DuckDB-WASM, Apache Parquet, Web Workers | Zero-latency in-memory SQL execution directly in browser |
+| **Edge & Telemetry** | Cloudflare Workers, Cloudflare KV, Wrangler | Scheduled cron ingestion of live NOAA buoys and IVT feeds |
+| **Testing & CI/CD** | Vitest (JSDOM), Playwright E2E, ESLint | Deterministic pixel assertions, bandwidth throttling validation |
+| **Edge Hosting** | Cloudflare Pages | Edge-distributed static SPA delivery with strict asset gates |
 
 ## 🧪 Test Suite & Quality Gates
 
 The codebase enforces strict quality boundaries before any production build:
 
-Bash
-
-```
+```bash
 # Run the complete unit test suite (1,300+ tests across layout, math, and engine)
 pnpm vitest run
 
@@ -112,31 +111,29 @@ pnpm build:e2e
 pnpm playwright test tests/e2e/reset-ux.spec.ts tests/e2e/boot.spec.ts tests/e2e/determinism.spec.ts
 ```
 
+---
+
 ## 📦 Asset Strategy & Edge Budget
 
 Cloudflare Pages enforces a hard 25 MiB cap on individual assets. DuckDB's raw WASM binary is 33–38 MB and cannot be bundled directly into `dist/`.
 
-| **Asset**          | **Source / Distribution**                 | **Size**       |
-| ------------------ | ----------------------------------------- | -------------- |
-| DuckDB WASM        | jsDelivr CDN, version-pinned and streamed | 33–38 MB       |
-| DuckDB Workers     | `public/duckdb/`, same-origin execution   | 0.74 + 0.81 MB |
-| Surface Textures   | `public/textures/`                        | 0.12–0.92 MB   |
-| Compressed Parquet | `public/data/`                            | ~73 KB         |
+| Asset | Source / Distribution | Size |
+| :--- | :--- | :--- |
+| DuckDB WASM | jsDelivr CDN, version-pinned and streamed | 33–38 MB |
+| DuckDB Workers | `public/duckdb/`, same-origin execution | 0.74 + 0.81 MB |
+| Surface Textures | `public/textures/` | 0.12–0.92 MB |
+| Compressed Parquet | `public/data/` | ~73 KB |
 
 `pnpm build` executes `scripts/check-assets.mjs` as an automated gate, failing the build if any asset violates size bounds, if a stray `.wasm` binary leaks into `dist/`, or if test hooks remain in production bundles.
 
 ## 🚀 Local Development Setup
 
 ### Prerequisites
-
-- Node.js >= 20.x
-- pnpm >= 9.x
+* Node.js >= 20.x
+* pnpm >= 9.x
 
 ### Quick Start
-
-Bash
-
-```
+```bash
 # Clone the repository
 git clone git@github.com:tariq-k-dev/el-nino-simulator.git
 cd el-nino-simulator
@@ -148,8 +145,9 @@ pnpm install
 pnpm dev
 ```
 
+---
+
 ## 📄 License & Attribution
 
-Copyright © 2026 **Tariq Khan**. All rights reserved.
-
+Copyright © 2026 **Tariq Khan**. All rights reserved.  
 Architected with **React Three Fiber**, **DuckDB-WASM**, and **TypeScript**. Deployed to **Cloudflare Pages**.
