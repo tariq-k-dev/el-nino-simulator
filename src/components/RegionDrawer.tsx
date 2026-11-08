@@ -1,10 +1,11 @@
 import { useEffect, useMemo, useRef } from "react";
-import { Activity, Gauge, Waves, X } from "lucide-react";
+import { Activity, Gauge, Radio, Waves, X } from "lucide-react";
 import type {
     AnalyticsPayload,
     RegionDefinition,
     RegionId,
     ScenarioMetrics,
+    TelemetryBundle,
 } from "@/types/enso";
 import { Stat } from "@/components/ui/Stat";
 import { MetricBar } from "@/components/ui/MetricBar";
@@ -12,21 +13,14 @@ import { Sparkline } from "@/components/ui/Sparkline";
 import { REGIONS, deltaDisplay, formatDelta } from "@/lib/regions";
 import { thermalColor } from "@/lib/model";
 import { fixed } from "@/lib/format";
-
 interface RegionDrawerProps {
     region: RegionDefinition | null;
     metrics: ScenarioMetrics;
     analytics: AnalyticsPayload;
     units: "metric" | "imperial";
     onClose: () => void;
-    /**
-     * Retarget the selection — the SAME `selectRegion` the Impact Zones cards and the pins call.
-     *
-     * Not a close, not a new selection path: the switcher exists so a reader who is already in the drawer
-     * can move to another region without leaving it, and routing it through `selectRegion` is what keeps
-     * the camera, the machine and the cards agreeing about which region is active.
-     */
     onSelect: (id: RegionId) => void;
+    telemetry?: TelemetryBundle | null;
 }
 
 interface RegionHud {
@@ -381,6 +375,7 @@ export function RegionDrawer({
     units,
     onClose,
     onSelect,
+    telemetry,
 }: RegionDrawerProps) {
     const panelRef = useRef<HTMLElement>(null);
     const open = region !== null;
@@ -805,9 +800,21 @@ export function RegionDrawer({
                                 ? `query ${fixed(analytics.queryMs, 1)} ms`
                                 : "engine warming up"}
                         </span>
-                        <span className="flex items-center gap-1 text-[8.5px] uppercase tracking-[0.12em] text-slate-500">
-                            <span className="h-1 w-1 rounded-full bg-emerald-400" />
-                            local · no server
+                        <span className="flex items-center gap-1.5 text-[8.5px] uppercase tracking-[0.12em] text-slate-500">
+                            {telemetry?.tao.status === "active" ? (
+                                <span className="flex items-center gap-1 text-emerald-400">
+                                    <Radio
+                                        size={8.5}
+                                        className="animate-pulse"
+                                    />
+                                    live tao
+                                </span>
+                            ) : (
+                                <span className="flex items-center gap-1 text-slate-500">
+                                    <span className="h-1 w-1 rounded-full bg-emerald-400" />
+                                    local · no server
+                                </span>
+                            )}
                         </span>
                     </div>
                 </div>
