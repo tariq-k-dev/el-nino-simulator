@@ -94,9 +94,14 @@ function drawLabel(
     ctx.fillStyle = TEXT_DIM;
     ctx.font = "500 16px ui-monospace, 'JetBrains Mono', monospace";
     ctx.fillText(text.toUpperCase(), x, y);
-```
+}
 
-```typescript
+function drawValue(
+    ctx: CanvasRenderingContext2D,
+    text: string,
+    x: number,
+    y: number,
+): void {
     ctx.fillStyle = TEXT_PRIMARY;
     ctx.font = "600 30px ui-monospace, 'JetBrains Mono', monospace";
     ctx.fillText(text, x, y);
