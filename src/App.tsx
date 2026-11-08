@@ -20,6 +20,8 @@ import {
     downloadPng,
     openReport,
 } from "@/lib/report";
+import { captureCanvasElement } from "@/lib/canvasCapture";
+import { composeSnapshot } from "@/lib/snapshotComposer";
 import { isNinoUiEnabled } from "@/lib/ninoFlag";
 import { submitNinoFocus } from "@/scene/cameraIntents";
 import type { RegionId } from "@/types/enso";
@@ -183,12 +185,59 @@ export default function App() {
     const handleExport = useCallback(async () => {
         setExporting(true);
         try {
-            const snapshot = captureCanvas();
-            if (snapshot) {
-                downloadPng(
-                    snapshot,
-                    `el-nino-snapshot-${fixed(scenario.sstAnomaly, 2)}C.png`,
-                );
+            /*
+             * Two outputs from one press, as before: a PNG and the HTML report.
+             *
+             * The PNG is now COMPOSED rather than a raw framebuffer read: the
+             * live frame is scaled into a 1920×1080 canvas with the headline
+             * numbers, the active region and a provenance footer drawn on top.
+             * A raw read is viewport-shaped and carries no context, which is
+             * fine for a debug dump and wrong for a citation shot.
+             *
+             * `captureCanvasElement()` forces one render into the drawing
+             * buffer and hands back the live canvas; the composer must
+             * `drawImage` it in the SAME task, before the compositor clears
+             * the buffer. That is why the two calls are adjacent and not
+             * separated by an `await`.
+             */
+            const source = captureCanvasElement();
+            let snapshot: string | null = null;
+            if (source) {
+                try {
+                    const blob = await composeSnapshot({
+                        source,
+                        metrics: analytics.metrics,
+                        region: activeRegion
+                            ? REGION_MAP[activeRegion]
+                            : null,
+                        telemetry: telemetry ?? null,
+                        units,
+                    });
+                    const url = URL.createObjectURL(blob);
+                    const stamp = new Date()
+                        .toISOString()
+                        .replace(/[:.]/g, "-")
+                        .slice(0, 19);
+                    downloadPng(
+                        url,
+                        `super-el-nino-snapshot-${stamp}.png`,
+                    );
+                    // Revoke on the next tick: the anchor click has already
+                    // started the download by then.
+                    setTimeout(() => URL.revokeObjectURL(url), 1000);
+                    // The report embeds the composed PNG, not the raw frame.
+                    snapshot = url;
+                } catch {
+                    // Composer failed (no 2D context, toBlob null). Fall back
+                    // to the raw capture so the report still has an image.
+                    snapshot = captureCanvas();
+                    if (snapshot) {
+                        downloadPng(
+                            snapshot,
+                            `el-nino-snapshot-${fixed(scenario.sstAnomaly, 2)}C.png`,
+                        );
+                    }
+                }
             }
             const html = buildReportHtml({
                 scenario,
@@ -201,7 +250,7 @@ export default function App() {
         } finally {
             setExporting(false);
         }
-    }, [scenario, analytics, activeRegion]);
+    }, [scenario, analytics, activeRegion, telemetry, units]);
 
     const timeline = analytics.timeline.map((p) => p.anomaly);
 
