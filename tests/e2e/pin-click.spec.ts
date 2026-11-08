@@ -721,6 +721,28 @@ test.describe("pin click — measurement and acceptance", () => {
                     region: before,
                 });
 
+                if (!outcome.selected && b === "front") {
+                    const probe = await page.evaluate(
+                        ({ px, py }) => {
+                            const el = document.elementFromPoint(px, py);
+                            return {
+                                tagName: el?.tagName,
+                                className: el?.className,
+                                html: el?.outerHTML?.slice(0, 120),
+                                isCanvas: el?.tagName === "CANVAS",
+                                pinDown: (
+                                    window as unknown as Record<string, unknown>
+                                ).__pinDown,
+                            };
+                        },
+                        { px: pin.x, py: pin.y },
+                    );
+                    console.log(
+                        `[D1:DEBUG_MISS] az ${deg} ${pin.id}:`,
+                        probe,
+                    );
+                }
+
                 /*
                  * Fail at the offending row, not only in the aggregate below.
                  *
