@@ -40,6 +40,23 @@ const TEXT_PRIMARY = "#f1f5f9";
 const TEXT_MUTED = "#94a3b8";
 const TEXT_DIM = "#64748b";
 
+/**
+ * Per-region numbers for the snapshot's right-hand panel.
+ *
+ * Mirrors the fields `RegionDrawer.buildHud` reads, but flattened into the
+ * shape the composer draws. Regions without a temperature or jet term report
+ * `0` for those fields — the composer draws them as `+0.0 °C` / `0.0%`, which
+ * is honest: the model genuinely has no such term for them.
+ */
+export interface SnapshotRegionMetrics {
+    precipChange: number;
+    tempDeviation: number;
+    basePrecip: number;
+    jetContribution: number;
+    snowpackProxy: number;
+    signalTier: string;
+}
+
 export interface SnapshotInput {
     /** The live WebGL canvas, already rendered into its drawing buffer. */
     source: HTMLCanvasElement;
@@ -47,6 +64,8 @@ export interface SnapshotInput {
     region: RegionDefinition | null;
     telemetry: TelemetryBundle | null;
     units: UnitSystem;
+    /** Per-region numbers for the right-hand panel; null when no region is selected. */
+    regionMetrics?: SnapshotRegionMetrics | null;
 }
 
 function drawCard(
@@ -99,6 +118,7 @@ export async function composeSnapshot({
     region,
     telemetry,
     units,
+    regionMetrics,
 }: SnapshotInput): Promise<Blob> {
     const canvas = document.createElement("canvas");
     canvas.width = OUT_W;
@@ -212,6 +232,57 @@ export async function composeSnapshot({
             64,
             480,
         );
+    }
+
+    // 4b. Region card: the active region's own numbers, right-hand column.
+    if (region && regionMetrics) {
+        drawCard(ctx, OUT_W - 660, 40, 620, 200);
+        ctx.fillStyle = TEXT_PRIMARY;
+        ctx.font =
+            "600 22px ui-sans-serif, -apple-system, 'Segoe UI', sans-serif";
+        ctx.fillText(region.name, OUT_W - 636, 78);
+        ctx.fillStyle = TEXT_MUTED;
+        ctx.font =
+            "400 13px ui-sans-serif, -apple-system, 'Segoe UI', sans-serif";
+        ctx.fillText(
+            `${fixed(region.lat, 1)}, ${fixed(region.lon, 1)}`,
+            OUT_W - 636,
+            102,
+        );
+
+        const tempValue =
+            units === "imperial"
+                ? regionMetrics.tempDeviation
+                : (regionMetrics.tempDeviation - 32) / 1.8;
+        const tempUnit = units === "imperial" ? "°F" : "°C";
+
+        const regionCols = [
+            {
+                label: "Precip change",
+                value: `${regionMetrics.precipChange >= 0 ? "+" : ""}${fixed(regionMetrics.precipChange, 1)}%`,
+            },
+            {
+                label: "Temp deviation",
+                value: `${tempValue >= 0 ? "+" : ""}${fixed(tempValue, 1)} ${tempUnit}`,
+            },
+            {
+                label: "Jet contribution",
+                value: `${regionMetrics.jetContribution >= 0 ? "+" : ""}${fixed(regionMetrics.jetContribution, 1)}%`,
+            },
+            {
+                label: "Signal tier",
+                value: regionMetrics.signalTier,
+            },
+        ];
+        regionCols.forEach((col, i) => {
+            const colX = OUT_W - 636 + (i % 2) * 300;
+            const rowY = 132 + Math.floor(i / 2) * 52;
+            drawLabel(ctx, col.label, colX, rowY);
+            ctx.fillStyle = TEXT_PRIMARY;
+            ctx.font =
+                "600 18px ui-monospace, 'JetBrains Mono', monospace";
+            ctx.fillText(col.value, colX, rowY + 24);
+        });
     }
 
     // 5. Footer: provenance, left and right.

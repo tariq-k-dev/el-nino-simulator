@@ -33,7 +33,7 @@
 
 import { useCallback, useEffect, useId, useRef, useState } from "react";
 import type { CSSProperties } from "react";
-import { Download, Gauge, Globe2 } from "lucide-react";
+import { Download, FileText, Gauge, Globe2 } from "lucide-react";
 import type { UnitSystem } from "@/types/enso";
 import { REGIONS } from "@/lib/regions";
 import { SST_MAX, SST_MIN, thermalColor } from "@/lib/model";
@@ -67,7 +67,10 @@ interface HeaderCompactProps {
     anomalyC: number;
     units: UnitSystem;
     onToggleUnits: () => void;
-    onExport: () => void;
+    /** Download the composed 1920×1080 PNG snapshot. */
+    onExportPng: () => void;
+    /** Open the HTML diagnostic report in a new tab. */
+    onExportReport: () => void;
     exporting: boolean;
     /** The drawer X / Escape path, driven by the Reset control. */
     onClearSelection: () => void;
@@ -91,7 +94,8 @@ export function HeaderCompact({
     anomalyC,
     units,
     onToggleUnits,
-    onExport,
+    onExportPng,
+    onExportReport,
     exporting,
     onClearSelection,
     onSstChange,
@@ -325,9 +329,9 @@ export function HeaderCompact({
 
                 <button
                     type="button"
-                    onClick={onExport}
+                    onClick={onExportPng}
                     disabled={exporting}
-                    aria-label="Snapshot"
+                    aria-label="Snapshot PNG"
                     className={`${TOUCH} gap-1.5 border border-sky-300/25 bg-sky-400/10 px-3 text-[10px] font-medium uppercase tracking-[0.12em] text-sky-100 backdrop-blur-md disabled:opacity-50`}
                 >
                     {exporting ? (
@@ -336,8 +340,19 @@ export function HeaderCompact({
                         <Download size={12} />
                     )}
                     <span className="sr-only sm:not-sr-only">
-                        {exporting ? "Rendering…" : "Snapshot"}
+                        {exporting ? "Rendering…" : "PNG"}
                     </span>
+                </button>
+
+                <button
+                    type="button"
+                    onClick={exporting ? undefined : onExportReport}
+                    disabled={exporting}
+                    aria-label="Open report"
+                    className="flex min-h-[44px] min-w-[44px] items-center justify-center gap-1.5 rounded-full border border-sky-300/25 bg-sky-400/10 px-3 text-[10px] font-medium uppercase tracking-[0.12em] text-sky-100 backdrop-blur-md disabled:opacity-50"
+                >
+                    <FileText size={12} />
+                    <span className="sr-only sm:not-sr-only">Report</span>
                 </button>
 
                 {/*
