@@ -25,12 +25,14 @@
  */
 
 import { useMemo } from "react";
+import { Radio } from "lucide-react";
 import type {
     AnalyticsPayload,
     RegionDefinition,
     RegionId,
     ScenarioMetrics,
     ScenarioState,
+    TelemetryBundle,
     UnitSystem,
 } from "@/types/enso";
 import { Stat } from "@/components/ui/Stat";
@@ -54,6 +56,7 @@ export interface SheetBodyProps {
     region: RegionDefinition | null;
     units: UnitSystem;
     activeRegion: RegionId | null;
+    telemetry?: TelemetryBundle | null;
     /** The SAME selection path the cards, the drawer and the dock chips use. */
     onSelect: (id: RegionId) => void;
     onClearSelection: () => void;
@@ -86,6 +89,7 @@ export function SheetBody({
     region,
     units,
     activeRegion,
+    telemetry,
     onSelect,
     onClearSelection,
     onSstChange,
@@ -242,13 +246,13 @@ export function SheetBody({
                     </div>
 
                     {/*
-            Niño 1+2 / Niño 4 empirical cards — the SAME component and the same numbers as the desktop panel,
-            appended after the region switcher so the sheet gains one block and no structural change.
+              Niño 1+2 / Niño 4 empirical cards — the SAME component and the same numbers as the desktop panel,
+              appended after the region switcher so the sheet gains one block and no structural change.
 
-            Mobile reads the flag through the same `isNinoUiEnabled` helper. It is imported rather than passed
-            as a prop because the alternative is a new prop threaded through `MobileShell` → `SnapSheet` /
-            `LandscapeDock` → here, which would touch three files to deliver a constant.
-          */}
+              Mobile reads the flag through the same `isNinoUiEnabled` helper. It is imported rather than passed
+              as a prop because the alternative is a new prop threaded through `MobileShell` → `SnapSheet` /
+              `LandscapeDock` → here, which would touch three files to deliver a constant.
+            */}
                     {isNinoUiEnabled(
                         typeof location === "undefined" ? "" : location.search,
                     ) ? (
@@ -272,6 +276,7 @@ export function SheetBody({
                         analytics={analytics}
                         units={units}
                         accent={accent}
+                        telemetry={telemetry}
                         onClearSelection={onClearSelection}
                     />
                 </div>
@@ -293,6 +298,7 @@ function FullSections({
     analytics,
     units,
     accent,
+    telemetry,
     onClearSelection,
 }: {
     region: RegionDefinition | null;
@@ -300,6 +306,7 @@ function FullSections({
     analytics: AnalyticsPayload;
     units: UnitSystem;
     accent: string;
+    telemetry?: TelemetryBundle | null;
     onClearSelection: () => void;
 }) {
     const bars = useMemo(
@@ -467,10 +474,23 @@ function FullSections({
                 />
                 <div className="mt-1 flex items-center justify-between font-mono text-[8px] uppercase tracking-[0.1em] text-slate-500">
                     <span>{analytics.summary.rowCount} monthly obs</span>
-                    <span>
-                        {analytics.queryMs > 0
-                            ? `query ${fixed(analytics.queryMs, 1)} ms`
-                            : "engine warming up"}
+                    <span className="flex items-center gap-1.5">
+                        <span>
+                            {analytics.queryMs > 0
+                                ? `query ${fixed(analytics.queryMs, 1)} ms`
+                                : "engine warming up"}
+                        </span>
+                        {telemetry?.tao.status === "active" ? (
+                            <span className="flex items-center gap-1 text-emerald-400">
+                                <Radio size={8} className="animate-pulse" />
+                                live tao
+                            </span>
+                        ) : (
+                            <span className="flex items-center gap-1 text-slate-500">
+                                <span className="h-1 w-1 rounded-full bg-emerald-400" />
+                                local · no server
+                            </span>
+                        )}
                     </span>
                 </div>
             </div>
