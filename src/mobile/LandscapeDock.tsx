@@ -37,6 +37,7 @@ import type {
     RegionId,
     ScenarioMetrics,
     ScenarioState,
+    TelemetryBundle,
     UnitSystem,
 } from "@/types/enso";
 import { dockWidth } from "@/mobile/layoutMath";
