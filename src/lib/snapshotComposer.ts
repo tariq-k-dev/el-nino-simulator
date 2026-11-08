@@ -144,17 +144,24 @@ function drawDomLabels(
         sh = source.width / outAspect;
         sy = (source.height - sh) / 2;
     }
-    const scaleX = OUT_W / source.width;
-    const scaleY = OUT_H / source.height;
-
+    /*
+     * Map a DOM rect's center into the 1920×1080 output using the same
+     * `cover` crop the background uses. Normalized [0,1] coordinates are
+     * computed against the canvas CSS rect (so high-DPI backing-store size
+     * is irrelevant), then remapped through the crop window `(sx, sy, sw, sh)`
+     * expressed in source pixels. Without the crop remap, labels drift
+     * toward the edges whenever the viewport aspect differs from 16:9.
+     */
     const toOut = (rect: DOMRect) => {
         const u =
             (rect.left + rect.width / 2 - canvasRect.left) / canvasRect.width;
         const v =
             (rect.top + rect.height / 2 - canvasRect.top) / canvasRect.height;
+        const px = u * source.width;
+        const py = v * source.height;
         return {
-            x: u * OUT_W,
-            y: v * OUT_H,
+            x: ((px - sx) / sw) * OUT_W,
+            y: ((py - sh * 0 + sy) - sy) / sh * OUT_H + 0,
         };
     };
 
