@@ -464,57 +464,12 @@ export function Hotspot({
                 if (earth) earth.getWorldPosition(SCRATCH_CENTRE);
                 else proxy.getWorldPosition(SCRATCH_CENTRE);
 
-                /*
-                 * TEMPORARY DIAGNOSTIC — `__pinRay`.
-                 *
-                 * Records the gate's three inputs and its verdict for every raycast, so a report can tell "the
-                 * ray never reached this pin" from "the ray reached it and the gate refused it". Those are
-                 * different defects with the same symptom (a press that selects nothing), and nothing else in
-                 * the page distinguishes them: `__globe.pins()` reports the pin's position, not whether a ray
-                 * was ever cast at it.
-                 *
-                 * Bounded to the last 240 entries. A pointer move raycasts every pin, so an unbounded log would
-                 * grow for the life of the page — and a growing array is itself a timing change in the thing
-                 * being measured.
-                 *
-                 * Remove with the rest of the `__pinRay` / `__pinDown` instrumentation.
-                 */
                 const facing = pinFacesCamera(
                     SCRATCH_NORMAL,
                     raycaster.ray.origin,
                     SCRATCH_CENTRE,
                     PIN_HIT_GATE,
                 );
-                if (import.meta.env.VITE_E2E === "1") {
-                    const w = window as unknown as Record<string, unknown>;
-                    const log =
-                        (w.__pinRay as
-                            | Array<Record<string, unknown>>
-                            | undefined) ?? [];
-                    log.push({
-                        id: region.id,
-                        facing,
-                        gate: PIN_HIT_GATE,
-                        n: [
-                            +SCRATCH_NORMAL.x.toFixed(4),
-                            +SCRATCH_NORMAL.y.toFixed(4),
-                            +SCRATCH_NORMAL.z.toFixed(4),
-                        ],
-                        origin: [
-                            +raycaster.ray.origin.x.toFixed(4),
-                            +raycaster.ray.origin.y.toFixed(4),
-                            +raycaster.ray.origin.z.toFixed(4),
-                        ],
-                        centre: [
-                            +SCRATCH_CENTRE.x.toFixed(4),
-                            +SCRATCH_CENTRE.y.toFixed(4),
-                            +SCRATCH_CENTRE.z.toFixed(4),
-                        ],
-                        t: +performance.now().toFixed(1),
-                    });
-                    if (log.length > 240) log.splice(0, log.length - 240);
-                    w.__pinRay = log;
-                }
 
                 if (!facing) return;
 
@@ -587,25 +542,6 @@ export function Hotspot({
                     dotOnly
                         ? undefined
                         : (e) => {
-                              /*
-                               * TEMPORARY DIAGNOSTIC — `__pinDown`.
-                               *
-                               * Counts how many times a real pointer press reached a pin's handler. Zero after a
-                               * click aimed at a pin means the press never got here (the ray missed, the gate
-                               * refused it, or something else took the event); non-zero means it did arrive and the
-                               * failure is downstream of this line. Nothing else in the page can tell those apart.
-                               *
-                               * Remove with the rest of the `__pinRay` / `__pinDown` instrumentation.
-                               */
-                              if (import.meta.env.VITE_E2E === "1") {
-                                  const w = window as unknown as Record<
-                                      string,
-                                      unknown
-                                  >;
-                                  w.__pinDown =
-                                      ((w.__pinDown as number | undefined) ??
-                                          0) + 1;
-                              }
                               e.stopPropagation();
                               e.nativeEvent?.stopImmediatePropagation?.();
                               onSelect(region.id);
