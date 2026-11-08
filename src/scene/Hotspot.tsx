@@ -729,13 +729,14 @@ export function Hotspot({
                     zIndexRange={[40, 30]}
                     eps={0.00001}
                     style={{
-                        pointerEvents: "auto",
+                        pointerEvents: "none",
                         transform: "translate3d(0, 0, 0)",
                     }}
                 >
                     <div
                         ref={labelWrapRef}
                         style={{
+                            pointerEvents: "none",
                             transition: "opacity 120ms linear",
                             willChange: "transform, opacity",
                         }}
@@ -759,6 +760,7 @@ export function Hotspot({
                                 background: "rgba(10, 15, 25, 0.85)",
                                 backdropFilter: "blur(8px)",
                                 WebkitBackdropFilter: "blur(8px)",
+                                pointerEvents: "auto",
                                 // Two-layer shadow: a dark halo for contrast, a warm bloom when active.
                                 boxShadow: active
                                     ? `0 1px 2px rgba(0,0,0,0.9), 0 4px 14px rgba(0,0,0,0.55), 0 0 18px -4px ${glowCss}`
