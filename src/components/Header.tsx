@@ -1,4 +1,11 @@
-import { Download, Github, Globe2, Gauge, Radio } from "lucide-react";
+import {
+    ChevronDown,
+    Download,
+    Github,
+    Globe2,
+    Gauge,
+    Radio,
+} from "lucide-react";
 import type {
     ScenarioMetrics,
     TelemetryBundle,
@@ -12,7 +19,8 @@ interface HeaderProps {
     metrics: ScenarioMetrics;
     units: UnitSystem;
     onToggleUnits: () => void;
-    onExport: () => void;
+    onExportPng: () => void;
+    onOpenReport: () => void;
     exporting: boolean;
     /** Clear the region selection — the drawer X / Escape path, driven by the Reset control. */
     onClearSelection: () => void;
@@ -23,7 +31,8 @@ export function Header({
     metrics,
     units,
     onToggleUnits,
-    onExport,
+    onExportPng,
+    onOpenReport,
     exporting,
     onClearSelection,
     telemetry,
@@ -127,21 +136,46 @@ export function Header({
                     <Github size={13} />
                 </a>
 
-                <button
-                    type="button"
-                    onClick={onExport}
-                    disabled={exporting}
-                    className="group flex items-center gap-1.5 rounded-full border border-sky-300/25 bg-sky-400/10 px-3 py-1.5 text-[10px] font-medium uppercase tracking-[0.12em] text-sky-100 backdrop-blur-md transition-all duration-300 hover:border-sky-300/45 hover:bg-sky-400/18 disabled:opacity-50"
-                >
-                    {exporting ? (
-                        <Gauge size={12} className="animate-pulse" />
-                    ) : (
-                        <Download size={12} />
-                    )}
-                    <span className="hidden sm:inline">
-                        {exporting ? "Rendering…" : "Snapshot"}
-                    </span>
-                </button>
+                <div className="group relative">
+                    <button
+                        type="button"
+                        disabled={exporting}
+                        className="peer flex items-center gap-1.5 rounded-full border border-sky-300/25 bg-sky-400/10 px-3 py-1.5 text-[10px] font-medium uppercase tracking-[0.12em] text-sky-100 backdrop-blur-md transition-all duration-300 hover:border-sky-300/45 hover:bg-sky-400/18 disabled:opacity-50"
+                    >
+                        {exporting ? (
+                            <Gauge size={12} className="animate-pulse" />
+                        ) : (
+                            <Download size={12} />
+                        )}
+                        <span className="hidden sm:inline">
+                            {exporting ? "Rendering…" : "Snapshot"}
+                        </span>
+                        <ChevronDown
+                            size={12}
+                            className="opacity-70 transition-transform group-focus-within:rotate-180 group-hover:rotate-180"
+                        />
+                    </button>
+                    <div className="invisible absolute right-0 top-full z-50 mt-1 w-56 rounded-lg border border-white/10 bg-slate-900/95 p-1 opacity-0 shadow-xl backdrop-blur-md transition-all duration-150 group-focus-within:visible group-focus-within:opacity-100 group-hover:visible group-hover:opacity-100">
+                        <button
+                            type="button"
+                            onClick={onExportPng}
+                            disabled={exporting}
+                            className="flex w-full items-center gap-2 rounded-md px-3 py-2 text-left text-xs text-slate-200 transition-colors hover:bg-slate-800/80 disabled:opacity-50"
+                        >
+                            <Download size={12} />
+                            Download PNG Card (1920×1080)
+                        </button>
+                        <button
+                            type="button"
+                            onClick={onOpenReport}
+                            disabled={exporting}
+                            className="flex w-full items-center gap-2 rounded-md px-3 py-2 text-left text-xs text-slate-200 transition-colors hover:bg-slate-800/80 disabled:opacity-50"
+                        >
+                            <Globe2 size={12} />
+                            Open Diagnostic Report
+                        </button>
+                    </div>
+                </div>
 
                 <ResetViewButton onClearSelection={onClearSelection} />
             </div>
