@@ -1,3 +1,5 @@
+import type { UnitSystem } from "@/types/enso";
+
 /**
  * The HUD island's text: an ENSO category and one short string. Pure.
  *
@@ -118,12 +120,18 @@ export const MINUS = "\u2212";
  * `+0.0` badge would read as a small warming that is not there, and `+0.04` is below the precision the
  * island prints. Both directions therefore collapse to the same `0.0°C`.
  */
-export function formatAnomaly(anomalyC: number): string {
-    if (!Number.isFinite(anomalyC)) return `0.0°C`;
-    const rounded = Math.round(Math.abs(anomalyC) * 10) / 10;
-    if (rounded === 0) return "0.0°C";
-    const sign = anomalyC < 0 ? MINUS : "+";
-    return `${sign}${rounded.toFixed(1)}°C`;
+export function formatAnomaly(
+    anomalyC: number,
+    units: UnitSystem = "metric",
+): string {
+    const suffix = units === "imperial" ? "°F" : "°C";
+    if (!Number.isFinite(anomalyC)) return `0.0${suffix}`;
+    /* A DELTA conversion: ×1.8, no +32. A deviation has no zero-offset. */
+    const value = units === "imperial" ? anomalyC * 1.8 : anomalyC;
+    const rounded = Math.round(Math.abs(value) * 10) / 10;
+    if (rounded === 0) return `0.0${suffix}`;
+    const sign = value < 0 ? MINUS : "+";
+    return `${sign}${rounded.toFixed(1)}${suffix}`;
 }
 
 /**
@@ -133,6 +141,10 @@ export function formatAnomaly(anomalyC: number): string {
  * requires: a spec compares the DOM against THIS function's output, so a hardcoded string in the component
  * would fail the moment the store moved.
  */
-export function formatIsland(anomalyC: number): string {
-    return `ENSO: ${formatAnomaly(anomalyC)} | ${ensoLabel(ensoCategory(anomalyC))}`;
+export function formatIsland(
+    anomalyC: number,
+    units: UnitSystem = "metric",
+): string {
+    /* The anomaly is DISPLAYED in the requested units; the category is always classified in °C. */
+    return `ENSO: ${formatAnomaly(anomalyC, units)} | ${ensoLabel(ensoCategory(anomalyC))}`;
 }

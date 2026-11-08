@@ -297,7 +297,11 @@ export function HeaderCompact({
                         <button
                             key={system}
                             type="button"
-                            onClick={onToggleUnits}
+                            onClick={() => {
+                                /* Idempotent: clicking the already-active unit is a no-op. */
+                                if (units === system) return;
+                                onToggleUnits();
+                            }}
                             className={[
                                 "h-11 min-w-[44px] rounded-full px-2 font-mono text-[9px] uppercase tracking-[0.12em] transition-all duration-200",
                                 units === system
