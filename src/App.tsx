@@ -21,7 +21,10 @@ import {
     openReport,
 } from "@/lib/report";
 import { captureCanvasElement } from "@/lib/canvasCapture";
-import { composeSnapshot } from "@/lib/snapshotComposer";
+import {
+    composeSnapshot,
+    composeSnapshotToDataUrl,
+} from "@/lib/snapshotComposer";
 import { isNinoUiEnabled } from "@/lib/ninoFlag";
 import { submitNinoFocus } from "@/scene/cameraIntents";
 import type { RegionId, ScenarioMetrics } from "@/types/enso";
@@ -290,7 +293,7 @@ export default function App() {
             let snapshot: string | null = null;
             if (source) {
                 try {
-                    const blob = await composeSnapshot({
+                    snapshot = await composeSnapshotToDataUrl({
                         source,
                         metrics: analytics.metrics,
                         region: activeRegion
@@ -305,7 +308,6 @@ export default function App() {
                               )
                             : null,
                     });
-                    snapshot = URL.createObjectURL(blob);
                 } catch {
                     snapshot = captureCanvas();
                 }
