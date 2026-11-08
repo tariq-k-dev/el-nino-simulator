@@ -1,9 +1,15 @@
 // @vitest-environment jsdom
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { act, cleanup, fireEvent, render, screen } from '@testing-library/react';
-import { EngineBadge } from '@/components/EngineBadge';
-import { engineStore, type EngineStatus } from '@/lib/engine/store';
-import { enableEngine } from '@/lib/engine/init';
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import {
+    act,
+    cleanup,
+    fireEvent,
+    render,
+    screen,
+} from "@testing-library/react";
+import { EngineBadge } from "@/components/EngineBadge";
+import { engineStore, type EngineStatus } from "@/lib/engine/store";
+import { enableEngine } from "@/lib/engine/init";
 
 /**
  * The badge's only action is `enableEngine()`. Mocked, not merely spied on: the
@@ -11,7 +17,7 @@ import { enableEngine } from '@/lib/engine/init';
  * acquisitions and a wall of console noise per click. What this file tests is the
  * badge's rendering and wiring, not the boot.
  */
-vi.mock('@/lib/engine/init', () => ({ enableEngine: vi.fn() }));
+vi.mock("@/lib/engine/init", () => ({ enableEngine: vi.fn() }));
 
 /**
  * The badge must distinguish "no progress information yet" from "progress we
@@ -29,445 +35,498 @@ vi.mock('@/lib/engine/init', () => ({ enableEngine: vi.fn() }));
  * the sr-only sentence deliberately contains the numbers a screen reader needs.
  */
 function visibleText(): string {
-  const root = document.body;
-  const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT);
-  let out = '';
-  for (let n = walker.nextNode(); n; n = walker.nextNode()) {
-    const parent = n.parentElement;
-    if (parent && parent.closest('.sr-only')) continue;
-    // Concatenate WITHOUT an inserted separator, then normalise runs of
-    // whitespace. Inserting ' ' between nodes turned "DuckDB (~7 MB)" into
-    // "DuckDB ( ~7 MB)" and broke exact-substring assertions.
-    out += n.textContent ?? '';
-  }
-  return out.replace(/\s+/g, ' ').trim();
+    const root = document.body;
+    const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT);
+    let out = "";
+    for (let n = walker.nextNode(); n; n = walker.nextNode()) {
+        const parent = n.parentElement;
+        if (parent && parent.closest(".sr-only")) continue;
+        // Concatenate WITHOUT an inserted separator, then normalise runs of
+        // whitespace. Inserting ' ' between nodes turned "DuckDB (~7 MB)" into
+        // "DuckDB ( ~7 MB)" and broke exact-substring assertions.
+        out += n.textContent ?? "";
+    }
+    return out.replace(/\s+/g, " ").trim();
 }
 
 /** Drive the store into a specific status, then render the badge. */
 function renderWith(status: EngineStatus, now?: number) {
-  // The store is a singleton; each case resets it then applies the target state.
-  engineStore.__reset();
+    // The store is a singleton; each case resets it then applies the target state.
+    engineStore.__reset();
 
-  switch (status.phase) {
-    case 'deferred':
-      engineStore.markDeferred(status.reason);
-      break;
-    case 'booting':
-      engineStore.startBooting({
-        host: status.host,
-        decoded: status.decoded,
-        mode: status.mode,
-      });
-      // `firstEventAt` is stamped BY the store on the first reportProgress, so
-      // having bytes is what distinguishes "events have arrived" from "still
-      // downloading the worker script". Reporting loaded > 0 is the trigger.
-      if (status.loaded > 0) {
-        engineStore.reportProgress(status.loaded);
-      }
-      break;
-    case 'ready':
-      engineStore.startBooting({ host: status.host, decoded: 1000, mode: 'auto' });
-      engineStore.markReady(status.host, status.bootMs);
-      break;
-    case 'failed':
-      engineStore.markFailed(status.reason);
-      break;
-  }
+    switch (status.phase) {
+        case "deferred":
+            engineStore.markDeferred(status.reason);
+            break;
+        case "booting":
+            engineStore.startBooting({
+                host: status.host,
+                decoded: status.decoded,
+                mode: status.mode,
+            });
+            // `firstEventAt` is stamped BY the store on the first reportProgress, so
+            // having bytes is what distinguishes "events have arrived" from "still
+            // downloading the worker script". Reporting loaded > 0 is the trigger.
+            if (status.loaded > 0) {
+                engineStore.reportProgress(status.loaded);
+            }
+            break;
+        case "ready":
+            engineStore.startBooting({
+                host: status.host,
+                decoded: 1000,
+                mode: "auto",
+            });
+            engineStore.markReady(status.host, status.bootMs);
+            break;
+        case "failed":
+            engineStore.markFailed(status.reason);
+            break;
+    }
 
-  return render(<EngineBadge now={now ?? Date.now()} />);
+    return render(<EngineBadge now={now ?? Date.now()} />);
 }
 
-const booting = (over: Partial<Extract<EngineStatus, { phase: 'booting' }>> = {}) => {
-  const base: Extract<EngineStatus, { phase: 'booting' }> = {
-    phase: 'booting',
-    host: 'jsdelivr',
-    loaded: 0,
-    decoded: 34_242_586,
-    mode: 'auto',
-    startedAt: Date.now(),
-    firstEventAt: null,
-  };
-  return { ...base, ...over } as EngineStatus;
+const booting = (
+    over: Partial<Extract<EngineStatus, { phase: "booting" }>> = {},
+) => {
+    const base: Extract<EngineStatus, { phase: "booting" }> = {
+        phase: "booting",
+        host: "jsdelivr",
+        loaded: 0,
+        decoded: 34_242_586,
+        mode: "auto",
+        startedAt: Date.now(),
+        firstEventAt: null,
+    };
+    return { ...base, ...over } as EngineStatus;
 };
 
-describe('EngineBadge — zero progress events', () => {
-  beforeEach(() => engineStore.__reset());
-  afterEach(() => {
-    cleanup();
-    engineStore.__reset();
-  });
+describe("EngineBadge — zero progress events", () => {
+    beforeEach(() => engineStore.__reset());
+    afterEach(() => {
+        cleanup();
+        engineStore.__reset();
+    });
 
-  it('renders "Starting DuckDB…" with NO percentage and NO ETA', () => {
-    renderWith(booting({ loaded: 0, firstEventAt: null }));
+    it('renders "Starting DuckDB…" with NO percentage and NO ETA', () => {
+        renderWith(booting({ loaded: 0, firstEventAt: null }));
 
-    // Read the VISIBLE text (the sr-only sentence is separate by design).
-    const text = visibleText();
-    expect(text).toContain('Starting DuckDB…');
-    // The whole point: no number is invented during the worker download.
-    expect(text).not.toMatch(/\d+\s*%/);
-    expect(text).not.toMatch(/\d+\s*s left/);
-    expect(text).not.toMatch(/Loading DuckDB/);
-  });
+        // Read the VISIBLE text (the sr-only sentence is separate by design).
+        const text = visibleText();
+        expect(text).toContain("Starting DuckDB…");
+        // The whole point: no number is invented during the worker download.
+        expect(text).not.toMatch(/\d+\s*%/);
+        expect(text).not.toMatch(/\d+\s*s left/);
+        expect(text).not.toMatch(/Loading DuckDB/);
+    });
 
-  it('exposes an aria-live sr-only sentence, with the visual spans aria-hidden', () => {
-    renderWith(booting({ loaded: 0, firstEventAt: null }));
+    it("exposes an aria-live sr-only sentence, with the visual spans aria-hidden", () => {
+        renderWith(booting({ loaded: 0, firstEventAt: null }));
 
-    // The announcement lives on the sr-only sentence, not the wrapper, so a
-    // screen reader reads the sentence rather than concatenated chrome.
-    const live = document.querySelector('[aria-live="polite"].sr-only');
-    expect(live).not.toBeNull();
-    expect(live?.textContent?.trim()).toBe('Loading the DuckDB engine.');
+        // The announcement lives on the sr-only sentence, not the wrapper, so a
+        // screen reader reads the sentence rather than concatenated chrome.
+        const live = document.querySelector('[aria-live="polite"].sr-only');
+        expect(live).not.toBeNull();
+        expect(live?.textContent?.trim()).toBe("Loading the DuckDB engine.");
 
-    // The visible label must be hidden from assistive tech or it doubles up.
-    const visual = [...document.querySelectorAll('span')].find(
-      (el) => el.textContent?.trim() === 'Starting DuckDB…',
-    );
-    expect(visual?.getAttribute('aria-hidden')).toBe('true');
+        // The visible label must be hidden from assistive tech or it doubles up.
+        const visual = [...document.querySelectorAll("span")].find(
+            (el) => el.textContent?.trim() === "Starting DuckDB…",
+        );
+        expect(visual?.getAttribute("aria-hidden")).toBe("true");
 
-    // Busy state still marks the region.
-    expect(document.querySelector('[aria-busy="true"]')).not.toBeNull();
-  });
+        // Busy state still marks the region.
+        expect(document.querySelector('[aria-busy="true"]')).not.toBeNull();
+    });
 
-  it('the sr-only sentence carries no numbers during worker load', () => {
-    renderWith(booting({ loaded: 0, firstEventAt: null }));
-    const live = document.querySelector('[aria-live="polite"].sr-only');
-    expect(live?.textContent?.trim()).toBe('Loading the DuckDB engine.');
-    expect(live?.textContent ?? '').not.toMatch(/\d+\s*%/);
-    expect(live?.textContent ?? '').not.toMatch(/\d+\s*second/);
-  });
+    it("the sr-only sentence carries no numbers during worker load", () => {
+        renderWith(booting({ loaded: 0, firstEventAt: null }));
+        const live = document.querySelector('[aria-live="polite"].sr-only');
+        expect(live?.textContent?.trim()).toBe("Loading the DuckDB engine.");
+        expect(live?.textContent ?? "").not.toMatch(/\d+\s*%/);
+        expect(live?.textContent ?? "").not.toMatch(/\d+\s*second/);
+    });
 
-  it('shows an indeterminate bar (no width from progress)', () => {
-    renderWith(booting({ loaded: 0, firstEventAt: null }));
-    // The pulsing fill is the w-1/3 element; a determinate bar would carry an
-    // inline width style derived from progressPercent().
-    const bar = document.querySelector('.animate-pulse');
-    expect(bar).not.toBeNull();
-    expect((bar as HTMLElement).style.width).toBe('');
-  });
+    it("shows an indeterminate bar (no width from progress)", () => {
+        renderWith(booting({ loaded: 0, firstEventAt: null }));
+        // The pulsing fill is the w-1/3 element; a determinate bar would carry an
+        // inline width style derived from progressPercent().
+        const bar = document.querySelector(".animate-pulse");
+        expect(bar).not.toBeNull();
+        expect((bar as HTMLElement).style.width).toBe("");
+    });
 
-  it('exposes role="progressbar" with no aria-valuenow while indeterminate', () => {
-    renderWith(booting({ loaded: 0, firstEventAt: null }));
-    const bar = screen.getByRole('progressbar');
-    expect(bar).toBeTruthy();
-    // 0/100 bounds are always present; the VALUE is omitted on purpose —
-    // inventing 0 would claim knowledge the app does not have.
-    expect(bar.getAttribute('aria-valuemin')).toBe('0');
-    expect(bar.getAttribute('aria-valuemax')).toBe('100');
-    expect(bar.getAttribute('aria-valuenow')).toBeNull();
-    expect(bar.getAttribute('aria-valuetext')).toBe('Preparing to download');
-  });
+    it('exposes role="progressbar" with no aria-valuenow while indeterminate', () => {
+        renderWith(booting({ loaded: 0, firstEventAt: null }));
+        const bar = screen.getByRole("progressbar");
+        expect(bar).toBeTruthy();
+        // 0/100 bounds are always present; the VALUE is omitted on purpose —
+        // inventing 0 would claim knowledge the app does not have.
+        expect(bar.getAttribute("aria-valuemin")).toBe("0");
+        expect(bar.getAttribute("aria-valuemax")).toBe("100");
+        expect(bar.getAttribute("aria-valuenow")).toBeNull();
+        expect(bar.getAttribute("aria-valuetext")).toBe(
+            "Preparing to download",
+        );
+    });
 });
 
-describe('EngineBadge — determinate progress after the first event', () => {
-  beforeEach(() => engineStore.__reset());
-  afterEach(() => {
-    cleanup();
-    engineStore.__reset();
-  });
+describe("EngineBadge — determinate progress after the first event", () => {
+    beforeEach(() => engineStore.__reset());
+    afterEach(() => {
+        cleanup();
+        engineStore.__reset();
+    });
 
-  it('switches to "Loading DuckDB NN%" once bytes are reported', () => {
-    renderWith(
-      booting({ loaded: 17_121_293, decoded: 34_242_586, firstEventAt: Date.now() - 9_000 }),
-    );
+    it('switches to "Loading DuckDB NN%" once bytes are reported', () => {
+        renderWith(
+            booting({
+                loaded: 17_121_293,
+                decoded: 34_242_586,
+                firstEventAt: Date.now() - 9_000,
+            }),
+        );
 
-    const text = visibleText();
-    expect(text).toMatch(/Loading DuckDB \d+%/);
-    expect(text).not.toContain('Starting DuckDB');
-    // ~50% of 34,242,586
-    expect(text).toMatch(/Loading DuckDB 50%/);
-  });
+        const text = visibleText();
+        expect(text).toMatch(/Loading DuckDB \d+%/);
+        expect(text).not.toContain("Starting DuckDB");
+        // ~50% of 34,242,586
+        expect(text).toMatch(/Loading DuckDB 50%/);
+    });
 
-  it('puts the percentage on the progressbar, NOT in the live region', () => {
-    renderWith(
-      // Exactly 25% of the decoded size: the percentage FLOORS, so an
-      // approximate quarter lands on 24 and would assert the wrong thing.
-      booting({ loaded: 8_560_646.5, decoded: 34_242_586, firstEventAt: Date.now() - 9_000 }),
-    );
+    it("puts the percentage on the progressbar, NOT in the live region", () => {
+        renderWith(
+            // Exactly 25% of the decoded size: the percentage FLOORS, so an
+            // approximate quarter lands on 24 and would assert the wrong thing.
+            booting({
+                loaded: 8_560_646.5,
+                decoded: 34_242_586,
+                firstEventAt: Date.now() - 9_000,
+            }),
+        );
 
-    // The machine-readable value is on the bar.
-    const bar = screen.getByRole('progressbar');
-    expect(bar.getAttribute('aria-valuenow')).toBe('25');
-    expect(bar.getAttribute('aria-valuetext')).toMatch(/^25%/);
+        // The machine-readable value is on the bar.
+        const bar = screen.getByRole("progressbar");
+        expect(bar.getAttribute("aria-valuenow")).toBe("25");
+        expect(bar.getAttribute("aria-valuetext")).toMatch(/^25%/);
 
-    // And the announcement is still the static sentence — no number in it.
-    const live = document.querySelector('[aria-live="polite"].sr-only');
-    expect(live?.textContent?.trim()).toBe('Loading the DuckDB engine.');
-  });
+        // And the announcement is still the static sentence — no number in it.
+        const live = document.querySelector('[aria-live="polite"].sr-only');
+        expect(live?.textContent?.trim()).toBe("Loading the DuckDB engine.");
+    });
 
-  /**
-   * The defect this pins: the percentage used to live inside the
-   * `aria-live="polite"` sentence, so a throttled 45 s boot re-announced on every
-   * store write — hundreds of interruptions, each more useless than the last.
-   *
-   * 100 progress updates must produce AT MOST ONE change to the live region's
-   * text. "At most one" rather than "zero" because the phase transition into
-   * `booting` is legitimately announced once; what must not happen is a change
-   * per update.
-   */
-  it('100 progress updates change the live region at most once', () => {
-    const DECODED = 34_242_586;
-
-    /*
-     * Text sampling per render, NOT a MutationObserver.
+    /**
+     * The defect this pins: the percentage used to live inside the
+     * `aria-live="polite"` sentence, so a throttled 45 s boot re-announced on every
+     * store write — hundreds of interruptions, each more useless than the last.
      *
-     * Two instruments were tried and both are wrong here:
-     *
-     *  - An observer bound to the sr-only span: React may REPLACE that node rather
-     *    than mutate its text, so the observer watches a detached element and
-     *    reports zero changes no matter what the component does.
-     *  - An observer on the wrapper: still dependent on microtask delivery, which
-     *    a synchronous loop never reaches, so `disconnect()` discards every queued
-     *    record. Verified by breaking the markup and watching the test pass.
-     *
-     * Sampling the text after each render measures the property directly — "how
-     * many distinct announcements were there" — with no delivery timing in the way.
-     *
-     * Fake timers and no `__reset()` in the loop, because:
-     *  1. the store throttles progress writes to <=10/s with a trailing write, so
-     *     100 synchronous reports collapse into one and the badge never re-renders;
-     *  2. `__reset()` clears the subscriber set, so the badge would stop receiving
-     *     updates after the first iteration and every later "no change" would be
-     *     measuring a component that is no longer subscribed.
+     * 100 progress updates must produce AT MOST ONE change to the live region's
+     * text. "At most one" rather than "zero" because the phase transition into
+     * `booting` is legitimately announced once; what must not happen is a change
+     * per update.
      */
-    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
-    try {
-      engineStore.__reset();
-      engineStore.startBooting({ host: 'jsdelivr', decoded: DECODED, mode: 'auto' });
-      const { rerender } = render(<EngineBadge now={Date.now()} />);
+    it("100 progress updates change the live region at most once", () => {
+        const DECODED = 34_242_586;
 
-      const liveSel = '[aria-live="polite"].sr-only';
-      const liveText = () => (document.querySelector(liveSel)?.textContent ?? '').trim();
+        /*
+         * Text sampling per render, NOT a MutationObserver.
+         *
+         * Two instruments were tried and both are wrong here:
+         *
+         *  - An observer bound to the sr-only span: React may REPLACE that node rather
+         *    than mutate its text, so the observer watches a detached element and
+         *    reports zero changes no matter what the component does.
+         *  - An observer on the wrapper: still dependent on microtask delivery, which
+         *    a synchronous loop never reaches, so `disconnect()` discards every queued
+         *    record. Verified by breaking the markup and watching the test pass.
+         *
+         * Sampling the text after each render measures the property directly — "how
+         * many distinct announcements were there" — with no delivery timing in the way.
+         *
+         * Fake timers and no `__reset()` in the loop, because:
+         *  1. the store throttles progress writes to <=10/s with a trailing write, so
+         *     100 synchronous reports collapse into one and the badge never re-renders;
+         *  2. `__reset()` clears the subscriber set, so the badge would stop receiving
+         *     updates after the first iteration and every later "no change" would be
+         *     measuring a component that is no longer subscribed.
+         */
+        vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+        try {
+            engineStore.__reset();
+            engineStore.startBooting({
+                host: "jsdelivr",
+                decoded: DECODED,
+                mode: "auto",
+            });
+            const { rerender } = render(<EngineBadge now={Date.now()} />);
 
-      const announcements: string[] = [liveText()];
-      const barValues: Array<string | null> = [];
+            const liveSel = '[aria-live="polite"].sr-only';
+            const liveText = () =>
+                (document.querySelector(liveSel)?.textContent ?? "").trim();
 
-      for (let i = 1; i <= 100; i += 1) {
-        act(() => {
-          engineStore.reportProgress(Math.round((i / 100) * DECODED));
-          // Past the throttle window, so this write is committed, not queued.
-          vi.advanceTimersByTime(100);
-        });
-        rerender(<EngineBadge now={Date.now() + i * 100} />);
+            const announcements: string[] = [liveText()];
+            const barValues: Array<string | null> = [];
 
-        announcements.push(liveText());
-        barValues.push(screen.getByRole('progressbar').getAttribute('aria-valuenow'));
-      }
+            for (let i = 1; i <= 100; i += 1) {
+                act(() => {
+                    engineStore.reportProgress(Math.round((i / 100) * DECODED));
+                    // Past the throttle window, so this write is committed, not queued.
+                    vi.advanceTimersByTime(100);
+                });
+                rerender(<EngineBadge now={Date.now() + i * 100} />);
 
-      // Vacuity guard: the progressbar must have carried MANY DISTINCT values. If
-      // the component never re-rendered, every sample is identical and the
-      // "at most one announcement" result below would mean nothing.
-      const distinctBarValues = new Set(barValues.filter((v) => v !== null));
-      expect(
-        distinctBarValues.size,
-        `the progressbar showed only ${distinctBarValues.size} distinct value(s) across ` +
-          '100 updates — the component was not re-rendering, so this test proves nothing',
-      ).toBeGreaterThan(50);
+                announcements.push(liveText());
+                barValues.push(
+                    screen
+                        .getByRole("progressbar")
+                        .getAttribute("aria-valuenow"),
+                );
+            }
 
-      const transitions = announcements.filter((t, i) => i > 0 && t !== announcements[i - 1]).length;
-      expect(
-        transitions,
-        `the live region changed ${transitions} times across 100 progress updates ` +
-          `(saw: ${[...new Set(announcements)].slice(0, 4).map((t) => JSON.stringify(t)).join(', ')}) — ` +
-          'it must carry the phase only, never the percentage',
-      ).toBeLessThanOrEqual(1);
+            // Vacuity guard: the progressbar must have carried MANY DISTINCT values. If
+            // the component never re-rendered, every sample is identical and the
+            // "at most one announcement" result below would mean nothing.
+            const distinctBarValues = new Set(
+                barValues.filter((v) => v !== null),
+            );
+            expect(
+                distinctBarValues.size,
+                `the progressbar showed only ${distinctBarValues.size} distinct value(s) across ` +
+                    "100 updates — the component was not re-rendering, so this test proves nothing",
+            ).toBeGreaterThan(50);
 
-      // And it is still the static sentence, not the last percentage.
-      expect(liveText()).toBe('Loading the DuckDB engine.');
-    } finally {
-      vi.useRealTimers();
-    }
-  });
+            const transitions = announcements.filter(
+                (t, i) => i > 0 && t !== announcements[i - 1],
+            ).length;
+            expect(
+                transitions,
+                `the live region changed ${transitions} times across 100 progress updates ` +
+                    `(saw: ${[...new Set(announcements)]
+                        .slice(0, 4)
+                        .map((t) => JSON.stringify(t))
+                        .join(", ")}) — ` +
+                    "it must carry the phase only, never the percentage",
+            ).toBeLessThanOrEqual(1);
 
-  it('shows an ETA only after 5 s of data time', () => {
-    // The store stamps firstEventAt from Date.now() when the first progress
-    // report lands, so elapsed "data time" is simulated through the badge's
-    // `now` prop rather than by pre-setting the timestamp.
+            // And it is still the static sentence, not the last percentage.
+            expect(liveText()).toBe("Loading the DuckDB engine.");
+        } finally {
+            vi.useRealTimers();
+        }
+    });
 
-    // 2 s of data time: below the ETA threshold, so no estimate.
-    const early = Date.now();
-    renderWith(booting({ loaded: 5_000_000, decoded: 34_242_586 }), early + 2_000);
-    expect(visibleText()).not.toMatch(/s left/);
+    it("shows an ETA only after 5 s of data time", () => {
+        // The store stamps firstEventAt from Date.now() when the first progress
+        // report lands, so elapsed "data time" is simulated through the badge's
+        // `now` prop rather than by pre-setting the timestamp.
 
-    cleanup();
-    engineStore.__reset();
+        // 2 s of data time: below the ETA threshold, so no estimate.
+        const early = Date.now();
+        renderWith(
+            booting({ loaded: 5_000_000, decoded: 34_242_586 }),
+            early + 2_000,
+        );
+        expect(visibleText()).not.toMatch(/s left/);
 
-    // 10 s of data time at ~2 MB/s: the remaining 14 MB projects to ~7 s,
-    // comfortably inside the 1-hour sanity bound.
-    const later = Date.now();
-    renderWith(booting({ loaded: 20_000_000, decoded: 34_242_586 }), later + 10_000);
-    expect(visibleText()).toMatch(/~\d+ s left/);
-  });
+        cleanup();
+        engineStore.__reset();
 
-  it('never renders an ETA when the decoded size is unknown', () => {
-    const t = Date.now();
-    renderWith(booting({ loaded: 5_000_000, decoded: null }), t + 30_000);
-    const text = visibleText();
-    expect(text).toContain('Loading DuckDB');
-    expect(text).not.toMatch(/\d+\s*%/);
-    expect(text).not.toMatch(/s left/);
-  });
+        // 10 s of data time at ~2 MB/s: the remaining 14 MB projects to ~7 s,
+        // comfortably inside the 1-hour sanity bound.
+        const later = Date.now();
+        renderWith(
+            booting({ loaded: 20_000_000, decoded: 34_242_586 }),
+            later + 10_000,
+        );
+        expect(visibleText()).toMatch(/~\d+ s left/);
+    });
+
+    it("never renders an ETA when the decoded size is unknown", () => {
+        const t = Date.now();
+        renderWith(booting({ loaded: 5_000_000, decoded: null }), t + 30_000);
+        const text = visibleText();
+        expect(text).toContain("Loading DuckDB");
+        expect(text).not.toMatch(/\d+\s*%/);
+        expect(text).not.toMatch(/s left/);
+    });
 });
 
+describe("EngineBadge — waiting for the scene gate", () => {
+    beforeEach(() => {
+        engineStore.__reset();
+        vi.mocked(enableEngine).mockClear();
+    });
+    afterEach(() => {
+        cleanup();
+        engineStore.__reset();
+    });
 
-describe('EngineBadge — waiting for the scene gate', () => {
-  beforeEach(() => {
-    engineStore.__reset();
-    vi.mocked(enableEngine).mockClear();
-  });
-  afterEach(() => {
-    cleanup();
-    engineStore.__reset();
-  });
+    /**
+     * When an automatic (eager or idle) boot is queued behind the scene gate, the
+     * engine is deliberately NOT loading yet. The badge has to say that without
+     * making two false claims:
+     *
+     *   - "unavailable" / "failed" — nothing has failed, and the engine is about to
+     *     load on its own;
+     *   - a progress bar or a percentage — no bytes are moving yet, so any number
+     *     would be invented.
+     *
+     * It also has to keep an obvious way to skip the wait.
+     */
 
-  /**
-   * When an automatic (eager or idle) boot is queued behind the scene gate, the
-   * engine is deliberately NOT loading yet. The badge has to say that without
-   * making two false claims:
-   *
-   *   - "unavailable" / "failed" — nothing has failed, and the engine is about to
-   *     load on its own;
-   *   - a progress bar or a percentage — no bytes are moving yet, so any number
-   *     would be invented.
-   *
-   * It also has to keep an obvious way to skip the wait.
-   */
+    it("says the engine loads after the globe instead of reading unavailable", () => {
+        renderWith({ phase: "deferred", reason: "scene" });
 
-  it('says the engine loads after the globe instead of reading unavailable', () => {
-    renderWith({ phase: 'deferred', reason: 'scene' });
+        const text = visibleText();
+        expect(text).toContain("Client-side model");
+        expect(text).toContain("DuckDB loads after the globe");
 
-    const text = visibleText();
-    expect(text).toContain('Client-side model');
-    expect(text).toContain('DuckDB loads after the globe');
+        // Neither false claim.
+        expect(text).not.toMatch(/unavailable/i);
+        expect(text).not.toMatch(/could not be reached/i);
+        expect(text).not.toMatch(/too slow/i);
+    });
 
-    // Neither false claim.
-    expect(text).not.toMatch(/unavailable/i);
-    expect(text).not.toMatch(/could not be reached/i);
-    expect(text).not.toMatch(/too slow/i);
-  });
+    it("shows NO progress bar and NO percentage while waiting", () => {
+        renderWith({ phase: "deferred", reason: "scene" });
 
-  it('shows NO progress bar and NO percentage while waiting', () => {
-    renderWith({ phase: 'deferred', reason: 'scene' });
+        expect(visibleText()).not.toMatch(/\d+\s*%/);
+        expect(visibleText()).not.toMatch(/s left/);
 
-    expect(visibleText()).not.toMatch(/\d+\s*%/);
-    expect(visibleText()).not.toMatch(/s left/);
+        // No aria-busy: the region is not busy, it is waiting on something else.
+        expect(document.querySelector('[aria-busy="true"]')).toBeNull();
 
-    // No aria-busy: the region is not busy, it is waiting on something else.
-    expect(document.querySelector('[aria-busy="true"]')).toBeNull();
+        // No progress track at all. The determinate/indeterminate bars in the booting
+        // phase are the only elements carrying these classes.
+        expect(document.querySelector(".animate-pulse")).toBeNull();
+        expect(
+            document.querySelector(".bg-sky-400.transition-\\[width\\]"),
+        ).toBeNull();
+    });
 
-    // No progress track at all. The determinate/indeterminate bars in the booting
-    // phase are the only elements carrying these classes.
-    expect(document.querySelector('.animate-pulse')).toBeNull();
-    expect(document.querySelector('.bg-sky-400.transition-\\[width\\]')).toBeNull();
-  });
+    it("offers a clickable Load button that bypasses the gate", () => {
+        renderWith({ phase: "deferred", reason: "scene" });
 
-  it('offers a clickable Load button that bypasses the gate', () => {
-    renderWith({ phase: 'deferred', reason: 'scene' });
+        const button = screen.getByRole("button");
+        expect(button.textContent).toContain("Load now");
+        // 44px minimum touch target, same as every other action in the deck.
+        expect(button.className).toContain("min-h-[44px]");
 
-    const button = screen.getByRole('button');
-    expect(button.textContent).toContain('Load now');
-    // 44px minimum touch target, same as every other action in the deck.
-    expect(button.className).toContain('min-h-[44px]');
+        // A user who wants the engine immediately must be able to say so, and the
+        // click must reach the gate-bypassing entry point.
+        fireEvent.click(button);
+        expect(enableEngine).toHaveBeenCalledTimes(1);
+    });
 
-    // A user who wants the engine immediately must be able to say so, and the
-    // click must reach the gate-bypassing entry point.
-    fireEvent.click(button);
-    expect(enableEngine).toHaveBeenCalledTimes(1);
-  });
+    it("announces the queued boot as one sentence, not as a failure", () => {
+        renderWith({ phase: "deferred", reason: "scene" });
 
-  it('announces the queued boot as one sentence, not as a failure', () => {
-    renderWith({ phase: 'deferred', reason: 'scene' });
+        const live = document.querySelector('[aria-live="polite"].sr-only');
+        expect(live).not.toBeNull();
+        const sentence = (live?.textContent ?? "").replace(/\s+/g, " ").trim();
 
-    const live = document.querySelector('[aria-live="polite"].sr-only');
-    expect(live).not.toBeNull();
-    const sentence = (live?.textContent ?? '').replace(/\s+/g, ' ').trim();
+        expect(sentence).toMatch(/Using the built-in model/);
+        expect(sentence).toMatch(
+            /will load automatically once the globe has finished loading/,
+        );
+        expect(sentence).toMatch(/about 7 megabytes/);
+        // Still no invented number, even for a screen reader.
+        expect(sentence).not.toMatch(/\d+\s*percent/);
+    });
 
-    expect(sentence).toMatch(/Using the built-in model/);
-    expect(sentence).toMatch(/will load automatically once the globe has finished loading/);
-    expect(sentence).toMatch(/about 7 megabytes/);
-    // Still no invented number, even for a screen reader.
-    expect(sentence).not.toMatch(/\d+\s*percent/);
-  });
+    it('the policy reason keeps its unmistakable "Load DuckDB" call to action', () => {
+        renderWith({ phase: "deferred", reason: "policy" });
 
-  it('the policy reason keeps its unmistakable "Load DuckDB" call to action', () => {
-    renderWith({ phase: 'deferred', reason: 'policy' });
-
-    // Same button shape, different claim: with on-demand nothing is queued, so
-    // the label must not promise an automatic load.
-    expect(visibleText()).toContain('Load DuckDB');
-    expect(visibleText()).not.toContain('loads after the globe');
-    expect(document.querySelector('[aria-live="polite"].sr-only')?.textContent).toMatch(
-      /is not loaded/,
-    );
-  });
+        // Same button shape, different claim: with on-demand nothing is queued, so
+        // the label must not promise an automatic load.
+        expect(visibleText()).toContain("Load DuckDB");
+        expect(visibleText()).not.toContain("loads after the globe");
+        expect(
+            document.querySelector('[aria-live="polite"].sr-only')?.textContent,
+        ).toMatch(/is not loaded/);
+    });
 });
 
-describe('EngineBadge — other phases unchanged', () => {
-  afterEach(() => {
-    cleanup();
-    engineStore.__reset();
-  });
+describe("EngineBadge — other phases unchanged", () => {
+    afterEach(() => {
+        cleanup();
+        engineStore.__reset();
+    });
 
-  it('deferred offers the opt-in button with the wire size', () => {
-    renderWith({ phase: 'deferred', reason: 'policy' });
-    expect(screen.getByRole('button')).toBeTruthy();
-    expect(visibleText()).toMatch(/Load DuckDB \(~7 MB\)/);
-    expect(document.querySelector('[aria-live="polite"].sr-only')?.textContent).toMatch(
-      /built-in model/,
-    );
-  });
+    it("deferred offers the opt-in button with the wire size", () => {
+        renderWith({ phase: "deferred", reason: "policy" });
+        expect(screen.getByRole("button")).toBeTruthy();
+        expect(visibleText()).toMatch(/Load DuckDB \(~7 MB\)/);
+        expect(
+            document.querySelector('[aria-live="polite"].sr-only')?.textContent,
+        ).toMatch(/built-in model/);
+    });
 
-  it('ready shows host and boot time visually', () => {
-    renderWith({ phase: 'ready', host: 'jsdelivr', bootMs: 1234 });
-    const text = visibleText();
-    expect(text).toContain('DuckDB-WASM');
-    expect(text).toContain('jsdelivr');
-    expect(text).toContain('1234 ms');
-  });
+    it("ready shows host and boot time visually", () => {
+        renderWith({ phase: "ready", host: "jsdelivr", bootMs: 1234 });
+        const text = visibleText();
+        expect(text).toContain("DuckDB-WASM");
+        expect(text).toContain("jsdelivr");
+        expect(text).toContain("1234 ms");
+    });
 
-  it('ready announces one full sentence, not concatenated spans', () => {
-    renderWith({ phase: 'ready', host: 'jsdelivr', bootMs: 28 });
-    const live = document.querySelector('[aria-live="polite"].sr-only');
-    expect(live?.textContent).toBe('DuckDB engine ready, served from jsdelivr, 28 milliseconds.');
-    // The old failure mode: the VISIBLE text glued the spans together with no
-    // separators. The sr-only sentence is what fixes the announcement, so this
-    // asserts the accessible name, not the raw concatenation.
-    expect(live?.textContent ?? '').not.toMatch(/DuckDB-WASMjsdelivr/);
-  });
+    it("ready announces one full sentence, not concatenated spans", () => {
+        renderWith({ phase: "ready", host: "jsdelivr", bootMs: 28 });
+        const live = document.querySelector('[aria-live="polite"].sr-only');
+        expect(live?.textContent).toBe(
+            "DuckDB engine ready, served from jsdelivr, 28 milliseconds.",
+        );
+        // The old failure mode: the VISIBLE text glued the spans together with no
+        // separators. The sr-only sentence is what fixes the announcement, so this
+        // asserts the accessible name, not the raw concatenation.
+        expect(live?.textContent ?? "").not.toMatch(/DuckDB-WASMjsdelivr/);
+    });
 
-  it('every visible span in the ready badge is aria-hidden', () => {
-    renderWith({ phase: 'ready', host: 'unpkg', bootMs: 99 });
+    it("every visible span in the ready badge is aria-hidden", () => {
+        renderWith({ phase: "ready", host: "unpkg", bootMs: 99 });
 
-    // Locate the badge by its sr-only sentence, then walk up to the wrapper.
-    // Escaping Tailwind's `min-h-[44px]` inside a CSS selector is fragile, so the
-    // structure is found by relationship instead.
-    const live = document.querySelector('[aria-live="polite"].sr-only');
-    expect(live, 'the sr-only sentence must exist in the ready phase').not.toBeNull();
+        // Locate the badge by its sr-only sentence, then walk up to the wrapper.
+        // Escaping Tailwind's `min-h-[44px]` inside a CSS selector is fragile, so the
+        // structure is found by relationship instead.
+        const live = document.querySelector('[aria-live="polite"].sr-only');
+        expect(
+            live,
+            "the sr-only sentence must exist in the ready phase",
+        ).not.toBeNull();
 
-    const wrapper = live?.closest('div');
-    expect(wrapper, 'the sr-only sentence must sit inside the badge wrapper').not.toBeNull();
+        const wrapper = live?.closest("div");
+        expect(
+            wrapper,
+            "the sr-only sentence must sit inside the badge wrapper",
+        ).not.toBeNull();
 
-    const spans = [...(wrapper?.querySelectorAll('span') ?? [])].filter(
-      (el) => !el.classList.contains('sr-only'),
-    );
-    expect(spans.length, 'the ready badge should have visible spans').toBeGreaterThan(0);
-    for (const el of spans) expect(el.getAttribute('aria-hidden')).toBe('true');
-  });
+        const spans = [...(wrapper?.querySelectorAll("span") ?? [])].filter(
+            (el) => !el.classList.contains("sr-only"),
+        );
+        expect(
+            spans.length,
+            "the ready badge should have visible spans",
+        ).toBeGreaterThan(0);
+        for (const el of spans)
+            expect(el.getAttribute("aria-hidden")).toBe("true");
+    });
 
-  it('too-slow offers "Load anyway"', () => {
-    renderWith({ phase: 'failed', reason: 'too-slow' });
-    const t = visibleText();
-    expect(t).toMatch(/Needs a faster connection/);
-    expect(t).toMatch(/Load anyway/);
-    expect(document.querySelector('[aria-live="polite"].sr-only')?.textContent).toMatch(
-      /too slow/,
-    );
-  });
+    it('too-slow offers "Load anyway"', () => {
+        renderWith({ phase: "failed", reason: "too-slow" });
+        const t = visibleText();
+        expect(t).toMatch(/Needs a faster connection/);
+        expect(t).toMatch(/Load anyway/);
+        expect(
+            document.querySelector('[aria-live="polite"].sr-only')?.textContent,
+        ).toMatch(/too slow/);
+    });
 
-  it('unreachable offers Retry', () => {
-    renderWith({ phase: 'failed', reason: 'unreachable' });
-    expect(visibleText()).toMatch(/Retry/);
-    expect(document.querySelector('[aria-live="polite"].sr-only')?.textContent).toMatch(
-      /could not be reached/,
-    );
-  });
+    it("unreachable offers Retry", () => {
+        renderWith({ phase: "failed", reason: "unreachable" });
+        expect(visibleText()).toMatch(/Retry/);
+        expect(
+            document.querySelector('[aria-live="polite"].sr-only')?.textContent,
+        ).toMatch(/could not be reached/);
+    });
 });

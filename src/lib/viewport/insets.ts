@@ -10,14 +10,14 @@
  * registered — and it makes `<FrameOffset>` a no-op until STEP 3 lands.
  */
 
-export type OccluderSide = 'top' | 'right' | 'bottom' | 'left';
+export type OccluderSide = "top" | "right" | "bottom" | "left";
 
 /** CSS pixels of canvas covered on each side. */
 export interface Insets {
-  top: number;
-  right: number;
-  bottom: number;
-  left: number;
+    top: number;
+    right: number;
+    bottom: number;
+    left: number;
 }
 
 export const ZERO_INSETS: Insets = { top: 0, right: 0, bottom: 0, left: 0 };
@@ -27,32 +27,32 @@ const listeners = new Set<() => void>();
 
 /** Current insets. Stable reference between changes, as `useSyncExternalStore` requires. */
 export function getInsets(): Insets {
-  return current;
+    return current;
 }
 
 export function subscribeInsets(listener: () => void): () => void {
-  listeners.add(listener);
-  return () => {
-    listeners.delete(listener);
-  };
+    listeners.add(listener);
+    return () => {
+        listeners.delete(listener);
+    };
 }
 
 /** Test/STEP-3 seam: replace the measured insets and notify subscribers. */
 export function __setInsets(next: Insets): void {
-  if (
-    next.top === current.top &&
-    next.right === current.right &&
-    next.bottom === current.bottom &&
-    next.left === current.left
-  ) {
-    return;
-  }
-  current = next;
-  for (const l of listeners) l();
+    if (
+        next.top === current.top &&
+        next.right === current.right &&
+        next.bottom === current.bottom &&
+        next.left === current.left
+    ) {
+        return;
+    }
+    current = next;
+    for (const l of listeners) l();
 }
 
 /** Test seam: reset to zero. */
 export function __resetInsets(): void {
-  current = ZERO_INSETS;
-  listeners.clear();
+    current = ZERO_INSETS;
+    listeners.clear();
 }

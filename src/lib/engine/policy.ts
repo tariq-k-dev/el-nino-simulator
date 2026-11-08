@@ -13,25 +13,25 @@
  * stubbing `navigator`.
  */
 
-export type BootPolicy = 'eager' | 'idle' | 'on-demand';
+export type BootPolicy = "eager" | "idle" | "on-demand";
 
 /** The subset of `NetworkInformation` this decision needs. */
 export interface ConnectionLike {
-  saveData?: boolean;
-  effectiveType?: string;
-  downlink?: number;
+    saveData?: boolean;
+    effectiveType?: string;
+    downlink?: number;
 }
 
 export interface DeviceSignals {
-  connection?: ConnectionLike;
-  /** `navigator.deviceMemory` in GB. Undefined on Safari and Firefox. */
-  deviceMemory?: number;
-  /** True for a coarse pointer (touch-only device). */
-  coarse?: boolean;
+    connection?: ConnectionLike;
+    /** `navigator.deviceMemory` in GB. Undefined on Safari and Firefox. */
+    deviceMemory?: number;
+    /** True for a coarse pointer (touch-only device). */
+    coarse?: boolean;
 }
 
 /** Network types where a 6.45 MiB fetch is not worth blocking first paint on. */
-const SLOW_EFFECTIVE_TYPES = new Set(['slow-2g', '2g', '3g']);
+const SLOW_EFFECTIVE_TYPES = new Set(["slow-2g", "2g", "3g"]);
 
 /** Below this downlink (Mbps) treat the connection as constrained. */
 export const SLOW_DOWNLINK_MBPS = 1.5;
@@ -55,24 +55,37 @@ export const LOW_MEMORY_GB = 2;
  * means those browsers boot eagerly unless saveData/effectiveType says otherwise
  * — which is the right default for the majority of users.
  */
-export function decideBootPolicy({ connection, deviceMemory, coarse }: DeviceSignals = {}): BootPolicy {
-  if (connection?.saveData === true) return 'on-demand';
+export function decideBootPolicy({
+    connection,
+    deviceMemory,
+    coarse,
+}: DeviceSignals = {}): BootPolicy {
+    if (connection?.saveData === true) return "on-demand";
 
-  const effectiveType = connection?.effectiveType;
-  if (effectiveType && SLOW_EFFECTIVE_TYPES.has(effectiveType)) return 'on-demand';
+    const effectiveType = connection?.effectiveType;
+    if (effectiveType && SLOW_EFFECTIVE_TYPES.has(effectiveType))
+        return "on-demand";
 
-  // `downlink` is Mbps and 0 means "unknown" in some Chrome versions, so only a
-  // positive value below the threshold is treated as a constraint.
-  const downlink = connection?.downlink;
-  if (typeof downlink === 'number' && downlink > 0 && downlink < SLOW_DOWNLINK_MBPS) {
-    return 'on-demand';
-  }
+    // `downlink` is Mbps and 0 means "unknown" in some Chrome versions, so only a
+    // positive value below the threshold is treated as a constraint.
+    const downlink = connection?.downlink;
+    if (
+        typeof downlink === "number" &&
+        downlink > 0 &&
+        downlink < SLOW_DOWNLINK_MBPS
+    ) {
+        return "on-demand";
+    }
 
-  if (typeof deviceMemory === 'number' && deviceMemory > 0 && deviceMemory <= LOW_MEMORY_GB) {
-    return 'on-demand';
-  }
+    if (
+        typeof deviceMemory === "number" &&
+        deviceMemory > 0 &&
+        deviceMemory <= LOW_MEMORY_GB
+    ) {
+        return "on-demand";
+    }
 
-  if (coarse === true) return 'idle';
+    if (coarse === true) return "idle";
 
-  return 'eager';
+    return "eager";
 }

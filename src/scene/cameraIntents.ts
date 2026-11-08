@@ -24,28 +24,28 @@
 
 /** A complete camera pose. `target` is the orbit aim point, so `lookAt` and the controls agree. */
 export interface CameraPose {
-  position: [number, number, number];
-  target: [number, number, number];
+    position: [number, number, number];
+    target: [number, number, number];
 }
 
 export interface CameraIntents {
-  /** Park the camera at `pose`. Synchronous; returns nothing to await. */
-  setPose(pose: CameraPose): void;
-  /**
-   * Fly to a Niño box by id (step 2.3c-1, C2). `null` clears the selection and returns to default.
-   *
-   * A separate entry point rather than a pose, because the framing depends on the live aspect and
-   * the flight must use the EXISTING tween: the caller supplies only WHICH box, and the director
-   * derives the aim point and the distance from `ninoFraming` at the moment the flight starts.
-   */
-  focusNinoBox(boxId: string | null): void;
+    /** Park the camera at `pose`. Synchronous; returns nothing to await. */
+    setPose(pose: CameraPose): void;
+    /**
+     * Fly to a Niño box by id (step 2.3c-1, C2). `null` clears the selection and returns to default.
+     *
+     * A separate entry point rather than a pose, because the framing depends on the live aspect and
+     * the flight must use the EXISTING tween: the caller supplies only WHICH box, and the director
+     * derives the aim point and the distance from `ninoFraming` at the moment the flight starts.
+     */
+    focusNinoBox(boxId: string | null): void;
 }
 
 let registered: CameraIntents | null = null;
 
 /** Called by the director on mount (and with `null` on unmount). */
 export function registerCameraIntents(intents: CameraIntents | null): void {
-  registered = intents;
+    registered = intents;
 }
 
 /**
@@ -53,12 +53,12 @@ export function registerCameraIntents(intents: CameraIntents | null): void {
  * behaviour already implied: the camera is not written until a director exists to write it.
  */
 export function submitPose(pose: CameraPose): void {
-  registered?.setPose(pose);
+    registered?.setPose(pose);
 }
 
 /** True once a director is registered — lets a probe or a test assert the channel is live. */
 export function hasCameraIntents(): boolean {
-  return registered !== null;
+    return registered !== null;
 }
 
 /**
@@ -68,5 +68,5 @@ export function hasCameraIntents(): boolean {
  * shape; `null` is the clear/return-to-default request.
  */
 export function submitNinoFocus(boxId: string | null): void {
-  registered?.focusNinoBox(boxId);
+    registered?.focusNinoBox(boxId);
 }

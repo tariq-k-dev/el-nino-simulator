@@ -26,14 +26,14 @@
  * `LOCKED_BRANCH_MARKER`, which is the one string that exists only in the locked branch.
  */
 
-import * as THREE from 'three';
-import { EARTH_RADIUS } from '@/scene/constants';
-import { GLOBE_LOOK } from '@/scene/globeLook';
-import { getInsets } from './useInsets';
-import { computeFrame, type Frame } from './frame';
+import * as THREE from "three";
+import { EARTH_RADIUS } from "@/scene/constants";
+import { GLOBE_LOOK } from "@/scene/globeLook";
+import { getInsets } from "./useInsets";
+import { computeFrame, type Frame } from "./frame";
 
 /** `'live'` frames the globe in the free rectangle; `'locked'` writes nothing at all. */
-export type FramingMode = 'live' | 'locked';
+export type FramingMode = "live" | "locked";
 
 /**
  * A string that exists ONLY in the locked branch.
@@ -42,7 +42,7 @@ export type FramingMode = 'live' | 'locked';
  * vacuous. It is returned by `resolveFramingMode`'s locked path (as `LOCKED_BRANCH_MARKER`'s only
  * use) so that `grep` on `dist/assets/*.js` is evidence about emitted code.
  */
-export const LOCKED_BRANCH_MARKER = 'frame-locked-branch-7f3a';
+export const LOCKED_BRANCH_MARKER = "frame-locked-branch-7f3a";
 
 /** The camera's vertical field of view, degrees (`GlobeScene.tsx:220`). */
 export const FOV_DEG = 42;
@@ -57,7 +57,11 @@ export const FOV_DEG = 42;
  * in F1 a lie about a number nobody set.
  */
 export const CAMERA_START = { x: 0, y: 1.15, z: 3.15 } as const;
-export const D0 = new THREE.Vector3(CAMERA_START.x, CAMERA_START.y, CAMERA_START.z).length();
+export const D0 = new THREE.Vector3(
+    CAMERA_START.x,
+    CAMERA_START.y,
+    CAMERA_START.z,
+).length();
 
 /** `<OrbitControls maxDistance>`: the same expression the JSX uses (`GlobeScene.tsx:678`). */
 export const MAX_DISTANCE = EARTH_RADIUS * 5;
@@ -70,7 +74,8 @@ export const MAX_DISTANCE = EARTH_RADIUS * 5;
  * moves the framing with it instead of leaving the disc sized for a pin that no longer exists.
  */
 export const PIN_ENVELOPE =
-  GLOBE_LOOK.pins.anchorRadius * GLOBE_LOOK.pins.idleLift + GLOBE_LOOK.pins.coreOffset;
+    GLOBE_LOOK.pins.anchorRadius * GLOBE_LOOK.pins.idleLift +
+    GLOBE_LOOK.pins.coreOffset;
 
 /** Time constant of the framing ease, seconds (frame-rate independent exponential). */
 export const FRAME_TIME_CONSTANT_S = 0.18;
@@ -81,9 +86,14 @@ export const FRAME_TIME_CONSTANT_S = 0.18;
  * `isE2E` is passed in rather than read here so the decision can be tested in both directions; the
  * module-level `FRAMING_MODE` below is the only production caller and passes the folded literal.
  */
-export function resolveFramingMode(search: string, isE2E: boolean): FramingMode {
-  if (!isE2E) return 'live';
-  return new URLSearchParams(search).get('framing') === 'live' ? 'live' : 'locked';
+export function resolveFramingMode(
+    search: string,
+    isE2E: boolean,
+): FramingMode {
+    if (!isE2E) return "live";
+    return new URLSearchParams(search).get("framing") === "live"
+        ? "live"
+        : "locked";
 }
 
 /**
@@ -94,12 +104,15 @@ export function resolveFramingMode(search: string, isE2E: boolean): FramingMode 
  * and says so, rather than silently measuring the new framing and blaming the look.
  */
 export const FRAMING_MODE: FramingMode =
-  import.meta.env.VITE_E2E === '1'
-    ? resolveFramingMode(typeof location === 'undefined' ? '' : location.search, true)
-    : ('live' as const);
+    import.meta.env.VITE_E2E === "1"
+        ? resolveFramingMode(
+              typeof location === "undefined" ? "" : location.search,
+              true,
+          )
+        : ("live" as const);
 
 /** Is this page allowed to move the camera? */
-export const IS_LIVE = FRAMING_MODE === 'live';
+export const IS_LIVE = FRAMING_MODE === "live";
 
 /**
  * Is the framing switched off?
@@ -109,7 +122,8 @@ export const IS_LIVE = FRAMING_MODE === 'live';
  * it. `FRAMING_MODE` is 'live' in production anyway, so this is belt and braces for the one thing
  * that must never ship: a code path that exists only for tests.
  */
-export const IS_LOCKED = import.meta.env.VITE_E2E === '1' && FRAMING_MODE !== 'live';
+export const IS_LOCKED =
+    import.meta.env.VITE_E2E === "1" && FRAMING_MODE !== "live";
 
 /** Offsets smaller than this are not worth touching the projection matrix for, in CSS px. */
 export const OFFSET_EPSILON_PX = 0.01;
@@ -124,77 +138,77 @@ export const LAST_FIT_EPSILON = 0.002;
 
 /** What `window.__frame` reports. Every field is something a spec can assert on. */
 export interface FrameProbeState {
-  mode: FramingMode;
-  insets: { top: number; right: number; bottom: number; left: number };
-  free: { x: number; y: number; w: number; h: number };
-  /** Where the rig wants the camera: offset in px, distance in scene units. */
-  target: { dx: number; dy: number; d: number };
-  /** What the camera has NOW — the eased values, not the target. */
-  current: { dx: number; dy: number; d: number };
-  /** True when `current` is within 0.05 px and 0.0005 of `target`. */
-  settled: boolean;
-  degenerate: boolean;
-  /** True when `camera.view` is null, i.e. no view offset is installed. */
-  cameraViewIsNull: boolean;
-  /**
-   * Step 3B: the focus machine's state, published so a spec can poll a STATE rather than infer one
-   * from a pose. `'idle'` outside a selection; `'focusing'` while a fly-to is in flight;
-   * `'focused'` once it has arrived or the user took the camera; `'returning'` while the close
-   * animation runs.
-   */
-  focus: 'idle' | 'focusing' | 'focused' | 'returning';
-  /** Step 3B: has a writer other than the fit moved the distance? Gates the fit's distance channel. */
-  userZoomed: boolean;
-  /** Step 3B: the region being targeted, or null. */
-  regionId: string | null;
-  /**
-   * Step 3B2: is the camera at the framed default pose with nothing selected and no user zoom?
-   *
-   * OPTIONAL on purpose. It is a new field of a total type that several existing fixtures build by
-   * hand (`frameProbe.test.ts`'s `liveState()`), and a required field there would force edits to tests
-   * that have nothing to do with this step. A reader that needs it supplies a default (see
-   * `frameProbe.ts`), and the director always publishes it.
-   */
-  viewIsDefault?: boolean;
-  /** Step 3B2: is the planet's spin running? Optional for the same reason. */
-  spinning?: boolean;
-  /**
-   * Step 3B2-FIX1: is a region open (card / drawer)?
-   *
-   * Optional for the same reason as the two above: `frameProbe.test.ts` builds this type by hand. The
-   * director publishes it from the machine and `GlobeScene` publishes it from the `activeRegion` prop, so
-   * the Reset control's enable test never has to infer it from the pose.
-   */
-  hasRegion?: boolean;
-  /** Step 3B2: which focus policy this build runs. Optional for the same reason. */
-  focusPolicy?: 'locked' | 'live';
-  /**
-   * Step 3-MOBILE1: which layout the page is running.
-   *
-   * OPTIONAL for the same reason as the four fields above — several fixtures build this type by hand, and a
-   * required field would force edits in files this step must not touch. A reader defaults it to `'desktop'`,
-   * which is the pre-step behaviour and stays true on every existing spec viewport.
-   */
-  layoutMode?: 'desktop' | 'mobile' | 'portrait' | 'phoneLandscape';
-  /** Step 3-MOBILE1: the mobile window offset in px, positive-down as `setViewOffset` takes it. */
-  viewOffsetY?: number;
-  /** Step MOBILE2: the horizontal half of the lens shift, positive-right as `setViewOffset` takes it. */
-  viewOffsetX?: number;
-  /** Step MOBILE2: `controls.maxDistance` as the director last wrote it. 5 on desktop. */
-  dMax?: number;
-  /** Step MOBILE2: the fit distance (`dContain` on mobile). */
-  dFit?: number;
-  /** Step MOBILE2: the radius budget `Rb` the fit was computed from. */
-  radiusBudget?: number;
-  /** Step MOBILE2: the published compact-header bottom, px. */
-  headerBottom?: number;
-  /** Step 3-MOBILE1: true when `dMax` bound the mobile fit, so the disc is bigger than `rMax` allows. */
-  clampedByMax?: boolean;
+    mode: FramingMode;
+    insets: { top: number; right: number; bottom: number; left: number };
+    free: { x: number; y: number; w: number; h: number };
+    /** Where the rig wants the camera: offset in px, distance in scene units. */
+    target: { dx: number; dy: number; d: number };
+    /** What the camera has NOW — the eased values, not the target. */
+    current: { dx: number; dy: number; d: number };
+    /** True when `current` is within 0.05 px and 0.0005 of `target`. */
+    settled: boolean;
+    degenerate: boolean;
+    /** True when `camera.view` is null, i.e. no view offset is installed. */
+    cameraViewIsNull: boolean;
+    /**
+     * Step 3B: the focus machine's state, published so a spec can poll a STATE rather than infer one
+     * from a pose. `'idle'` outside a selection; `'focusing'` while a fly-to is in flight;
+     * `'focused'` once it has arrived or the user took the camera; `'returning'` while the close
+     * animation runs.
+     */
+    focus: "idle" | "focusing" | "focused" | "returning";
+    /** Step 3B: has a writer other than the fit moved the distance? Gates the fit's distance channel. */
+    userZoomed: boolean;
+    /** Step 3B: the region being targeted, or null. */
+    regionId: string | null;
+    /**
+     * Step 3B2: is the camera at the framed default pose with nothing selected and no user zoom?
+     *
+     * OPTIONAL on purpose. It is a new field of a total type that several existing fixtures build by
+     * hand (`frameProbe.test.ts`'s `liveState()`), and a required field there would force edits to tests
+     * that have nothing to do with this step. A reader that needs it supplies a default (see
+     * `frameProbe.ts`), and the director always publishes it.
+     */
+    viewIsDefault?: boolean;
+    /** Step 3B2: is the planet's spin running? Optional for the same reason. */
+    spinning?: boolean;
+    /**
+     * Step 3B2-FIX1: is a region open (card / drawer)?
+     *
+     * Optional for the same reason as the two above: `frameProbe.test.ts` builds this type by hand. The
+     * director publishes it from the machine and `GlobeScene` publishes it from the `activeRegion` prop, so
+     * the Reset control's enable test never has to infer it from the pose.
+     */
+    hasRegion?: boolean;
+    /** Step 3B2: which focus policy this build runs. Optional for the same reason. */
+    focusPolicy?: "locked" | "live";
+    /**
+     * Step 3-MOBILE1: which layout the page is running.
+     *
+     * OPTIONAL for the same reason as the four fields above — several fixtures build this type by hand, and a
+     * required field would force edits in files this step must not touch. A reader defaults it to `'desktop'`,
+     * which is the pre-step behaviour and stays true on every existing spec viewport.
+     */
+    layoutMode?: "desktop" | "mobile" | "portrait" | "phoneLandscape";
+    /** Step 3-MOBILE1: the mobile window offset in px, positive-down as `setViewOffset` takes it. */
+    viewOffsetY?: number;
+    /** Step MOBILE2: the horizontal half of the lens shift, positive-right as `setViewOffset` takes it. */
+    viewOffsetX?: number;
+    /** Step MOBILE2: `controls.maxDistance` as the director last wrote it. 5 on desktop. */
+    dMax?: number;
+    /** Step MOBILE2: the fit distance (`dContain` on mobile). */
+    dFit?: number;
+    /** Step MOBILE2: the radius budget `Rb` the fit was computed from. */
+    radiusBudget?: number;
+    /** Step MOBILE2: the published compact-header bottom, px. */
+    headerBottom?: number;
+    /** Step 3-MOBILE1: true when `dMax` bound the mobile fit, so the disc is bigger than `rMax` allows. */
+    clampedByMax?: boolean;
 }
 
 /** The mutable slot `FrameRig` writes into, so `__frame` can read the last rendered frame. */
 export interface FrameProbeSink {
-  state: FrameProbeState;
+    state: FrameProbeState;
 }
 
 /**
@@ -203,13 +217,16 @@ export interface FrameProbeSink {
  * The single place the three measured constants (`D0`, `MAX_DISTANCE`, `PIN_ENVELOPE`) are supplied,
  * so the rig and any probe that wants to print the target cannot disagree about the inputs.
  */
-export function frameNow(viewport: { w: number; h: number }, fovDeg: number = FOV_DEG): Frame {
-  return computeFrame({
-    viewport,
-    insets: getInsets(),
-    fovDeg,
-    d0: D0,
-    dMax: MAX_DISTANCE,
-    re: PIN_ENVELOPE,
-  });
+export function frameNow(
+    viewport: { w: number; h: number },
+    fovDeg: number = FOV_DEG,
+): Frame {
+    return computeFrame({
+        viewport,
+        insets: getInsets(),
+        fovDeg,
+        d0: D0,
+        dMax: MAX_DISTANCE,
+        re: PIN_ENVELOPE,
+    });
 }

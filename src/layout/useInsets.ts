@@ -33,27 +33,27 @@
  * verifiable on its own — C.5 proves the layout did not move, and that proof is only meaningful if
  * nothing here touches rendering.
  */
-import { useSyncExternalStore } from 'react';
+import { useSyncExternalStore } from "react";
 import {
-  computeInsets,
-  type Insets,
-  type InsetsOptions,
-  type OccluderRect,
-  type Viewport,
-} from './insets';
+    computeInsets,
+    type Insets,
+    type InsetsOptions,
+    type OccluderRect,
+    type Viewport,
+} from "./insets";
 
 /** Selector attribute. One string, so the registry and the markup cannot disagree. */
-export const OCCLUDER_ATTR = 'data-occluder';
+export const OCCLUDER_ATTR = "data-occluder";
 
 /** The result before anything has been measured. */
 export const ZERO_INSETS: Insets = {
-  left: 0,
-  right: 0,
-  top: 0,
-  bottom: 0,
-  free: { x: 0, y: 0, w: 0, h: 0 },
-  degenerate: false,
-  ignored: [],
+    left: 0,
+    right: 0,
+    top: 0,
+    bottom: 0,
+    free: { x: 0, y: 0, w: 0, h: 0 },
+    degenerate: false,
+    ignored: [],
 };
 
 let current: Insets = ZERO_INSETS;
@@ -61,31 +61,31 @@ const listeners = new Set<() => void>();
 
 /** Replace the snapshot and notify ONLY when a number moved. */
 function publish(next: Insets): void {
-  const same =
-    next.left === current.left &&
-    next.right === current.right &&
-    next.top === current.top &&
-    next.bottom === current.bottom &&
-    next.free.x === current.free.x &&
-    next.free.y === current.free.y &&
-    next.free.w === current.free.w &&
-    next.free.h === current.free.h &&
-    next.degenerate === current.degenerate &&
-    next.ignored.length === current.ignored.length;
-  if (same) return;
-  current = next;
-  for (const l of listeners) l();
+    const same =
+        next.left === current.left &&
+        next.right === current.right &&
+        next.top === current.top &&
+        next.bottom === current.bottom &&
+        next.free.x === current.free.x &&
+        next.free.y === current.free.y &&
+        next.free.w === current.free.w &&
+        next.free.h === current.free.h &&
+        next.degenerate === current.degenerate &&
+        next.ignored.length === current.ignored.length;
+    if (same) return;
+    current = next;
+    for (const l of listeners) l();
 }
 
 export function getInsets(): Insets {
-  return current;
+    return current;
 }
 
 export function subscribeInsets(listener: () => void): () => void {
-  listeners.add(listener);
-  return () => {
-    listeners.delete(listener);
-  };
+    listeners.add(listener);
+    return () => {
+        listeners.delete(listener);
+    };
 }
 
 /**
@@ -95,18 +95,24 @@ export function subscribeInsets(listener: () => void): () => void {
  * observation layer can be tested without a browser.
  */
 export function readOccluderRects(doc: Document): OccluderRect[] {
-  const out: OccluderRect[] = [];
-  for (const el of Array.from(doc.querySelectorAll(`[${OCCLUDER_ATTR}]`))) {
-    const id = el.getAttribute(OCCLUDER_ATTR) ?? '';
-    const b = el.getBoundingClientRect();
-    out.push({ id, left: b.left, top: b.top, right: b.right, bottom: b.bottom });
-  }
-  return out;
+    const out: OccluderRect[] = [];
+    for (const el of Array.from(doc.querySelectorAll(`[${OCCLUDER_ATTR}]`))) {
+        const id = el.getAttribute(OCCLUDER_ATTR) ?? "";
+        const b = el.getBoundingClientRect();
+        out.push({
+            id,
+            left: b.left,
+            top: b.top,
+            right: b.right,
+            bottom: b.bottom,
+        });
+    }
+    return out;
 }
 
 /** Read the viewport size. */
 export function readViewport(win: Window): Viewport {
-  return { w: win.innerWidth, h: win.innerHeight };
+    return { w: win.innerWidth, h: win.innerHeight };
 }
 
 /**
@@ -114,10 +120,18 @@ export function readViewport(win: Window): Viewport {
  *
  * Exported for the probe and for tests; the hook below calls it on each trigger.
  */
-export function measureNow(doc: Document, win: Window, options: InsetsOptions = {}): Insets {
-  const next = computeInsets(readViewport(win), readOccluderRects(doc), options);
-  publish(next);
-  return next;
+export function measureNow(
+    doc: Document,
+    win: Window,
+    options: InsetsOptions = {},
+): Insets {
+    const next = computeInsets(
+        readViewport(win),
+        readOccluderRects(doc),
+        options,
+    );
+    publish(next);
+    return next;
 }
 
 /**
@@ -127,61 +141,63 @@ export function measureNow(doc: Document, win: Window, options: InsetsOptions = 
  * comparing it would add a dependency for no behaviour anyone needs yet.
  */
 export function startInsetsObserver(
-  doc: Document,
-  win: Window,
-  options: InsetsOptions = {},
+    doc: Document,
+    win: Window,
+    options: InsetsOptions = {},
 ): () => void {
-  let frame: number | null = null;
+    let frame: number | null = null;
 
-  /** One recompute per frame, however many events fired. */
-  const schedule = () => {
-    if (frame !== null) return;
-    frame = win.requestAnimationFrame(() => {
-      frame = null;
-      measureNow(doc, win, options);
+    /** One recompute per frame, however many events fired. */
+    const schedule = () => {
+        if (frame !== null) return;
+        frame = win.requestAnimationFrame(() => {
+            frame = null;
+            measureNow(doc, win, options);
+        });
+    };
+
+    // Occluders already present, plus any that appear later (the MutationObserver re-registers).
+    const observed = new Map<Element, ResizeObserver>();
+    const resize = new ResizeObserver(schedule);
+
+    const register = () => {
+        for (const el of Array.from(
+            doc.querySelectorAll(`[${OCCLUDER_ATTR}]`),
+        )) {
+            if (observed.has(el)) continue;
+            resize.observe(el);
+            observed.set(el, resize);
+        }
+    };
+
+    const mutations = new MutationObserver(() => {
+        register();
+        schedule();
     });
-  };
+    mutations.observe(doc.body, {
+        childList: true,
+        subtree: true,
+        attributes: true,
+        attributeFilter: [OCCLUDER_ATTR],
+    });
 
-  // Occluders already present, plus any that appear later (the MutationObserver re-registers).
-  const observed = new Map<Element, ResizeObserver>();
-  const resize = new ResizeObserver(schedule);
+    // A transform transition (the drawer) fires transitionend, never ResizeObserver.
+    win.addEventListener("transitionend", schedule, true);
+    win.addEventListener("animationend", schedule, true);
+    win.addEventListener("resize", schedule);
 
-  const register = () => {
-    for (const el of Array.from(doc.querySelectorAll(`[${OCCLUDER_ATTR}]`))) {
-      if (observed.has(el)) continue;
-      resize.observe(el);
-      observed.set(el, resize);
-    }
-  };
-
-  const mutations = new MutationObserver(() => {
     register();
-    schedule();
-  });
-  mutations.observe(doc.body, {
-    childList: true,
-    subtree: true,
-    attributes: true,
-    attributeFilter: [OCCLUDER_ATTR],
-  });
+    measureNow(doc, win, options);
 
-  // A transform transition (the drawer) fires transitionend, never ResizeObserver.
-  win.addEventListener('transitionend', schedule, true);
-  win.addEventListener('animationend', schedule, true);
-  win.addEventListener('resize', schedule);
-
-  register();
-  measureNow(doc, win, options);
-
-  return () => {
-    if (frame !== null) win.cancelAnimationFrame(frame);
-    resize.disconnect();
-    mutations.disconnect();
-    observed.clear();
-    win.removeEventListener('transitionend', schedule, true);
-    win.removeEventListener('animationend', schedule, true);
-    win.removeEventListener('resize', schedule);
-  };
+    return () => {
+        if (frame !== null) win.cancelAnimationFrame(frame);
+        resize.disconnect();
+        mutations.disconnect();
+        observed.clear();
+        win.removeEventListener("transitionend", schedule, true);
+        win.removeEventListener("animationend", schedule, true);
+        win.removeEventListener("resize", schedule);
+    };
 }
 
 /**
@@ -195,5 +211,5 @@ export function startInsetsObserver(
  * needs different options it should pass them to the observer, once, at startup.
  */
 export function useInsets(): Insets {
-  return useSyncExternalStore(subscribeInsets, getInsets, getInsets);
+    return useSyncExternalStore(subscribeInsets, getInsets, getInsets);
 }

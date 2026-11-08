@@ -100,8 +100,8 @@ export const LANDSCAPE_ROW_GAP_PX = 2;
 
 /** How many rows the landscape header occupies at a viewport width. Width only — never content. */
 export function landscapeHeaderRows(w: number): 1 | 2 {
-  const W = Number.isFinite(w) && w > 0 ? w : 0;
-  return W >= LANDSCAPE_ONE_ROW_MIN_W ? 1 : 2;
+    const W = Number.isFinite(w) && w > 0 ? w : 0;
+    return W >= LANDSCAPE_ONE_ROW_MIN_W ? 1 : 2;
 }
 
 /**
@@ -112,21 +112,27 @@ export function landscapeHeaderRows(w: number): 1 | 2 {
  * the DOM's own `getBoundingClientRect().bottom` — at three moments per row — rather than trusting it.
  */
 export function landscapeHeaderHeight(w: number): number {
-  if (landscapeHeaderRows(w) === 1) {
-    return LANDSCAPE_PAD_PX * 2 + Math.max(LANDSCAPE_CONTROL_H, LANDSCAPE_IDENTITY_H);
-  }
-  return (
-    LANDSCAPE_PAD_PX * 2 + LANDSCAPE_IDENTITY_H + LANDSCAPE_ROW_GAP_PX + LANDSCAPE_CONTROL_H
-  );
+    if (landscapeHeaderRows(w) === 1) {
+        return (
+            LANDSCAPE_PAD_PX * 2 +
+            Math.max(LANDSCAPE_CONTROL_H, LANDSCAPE_IDENTITY_H)
+        );
+    }
+    return (
+        LANDSCAPE_PAD_PX * 2 +
+        LANDSCAPE_IDENTITY_H +
+        LANDSCAPE_ROW_GAP_PX +
+        LANDSCAPE_CONTROL_H
+    );
 }
 
 /** The horizontal content a one-row landscape header needs, px — the budget `LANDSCAPE_ONE_ROW_MIN_W` clears. */
 export function landscapeOneRowWidth(): number {
-  const PAD = 12;
-  const GAP = 12;
-  /* badge 20 + the identity row's own gap 8 + the h1's measured natural width 229.06 */
-  const IDENTITY = LANDSCAPE_IDENTITY_H + 8 + 229.06;
-  /* the three controls icon-only: two 44 px unit buttons + pill chrome 6, then 44 + 6 + 44 */
-  const CONTROLS = 194;
-  return PAD + IDENTITY + GAP + LANDSCAPE_CHIP_W + GAP + CONTROLS + PAD;
+    const PAD = 12;
+    const GAP = 12;
+    /* badge 20 + the identity row's own gap 8 + the h1's measured natural width 229.06 */
+    const IDENTITY = LANDSCAPE_IDENTITY_H + 8 + 229.06;
+    /* the three controls icon-only: two 44 px unit buttons + pill chrome 6, then 44 + 6 + 44 */
+    const CONTROLS = 194;
+    return PAD + IDENTITY + GAP + LANDSCAPE_CHIP_W + GAP + CONTROLS + PAD;
 }

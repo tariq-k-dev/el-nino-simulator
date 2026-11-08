@@ -38,5 +38,5 @@ export const ARRIVE_EPSILON_R = 0.004;
 
 /** `1 - base^dt` — the frame-rate-independent damp factor the fly-to uses. */
 export function easeFactor(base: number, dtS: number): number {
-  return 1 - Math.pow(base, dtS);
+    return 1 - Math.pow(base, dtS);
 }

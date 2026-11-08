@@ -1,9 +1,9 @@
-import { describe, expect, it } from 'vitest';
-import { readFileSync } from 'node:fs';
-import path from 'node:path';
-import { parseDataset } from '@/lib/data/parse';
-import { createTsEngine } from '@/lib/engine/tsEngine';
-import { ANALOG_LIMIT } from '@/lib/engine/dataEngine';
+import { describe, expect, it } from "vitest";
+import { readFileSync } from "node:fs";
+import path from "node:path";
+import { parseDataset } from "@/lib/data/parse";
+import { createTsEngine } from "@/lib/engine/tsEngine";
+import { ANALOG_LIMIT } from "@/lib/engine/dataEngine";
 
 /**
  * TsEngine parity against DuckDB.
@@ -24,162 +24,301 @@ import { ANALOG_LIMIT } from '@/lib/engine/dataEngine';
 const RELATIVE_TOLERANCE = 1e-9;
 
 interface GoldenMetrics {
-  sst: number; jet: number; agri: number;
-  pacific_sst_dev: number; pacific_convection: number;
-  us_precip: number; us_precip_base: number; us_temp_dev_f: number;
-  asia_precip: number; asia_drought: number;
-  africa_precip: number; africa_flood: number;
-  global_impact_index: number; agriculture_exposure: number;
+    sst: number;
+    jet: number;
+    agri: number;
+    pacific_sst_dev: number;
+    pacific_convection: number;
+    us_precip: number;
+    us_precip_base: number;
+    us_temp_dev_f: number;
+    asia_precip: number;
+    asia_drought: number;
+    africa_precip: number;
+    africa_flood: number;
+    global_impact_index: number;
+    agriculture_exposure: number;
 }
 
 interface GoldenSummary {
-  row_count: number; first_date: string; last_date: string;
-  mean_anomaly: number; max_anomaly: number; max_anomaly_date: string;
-  analog_count: number; extreme_months: number; lanina_months: number;
-  source: string;
+    row_count: number;
+    first_date: string;
+    last_date: string;
+    mean_anomaly: number;
+    max_anomaly: number;
+    max_anomaly_date: string;
+    analog_count: number;
+    extreme_months: number;
+    lanina_months: number;
+    source: string;
 }
 
 interface GoldenAnalog {
-  period: string; nino_34_anomaly: number; nino34_sst: number; delta: number;
-  sst_deviation: number; precip_anomaly_pacific: number; precip_anomaly_us: number;
-  precip_anomaly_se_asia: number; precip_anomaly_africa: number;
-  drought_index_se_asia: number; risk_tier_pacific: string;
+    period: string;
+    nino_34_anomaly: number;
+    nino34_sst: number;
+    delta: number;
+    sst_deviation: number;
+    precip_anomaly_pacific: number;
+    precip_anomaly_us: number;
+    precip_anomaly_se_asia: number;
+    precip_anomaly_africa: number;
+    drought_index_se_asia: number;
+    risk_tier_pacific: string;
 }
 
 interface GoldenCase {
-  sst: number; jet: number; agri: number;
-  metrics: GoldenMetrics;
-  riskTier: string;
-  summary: GoldenSummary;
-  analogs: GoldenAnalog[];
+    sst: number;
+    jet: number;
+    agri: number;
+    metrics: GoldenMetrics;
+    riskTier: string;
+    summary: GoldenSummary;
+    analogs: GoldenAnalog[];
 }
 
 interface GoldenFile {
-  meta: { caseCount: number; timelineRows: number; duckdbVersion: string };
-  timeline: Array<{ date: string; anomaly: number }>;
-  cases: GoldenCase[];
+    meta: { caseCount: number; timelineRows: number; duckdbVersion: string };
+    timeline: Array<{ date: string; anomaly: number }>;
+    cases: GoldenCase[];
 }
 
 const golden: GoldenFile = JSON.parse(
-  readFileSync(path.resolve(__dirname, '../../../tests/fixtures/engine-golden.json'), 'utf8'),
+    readFileSync(
+        path.resolve(__dirname, "../../../tests/fixtures/engine-golden.json"),
+        "utf8",
+    ),
 );
 
-const rows = parseDataset(readFileSync(path.resolve(__dirname, '../../../public/data/enso.csv'), 'utf8'));
+const rows = parseDataset(
+    readFileSync(
+        path.resolve(__dirname, "../../../public/data/enso.csv"),
+        "utf8",
+    ),
+);
 const engine = createTsEngine({ rows });
 
 /** Relative-aware numeric comparison; exact for zero. */
 function expectClose(actual: number, expected: number, where: string) {
-  if (expected === 0) {
-    expect(actual, where).toBe(0);
-    return;
-  }
-  const rel = Math.abs(actual - expected) / Math.abs(expected);
-  expect(rel, `${where}: ${actual} vs ${expected} (rel ${rel.toExponential(3)})`).toBeLessThanOrEqual(
-    RELATIVE_TOLERANCE,
-  );
+    if (expected === 0) {
+        expect(actual, where).toBe(0);
+        return;
+    }
+    const rel = Math.abs(actual - expected) / Math.abs(expected);
+    expect(
+        rel,
+        `${where}: ${actual} vs ${expected} (rel ${rel.toExponential(3)})`,
+    ).toBeLessThanOrEqual(RELATIVE_TOLERANCE);
 }
 
-describe('golden fixture sanity', () => {
-  it('covers at least 200 combinations', () => {
-    expect(golden.cases.length).toBeGreaterThanOrEqual(200);
-    expect(golden.meta.caseCount).toBe(golden.cases.length);
-  });
+describe("golden fixture sanity", () => {
+    it("covers at least 200 combinations", () => {
+        expect(golden.cases.length).toBeGreaterThanOrEqual(200);
+        expect(golden.meta.caseCount).toBe(golden.cases.length);
+    });
 
-  it('carries a full 918-row timeline', () => {
-    expect(golden.timeline).toHaveLength(918);
-    expect(golden.meta.timelineRows).toBe(918);
-  });
+    it("carries a full 918-row timeline", () => {
+        expect(golden.timeline).toHaveLength(918);
+        expect(golden.meta.timelineRows).toBe(918);
+    });
 });
 
-describe('TsEngine matches DuckDB — timeline', () => {
-  it('reproduces all 918 (date, anomaly) pairs exactly in order', async () => {
-    const actual = await engine.timeline();
-    expect(actual).toHaveLength(golden.timeline.length);
+describe("TsEngine matches DuckDB — timeline", () => {
+    it("reproduces all 918 (date, anomaly) pairs exactly in order", async () => {
+        const actual = await engine.timeline();
+        expect(actual).toHaveLength(golden.timeline.length);
 
-    for (let i = 0; i < golden.timeline.length; i += 1) {
-      expect(actual[i].date, `row ${i} date`).toBe(golden.timeline[i].date);
-      expectClose(actual[i].anomaly, golden.timeline[i].anomaly, `row ${i} anomaly`);
-    }
-  });
+        for (let i = 0; i < golden.timeline.length; i += 1) {
+            expect(actual[i].date, `row ${i} date`).toBe(
+                golden.timeline[i].date,
+            );
+            expectClose(
+                actual[i].anomaly,
+                golden.timeline[i].anomaly,
+                `row ${i} anomaly`,
+            );
+        }
+    });
 });
 
-describe('TsEngine matches DuckDB — the 211-case grid', () => {
-  it.each(golden.cases.map((c, i) => [i, c] as const))(
-    'case %i (sst=%s)',
-    async (_i, c) => {
-      const state = { sstAnomaly: c.sst, jetStreamShift: c.jet, agricultureWeight: c.agri };
+describe("TsEngine matches DuckDB — the 211-case grid", () => {
+    it.each(golden.cases.map((c, i) => [i, c] as const))(
+        "case %i (sst=%s)",
+        async (_i, c) => {
+            const state = {
+                sstAnomaly: c.sst,
+                jetStreamShift: c.jet,
+                agricultureWeight: c.agri,
+            };
 
-      // --- scenario metrics -------------------------------------------------
-      const metrics = await engine.scenario(state);
-      expectClose(metrics.sst, c.metrics.sst, 'sst');
-      expectClose(metrics.jet, c.metrics.jet, 'jet');
-      expectClose(metrics.agri, c.metrics.agri, 'agri');
-      expectClose(metrics.pacificSstDev, c.metrics.pacific_sst_dev, 'pacific_sst_dev');
-      expectClose(metrics.pacificConvection, c.metrics.pacific_convection, 'pacific_convection');
-      expectClose(metrics.usPrecip, c.metrics.us_precip, 'us_precip');
-      expectClose(metrics.usPrecipBase, c.metrics.us_precip_base, 'us_precip_base');
-      expectClose(metrics.usTempDevF, c.metrics.us_temp_dev_f, 'us_temp_dev_f');
-      expectClose(metrics.asiaPrecip, c.metrics.asia_precip, 'asia_precip');
-      expectClose(metrics.asiaDrought, c.metrics.asia_drought, 'asia_drought');
-      expectClose(metrics.africaPrecip, c.metrics.africa_precip, 'africa_precip');
-      expectClose(metrics.africaFlood, c.metrics.africa_flood, 'africa_flood');
-      expectClose(metrics.globalImpactIndex, c.metrics.global_impact_index, 'global_impact_index');
-      expectClose(metrics.agricultureExposure, c.metrics.agriculture_exposure, 'agriculture_exposure');
+            // --- scenario metrics -------------------------------------------------
+            const metrics = await engine.scenario(state);
+            expectClose(metrics.sst, c.metrics.sst, "sst");
+            expectClose(metrics.jet, c.metrics.jet, "jet");
+            expectClose(metrics.agri, c.metrics.agri, "agri");
+            expectClose(
+                metrics.pacificSstDev,
+                c.metrics.pacific_sst_dev,
+                "pacific_sst_dev",
+            );
+            expectClose(
+                metrics.pacificConvection,
+                c.metrics.pacific_convection,
+                "pacific_convection",
+            );
+            expectClose(metrics.usPrecip, c.metrics.us_precip, "us_precip");
+            expectClose(
+                metrics.usPrecipBase,
+                c.metrics.us_precip_base,
+                "us_precip_base",
+            );
+            expectClose(
+                metrics.usTempDevF,
+                c.metrics.us_temp_dev_f,
+                "us_temp_dev_f",
+            );
+            expectClose(
+                metrics.asiaPrecip,
+                c.metrics.asia_precip,
+                "asia_precip",
+            );
+            expectClose(
+                metrics.asiaDrought,
+                c.metrics.asia_drought,
+                "asia_drought",
+            );
+            expectClose(
+                metrics.africaPrecip,
+                c.metrics.africa_precip,
+                "africa_precip",
+            );
+            expectClose(
+                metrics.africaFlood,
+                c.metrics.africa_flood,
+                "africa_flood",
+            );
+            expectClose(
+                metrics.globalImpactIndex,
+                c.metrics.global_impact_index,
+                "global_impact_index",
+            );
+            expectClose(
+                metrics.agricultureExposure,
+                c.metrics.agriculture_exposure,
+                "agriculture_exposure",
+            );
 
-      // --- risk tier (exact string) -----------------------------------------
-      expect(await engine.riskTier(c.sst)).toBe(c.riskTier);
+            // --- risk tier (exact string) -----------------------------------------
+            expect(await engine.riskTier(c.sst)).toBe(c.riskTier);
 
-      // --- summary ----------------------------------------------------------
-      const summary = await engine.summary(c.sst);
-      expect(summary.rowCount).toBe(c.summary.row_count);
-      expect(summary.firstDate).toBe(c.summary.first_date);
-      expect(summary.lastDate).toBe(c.summary.last_date);
-      expectClose(summary.meanAnomaly, c.summary.mean_anomaly, 'mean_anomaly');
-      expectClose(summary.maxAnomaly, c.summary.max_anomaly, 'max_anomaly');
-      expect(summary.maxAnomalyDate).toBe(c.summary.max_anomaly_date);
-      expect(summary.analogCount).toBe(c.summary.analog_count);
-      expect(summary.extremeMonths).toBe(c.summary.extreme_months);
-      expect(summary.laninaMonths).toBe(c.summary.lanina_months);
-      expect(summary.source).toBe(c.summary.source);
+            // --- summary ----------------------------------------------------------
+            const summary = await engine.summary(c.sst);
+            expect(summary.rowCount).toBe(c.summary.row_count);
+            expect(summary.firstDate).toBe(c.summary.first_date);
+            expect(summary.lastDate).toBe(c.summary.last_date);
+            expectClose(
+                summary.meanAnomaly,
+                c.summary.mean_anomaly,
+                "mean_anomaly",
+            );
+            expectClose(
+                summary.maxAnomaly,
+                c.summary.max_anomaly,
+                "max_anomaly",
+            );
+            expect(summary.maxAnomalyDate).toBe(c.summary.max_anomaly_date);
+            expect(summary.analogCount).toBe(c.summary.analog_count);
+            expect(summary.extremeMonths).toBe(c.summary.extreme_months);
+            expect(summary.laninaMonths).toBe(c.summary.lanina_months);
+            expect(summary.source).toBe(c.summary.source);
 
-      // --- analogs: ordering is exact, values within tolerance --------------
-      const analogs = await engine.analogs(c.sst);
-      expect(analogs).toHaveLength(Math.min(ANALOG_LIMIT, c.analogs.length));
+            // --- analogs: ordering is exact, values within tolerance --------------
+            const analogs = await engine.analogs(c.sst);
+            expect(analogs).toHaveLength(
+                Math.min(ANALOG_LIMIT, c.analogs.length),
+            );
 
-      for (let k = 0; k < analogs.length; k += 1) {
-        const a = analogs[k];
-        const g = c.analogs[k];
-        // Ordering and identity are exact: a different month here means the
-        // tie-break or the delta expression diverged.
-        expect(a.date, `analog ${k} period`).toBe(g.period);
-        expect(a.label).toBe(g.period.replace('-', ' '));
-        expect(a.riskTier).toBe(g.risk_tier_pacific);
+            for (let k = 0; k < analogs.length; k += 1) {
+                const a = analogs[k];
+                const g = c.analogs[k];
+                // Ordering and identity are exact: a different month here means the
+                // tie-break or the delta expression diverged.
+                expect(a.date, `analog ${k} period`).toBe(g.period);
+                expect(a.label).toBe(g.period.replace("-", " "));
+                expect(a.riskTier).toBe(g.risk_tier_pacific);
 
-        expectClose(a.anomaly, g.nino_34_anomaly, `analog ${k} anomaly`);
-        expectClose(a.absoluteSst, g.nino34_sst, `analog ${k} absoluteSst`);
-        expectClose(a.delta, g.delta, `analog ${k} delta`);
-        expectClose(a.sstDeviation, g.sst_deviation, `analog ${k} sstDeviation`);
-        expectClose(a.precipPacific, g.precip_anomaly_pacific, `analog ${k} precipPacific`);
-        expectClose(a.precipUs, g.precip_anomaly_us, `analog ${k} precipUs`);
-        expectClose(a.precipSeAsia, g.precip_anomaly_se_asia, `analog ${k} precipSeAsia`);
-        expectClose(a.precipAfrica, g.precip_anomaly_africa, `analog ${k} precipAfrica`);
-        expectClose(a.droughtIndex, g.drought_index_se_asia, `analog ${k} droughtIndex`);
-      }
-    },
-  );
+                expectClose(
+                    a.anomaly,
+                    g.nino_34_anomaly,
+                    `analog ${k} anomaly`,
+                );
+                expectClose(
+                    a.absoluteSst,
+                    g.nino34_sst,
+                    `analog ${k} absoluteSst`,
+                );
+                expectClose(a.delta, g.delta, `analog ${k} delta`);
+                expectClose(
+                    a.sstDeviation,
+                    g.sst_deviation,
+                    `analog ${k} sstDeviation`,
+                );
+                expectClose(
+                    a.precipPacific,
+                    g.precip_anomaly_pacific,
+                    `analog ${k} precipPacific`,
+                );
+                expectClose(
+                    a.precipUs,
+                    g.precip_anomaly_us,
+                    `analog ${k} precipUs`,
+                );
+                expectClose(
+                    a.precipSeAsia,
+                    g.precip_anomaly_se_asia,
+                    `analog ${k} precipSeAsia`,
+                );
+                expectClose(
+                    a.precipAfrica,
+                    g.precip_anomaly_africa,
+                    `analog ${k} precipAfrica`,
+                );
+                expectClose(
+                    a.droughtIndex,
+                    g.drought_index_se_asia,
+                    `analog ${k} droughtIndex`,
+                );
+            }
+        },
+    );
 });
 
-describe('TsEngine matches DuckDB — run() end to end', () => {
-  it('agrees with the golden case for the default scenario', async () => {
-    const c = golden.cases.find((x) => x.sst === 1.5 && x.jet === 0.35 && x.agri === 0.6);
-    expect(c, 'the named default point must exist in the fixture').toBeDefined();
+describe("TsEngine matches DuckDB — run() end to end", () => {
+    it("agrees with the golden case for the default scenario", async () => {
+        const c = golden.cases.find(
+            (x) => x.sst === 1.5 && x.jet === 0.35 && x.agri === 0.6,
+        );
+        expect(
+            c,
+            "the named default point must exist in the fixture",
+        ).toBeDefined();
 
-    const payload = await engine.run({ sstAnomaly: 1.5, jetStreamShift: 0.35, agricultureWeight: 0.6 });
+        const payload = await engine.run({
+            sstAnomaly: 1.5,
+            jetStreamShift: 0.35,
+            agricultureWeight: 0.6,
+        });
 
-    expectClose(payload.metrics.usPrecip, c!.metrics.us_precip, 'us_precip');
-    expect(payload.metrics.riskTier).toBe(c!.riskTier);
-    expect(payload.summary.rowCount).toBe(c!.summary.row_count);
-    expect(payload.analogs.map((a) => a.date)).toEqual(c!.analogs.map((a) => a.period));
-    expect(payload.timeline).toHaveLength(918);
-  });
+        expectClose(
+            payload.metrics.usPrecip,
+            c!.metrics.us_precip,
+            "us_precip",
+        );
+        expect(payload.metrics.riskTier).toBe(c!.riskTier);
+        expect(payload.summary.rowCount).toBe(c!.summary.row_count);
+        expect(payload.analogs.map((a) => a.date)).toEqual(
+            c!.analogs.map((a) => a.period),
+        );
+        expect(payload.timeline).toHaveLength(918);
+    });
 });

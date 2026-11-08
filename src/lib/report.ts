@@ -10,77 +10,107 @@
  * it opens instantly and survives being emailed as a .html attachment.
  */
 
-import type { AnalyticsPayload, RegionDefinition, RegionId, ScenarioMetrics, ScenarioState } from '@/types/enso';
-import { REGION_MAP } from '@/lib/regions';
-import { thermalColor } from '@/lib/model';
-import { fixed } from '@/lib/format';
+import type {
+    AnalyticsPayload,
+    RegionDefinition,
+    RegionId,
+    ScenarioMetrics,
+    ScenarioState,
+} from "@/types/enso";
+import { REGION_MAP } from "@/lib/regions";
+import { thermalColor } from "@/lib/model";
+import { fixed } from "@/lib/format";
 
-export { captureCanvas } from '@/lib/canvasCapture';
+export { captureCanvas } from "@/lib/canvasCapture";
 
 export function downloadPng(dataUrl: string, filename: string): void {
-  const link = document.createElement('a');
-  link.href = dataUrl;
-  link.download = filename;
-  document.body.appendChild(link);
-  link.click();
-  link.remove();
+    const link = document.createElement("a");
+    link.href = dataUrl;
+    link.download = filename;
+    document.body.appendChild(link);
+    link.click();
+    link.remove();
 }
 
 function metricRows(m: ScenarioMetrics): Array<[string, string, string]> {
-  return [
-    ['Equatorial Pacific — SST deviation', `+${fixed(m.pacificSstDev, 2)}`, '°C'],
-    ['Equatorial Pacific — convection shift', fixed(m.pacificConvection, 1), '/100'],
-    ['Western US — precipitation change', `${m.usPrecip > 0 ? '+' : ''}${fixed(m.usPrecip, 1)}`, '%'],
-    ['Western US — temperature deviation', fixed(m.usTempDevF, 2), '°F'],
-    ['SE Asia — precipitation change', `${fixed(m.asiaPrecip, 1)}`, '%'],
-    ['SE Asia — drought index', fixed(m.asiaDrought, 2), '/10'],
-    ['Horn of Africa — precipitation change', `+${fixed(m.africaPrecip, 1)}`, '%'],
-    ['Horn of Africa — flood index', fixed(m.africaFlood, 2), '/10'],
-    ['Global impact index', fixed(m.globalImpactIndex, 1), '/100'],
-    ['Agriculture exposure', fixed(m.agricultureExposure, 0), '%'],
-  ];
+    return [
+        [
+            "Equatorial Pacific — SST deviation",
+            `+${fixed(m.pacificSstDev, 2)}`,
+            "°C",
+        ],
+        [
+            "Equatorial Pacific — convection shift",
+            fixed(m.pacificConvection, 1),
+            "/100",
+        ],
+        [
+            "Western US — precipitation change",
+            `${m.usPrecip > 0 ? "+" : ""}${fixed(m.usPrecip, 1)}`,
+            "%",
+        ],
+        ["Western US — temperature deviation", fixed(m.usTempDevF, 2), "°F"],
+        ["SE Asia — precipitation change", `${fixed(m.asiaPrecip, 1)}`, "%"],
+        ["SE Asia — drought index", fixed(m.asiaDrought, 2), "/10"],
+        [
+            "Horn of Africa — precipitation change",
+            `+${fixed(m.africaPrecip, 1)}`,
+            "%",
+        ],
+        ["Horn of Africa — flood index", fixed(m.africaFlood, 2), "/10"],
+        ["Global impact index", fixed(m.globalImpactIndex, 1), "/100"],
+        ["Agriculture exposure", fixed(m.agricultureExposure, 0), "%"],
+    ];
 }
 
 export interface ReportInput {
-  scenario: ScenarioState;
-  metrics: ScenarioMetrics;
-  analytics: AnalyticsPayload;
-  activeRegion: RegionId | null;
-  snapshot: string | null;
+    scenario: ScenarioState;
+    metrics: ScenarioMetrics;
+    analytics: AnalyticsPayload;
+    activeRegion: RegionId | null;
+    snapshot: string | null;
 }
 
-export function buildReportHtml({ scenario, metrics, analytics, activeRegion, snapshot }: ReportInput): string {
-  const generated = new Date().toLocaleString(undefined, {
-    dateStyle: 'long',
-    timeStyle: 'short',
-  });
-  const accent = thermalColor(metrics.sst, 1);
-  const region: RegionDefinition | null = activeRegion ? REGION_MAP[activeRegion] : null;
+export function buildReportHtml({
+    scenario,
+    metrics,
+    analytics,
+    activeRegion,
+    snapshot,
+}: ReportInput): string {
+    const generated = new Date().toLocaleString(undefined, {
+        dateStyle: "long",
+        timeStyle: "short",
+    });
+    const accent = thermalColor(metrics.sst, 1);
+    const region: RegionDefinition | null = activeRegion
+        ? REGION_MAP[activeRegion]
+        : null;
 
-  const rows = metricRows(metrics)
-    .map(
-      ([label, value, unit]) => `
+    const rows = metricRows(metrics)
+        .map(
+            ([label, value, unit]) => `
         <tr>
           <td>${label}</td>
           <td class="v">${value}<span class="u">${unit}</span></td>
         </tr>`,
-    )
-    .join('');
+        )
+        .join("");
 
-  const analogs = analytics.analogs
-    .slice(0, 5)
-    .map(
-      (a) => `
+    const analogs = analytics.analogs
+        .slice(0, 5)
+        .map(
+            (a) => `
         <tr>
           <td>${a.label}</td>
           <td class="v">${fixed(a.anomaly, 2)}<span class="u">°C</span></td>
           <td class="v dim">±${fixed(a.delta, 2)}</td>
           <td>${a.riskTier}</td>
         </tr>`,
-    )
-    .join('');
+        )
+        .join("");
 
-  return `<!doctype html>
+    return `<!doctype html>
 <html lang="en">
 <head>
 <meta charset="utf-8" />
@@ -134,7 +164,7 @@ export function buildReportHtml({ scenario, metrics, analytics, activeRegion, sn
       <div class="eyebrow">Scenario Diagnostic Report</div>
       <h1>Super El Niño Global Impact Simulator</h1>
       <div class="eyebrow" style="letter-spacing:.06em">
-        Generated ${generated}${region ? ` · focus: ${region.name}` : ''}
+        Generated ${generated}${region ? ` · focus: ${region.name}` : ""}
       </div>
     </div>
     <div style="text-align:right">
@@ -151,16 +181,16 @@ export function buildReportHtml({ scenario, metrics, analytics, activeRegion, sn
     </div>
     <div class="card">
       <div class="k">Jet displacement / ag weight</div>
-      <div class="big">${scenario.jetStreamShift >= 0 ? '+' : ''}${fixed(scenario.jetStreamShift, 2)} · ${Math.round(
-        scenario.agricultureWeight * 100,
+      <div class="big">${scenario.jetStreamShift >= 0 ? "+" : ""}${fixed(scenario.jetStreamShift, 2)} · ${Math.round(
+          scenario.agricultureWeight * 100,
       )}%</div>
     </div>
   </div>
 
   ${
-    snapshot
-      ? `<h2>Visual Snapshot</h2><img class="shot" src="${snapshot}" alt="3D globe snapshot at the simulated anomaly" />`
-      : ''
+      snapshot
+          ? `<h2>Visual Snapshot</h2><img class="shot" src="${snapshot}" alt="3D globe snapshot at the simulated anomaly" />`
+          : ""
   }
 
   <h2>Regional Impact Metrics</h2>
@@ -170,13 +200,13 @@ export function buildReportHtml({ scenario, metrics, analytics, activeRegion, sn
   </table>
 
   ${
-    analogs
-      ? `<h2>Historical Analogs (Niño 3.4 nearest months)</h2>
+      analogs
+          ? `<h2>Historical Analogs (Niño 3.4 nearest months)</h2>
          <table>
            <thead><tr><th>Month</th><th style="text-align:right">Anomaly</th><th style="text-align:right">Δ</th><th>Tier</th></tr></thead>
            <tbody>${analogs}</tbody>
          </table>`
-      : ''
+          : ""
   }
 
   <h2>Model Basis</h2>
@@ -200,9 +230,9 @@ export function buildReportHtml({ scenario, metrics, analytics, activeRegion, sn
 }
 
 export function openReport(html: string): void {
-  const win = window.open('', '_blank');
-  if (!win) return;
-  win.document.open();
-  win.document.write(html);
-  win.document.close();
+    const win = window.open("", "_blank");
+    if (!win) return;
+    win.document.open();
+    win.document.write(html);
+    win.document.close();
 }

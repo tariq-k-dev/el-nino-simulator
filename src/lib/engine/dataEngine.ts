@@ -13,13 +13,13 @@
  */
 
 import type {
-  AnalogMonth,
-  AnalyticsPayload,
-  HistoricalSummary,
-  ScenarioMetrics,
-  ScenarioState,
-  TimelinePoint,
-} from '@/types/enso';
+    AnalogMonth,
+    AnalyticsPayload,
+    HistoricalSummary,
+    ScenarioMetrics,
+    ScenarioState,
+    TimelinePoint,
+} from "@/types/enso";
 
 /**
  * The five queries the HUD depends on.
@@ -29,26 +29,26 @@ import type {
  * the analog ordering indistinguishable from one in the summary.
  */
 export interface DataEngine {
-  /** Identifier for diagnostics: 'duckdb' | 'ts'. */
-  readonly kind: 'duckdb' | 'ts';
+    /** Identifier for diagnostics: 'duckdb' | 'ts'. */
+    readonly kind: "duckdb" | "ts";
 
-  /** Scenario metrics: metrics SQL + risk tier. */
-  scenario(state: ScenarioState): Promise<ScenarioMetrics>;
+    /** Scenario metrics: metrics SQL + risk tier. */
+    scenario(state: ScenarioState): Promise<ScenarioMetrics>;
 
-  /** Nearest historical months by |anomaly - sst|. */
-  analogs(sstAnomaly: number): Promise<AnalogMonth[]>;
+    /** Nearest historical months by |anomaly - sst|. */
+    analogs(sstAnomaly: number): Promise<AnalogMonth[]>;
 
-  /** Aggregate history statistics. */
-  summary(sstAnomaly: number): Promise<HistoricalSummary>;
+    /** Aggregate history statistics. */
+    summary(sstAnomaly: number): Promise<HistoricalSummary>;
 
-  /** Full dataset timeline, ascending by date. */
-  timeline(): Promise<TimelinePoint[]>;
+    /** Full dataset timeline, ascending by date. */
+    timeline(): Promise<TimelinePoint[]>;
 
-  /** Risk tier string for an SST anomaly. */
-  riskTier(sstAnomaly: number): Promise<string>;
+    /** Risk tier string for an SST anomaly. */
+    riskTier(sstAnomaly: number): Promise<string>;
 
-  /** Convenience: everything the HUD needs in one call. */
-  run(state: ScenarioState): Promise<AnalyticsPayload>;
+    /** Convenience: everything the HUD needs in one call. */
+    run(state: ScenarioState): Promise<AnalyticsPayload>;
 }
 
 /**
@@ -72,12 +72,12 @@ export const ANALOG_LIMIT = 6;
  * timezone can shift the month. Slicing cannot.
  */
 export function monthKey(isoDate: string): string {
-  return isoDate.slice(0, 7);
+    return isoDate.slice(0, 7);
 }
 
 /** `TimelinePoint.label` is the period with a space, e.g. "2015 11". */
 export function periodLabel(period: string): string {
-  return period.replace('-', ' ');
+    return period.replace("-", " ");
 }
 
 /**
@@ -90,14 +90,14 @@ export function periodLabel(period: string): string {
  * two engines could return different months in a different order from identical
  * data. DESC on date, matching the SQL.
  */
-export function sortAnalogs<
-  T extends { date: string; delta: number },
->(rows: T[]): T[] {
-  return [...rows].sort((a, b) => {
-    if (a.delta !== b.delta) return a.delta - b.delta;
-    // Descending date: later month first, matching ORDER BY date DESC.
-    return a.date < b.date ? 1 : a.date > b.date ? -1 : 0;
-  });
+export function sortAnalogs<T extends { date: string; delta: number }>(
+    rows: T[],
+): T[] {
+    return [...rows].sort((a, b) => {
+        if (a.delta !== b.delta) return a.delta - b.delta;
+        // Descending date: later month first, matching ORDER BY date DESC.
+        return a.date < b.date ? 1 : a.date > b.date ? -1 : 0;
+    });
 }
 
 /**
@@ -105,10 +105,10 @@ export function sortAnalogs<
  * summary implementation documents the correspondence rather than inlining it.
  */
 export function mean(values: number[]): number {
-  if (values.length === 0) return 0;
-  let sum = 0;
-  for (const v of values) sum += v;
-  return sum / values.length;
+    if (values.length === 0) return 0;
+    let sum = 0;
+    for (const v of values) sum += v;
+    return sum / values.length;
 }
 
 /**
@@ -118,11 +118,13 @@ export function mean(values: number[]): number {
  * equal maxima (it keeps the first). Rows arrive in ascending date order, so a
  * strict `>` comparison preserves that.
  */
-export function argMaxDate(rows: Array<{ date: string; value: number }>): string {
-  if (rows.length === 0) return '';
-  let best = rows[0];
-  for (const row of rows) {
-    if (row.value > best.value) best = row;
-  }
-  return best.date;
+export function argMaxDate(
+    rows: Array<{ date: string; value: number }>,
+): string {
+    if (rows.length === 0) return "";
+    let best = rows[0];
+    for (const row of rows) {
+        if (row.value > best.value) best = row;
+    }
+    return best.date;
 }

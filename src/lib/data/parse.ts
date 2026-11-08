@@ -17,43 +17,50 @@
 
 /** The 25 columns, in file order. Order is part of the contract. */
 export const EXPECTED_COLUMNS = [
-  'date',
-  'year',
-  'month',
-  'nino12_sst',
-  'nino12_anomaly',
-  'nino3_sst',
-  'nino3_anomaly',
-  'nino4_sst',
-  'nino4_anomaly',
-  'nino34_sst',
-  'nino_34_anomaly',
-  'global_sst_anomaly',
-  'sst_deviation',
-  'convection_shift',
-  'precip_anomaly_pacific',
-  'precip_anomaly_us',
-  'temp_deviation_us_f',
-  'precip_anomaly_se_asia',
-  'drought_index_se_asia',
-  'precip_anomaly_africa',
-  'flood_index_horn',
-  'amazon_precip',
-  'amazon_drought',
-  'gulf_precip',
-  'agriculture_exposure',
-  'risk_tier_pacific',
-  'source',
-  'model_basis',
+    "date",
+    "year",
+    "month",
+    "nino12_sst",
+    "nino12_anomaly",
+    "nino3_sst",
+    "nino3_anomaly",
+    "nino4_sst",
+    "nino4_anomaly",
+    "nino34_sst",
+    "nino_34_anomaly",
+    "global_sst_anomaly",
+    "sst_deviation",
+    "convection_shift",
+    "precip_anomaly_pacific",
+    "precip_anomaly_us",
+    "temp_deviation_us_f",
+    "precip_anomaly_se_asia",
+    "drought_index_se_asia",
+    "precip_anomaly_africa",
+    "flood_index_horn",
+    "amazon_precip",
+    "amazon_drought",
+    "gulf_precip",
+    "agriculture_exposure",
+    "risk_tier_pacific",
+    "source",
+    "model_basis",
 ] as const;
 
 export type ColumnName = (typeof EXPECTED_COLUMNS)[number];
 
 /** String columns; every other non-date column is numeric. */
-const STRING_COLUMNS = new Set<ColumnName>(['risk_tier_pacific', 'source', 'model_basis']);
+const STRING_COLUMNS = new Set<ColumnName>([
+    "risk_tier_pacific",
+    "source",
+    "model_basis",
+]);
 
 /** Numeric columns, in a form the TS engine can index without casts. */
-export type NumericColumn = Exclude<ColumnName, 'date' | 'risk_tier_pacific' | 'source' | 'model_basis'>;
+export type NumericColumn = Exclude<
+    ColumnName,
+    "date" | "risk_tier_pacific" | "source" | "model_basis"
+>;
 
 /**
  * One historical month.
@@ -64,41 +71,41 @@ export type NumericColumn = Exclude<ColumnName, 'date' | 'risk_tier_pacific' | '
  * lexicographically is identical to chronological order.
  */
 export interface HistoricalRow {
-  date: string;
-  year: number;
-  month: number;
-  nino12_sst: number;
-  nino12_anomaly: number;
-  nino3_sst: number;
-  nino3_anomaly: number;
-  nino4_sst: number;
-  nino4_anomaly: number;
-  nino34_sst: number;
-  nino_34_anomaly: number;
-  global_sst_anomaly: number;
-  sst_deviation: number;
-  convection_shift: number;
-  precip_anomaly_pacific: number;
-  precip_anomaly_us: number;
-  temp_deviation_us_f: number;
-  precip_anomaly_se_asia: number;
-  drought_index_se_asia: number;
-  precip_anomaly_africa: number;
-  flood_index_horn: number;
-  amazon_precip: number;
-  amazon_drought: number;
-  gulf_precip: number;
-  agriculture_exposure: number;
-  risk_tier_pacific: string;
-  source: string;
-  model_basis: string;
+    date: string;
+    year: number;
+    month: number;
+    nino12_sst: number;
+    nino12_anomaly: number;
+    nino3_sst: number;
+    nino3_anomaly: number;
+    nino4_sst: number;
+    nino4_anomaly: number;
+    nino34_sst: number;
+    nino_34_anomaly: number;
+    global_sst_anomaly: number;
+    sst_deviation: number;
+    convection_shift: number;
+    precip_anomaly_pacific: number;
+    precip_anomaly_us: number;
+    temp_deviation_us_f: number;
+    precip_anomaly_se_asia: number;
+    drought_index_se_asia: number;
+    precip_anomaly_africa: number;
+    flood_index_horn: number;
+    amazon_precip: number;
+    amazon_drought: number;
+    gulf_precip: number;
+    agriculture_exposure: number;
+    risk_tier_pacific: string;
+    source: string;
+    model_basis: string;
 }
 
 export class DatasetParseError extends Error {
-  constructor(message: string) {
-    super(message);
-    this.name = 'DatasetParseError';
-  }
+    constructor(message: string) {
+        super(message);
+        this.name = "DatasetParseError";
+    }
 }
 
 /**
@@ -118,84 +125,95 @@ const COLUMN_COUNT = EXPECTED_COLUMNS.length;
  * still render, with wrong months.
  */
 export function parseDataset(text: string): HistoricalRow[] {
-  // Normalise CRLF: the repo is checked out on Windows, so the committed file may
-  // legitimately have \r\n line endings.
-  const lines = text.replace(/\r\n/g, '\n').split('\n');
+    // Normalise CRLF: the repo is checked out on Windows, so the committed file may
+    // legitimately have \r\n line endings.
+    const lines = text.replace(/\r\n/g, "\n").split("\n");
 
-  // Drop trailing blank lines only. An interior blank line is a real defect.
-  while (lines.length > 0 && lines[lines.length - 1].trim() === '') lines.pop();
+    // Drop trailing blank lines only. An interior blank line is a real defect.
+    while (lines.length > 0 && lines[lines.length - 1].trim() === "")
+        lines.pop();
 
-  if (lines.length === 0) {
-    throw new DatasetParseError('Dataset is empty.');
-  }
-
-  const headerLine = lines[0];
-  const header = headerLine.split(',');
-
-  if (header.length !== COLUMN_COUNT) {
-    throw new DatasetParseError(
-      `Dataset header has ${header.length} columns; expected ${COLUMN_COUNT}. ` +
-        `Header: ${headerLine.slice(0, 200)}`,
-    );
-  }
-
-  for (let i = 0; i < COLUMN_COUNT; i += 1) {
-    if (header[i] !== EXPECTED_COLUMNS[i]) {
-      throw new DatasetParseError(
-        `Dataset column ${i + 1} is "${header[i]}"; expected "${EXPECTED_COLUMNS[i]}". ` +
-          'The pipeline output does not match the expected schema — rebuild with `pnpm data`.',
-      );
-    }
-  }
-
-  const rows: HistoricalRow[] = [];
-
-  for (let lineNo = 1; lineNo < lines.length; lineNo += 1) {
-    const line = lines[lineNo];
-    if (line === '') {
-      throw new DatasetParseError(`Dataset has a blank line at row ${lineNo}.`);
+    if (lines.length === 0) {
+        throw new DatasetParseError("Dataset is empty.");
     }
 
-    const cells = line.split(',');
-    if (cells.length !== COLUMN_COUNT) {
-      throw new DatasetParseError(
-        `Dataset row ${lineNo} has ${cells.length} cells; expected ${COLUMN_COUNT}. ` +
-          `Row starts: ${line.slice(0, 120)}`,
-      );
-    }
+    const headerLine = lines[0];
+    const header = headerLine.split(",");
 
-    const date = cells[0];
-    if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) {
-      throw new DatasetParseError(`Dataset row ${lineNo} has an invalid date "${date}".`);
-    }
-
-    const numeric: Record<string, number> = {};
-    for (let c = 1; c < COLUMN_COUNT; c += 1) {
-      const name = EXPECTED_COLUMNS[c];
-      if (STRING_COLUMNS.has(name)) continue;
-
-      const raw = cells[c];
-      const value = Number(raw);
-      if (raw === '' || !Number.isFinite(value)) {
+    if (header.length !== COLUMN_COUNT) {
         throw new DatasetParseError(
-          `Dataset row ${lineNo} column "${name}" is not a finite number: "${raw}".`,
+            `Dataset header has ${header.length} columns; expected ${COLUMN_COUNT}. ` +
+                `Header: ${headerLine.slice(0, 200)}`,
         );
-      }
-      numeric[name] = value;
     }
 
-    rows.push({
-      date,
-      ...(numeric as unknown as Omit<HistoricalRow, 'date' | 'risk_tier_pacific' | 'source' | 'model_basis'>),
-      risk_tier_pacific: cells[EXPECTED_COLUMNS.indexOf('risk_tier_pacific')],
-      source: cells[EXPECTED_COLUMNS.indexOf('source')],
-      model_basis: cells[EXPECTED_COLUMNS.indexOf('model_basis')],
-    });
-  }
+    for (let i = 0; i < COLUMN_COUNT; i += 1) {
+        if (header[i] !== EXPECTED_COLUMNS[i]) {
+            throw new DatasetParseError(
+                `Dataset column ${i + 1} is "${header[i]}"; expected "${EXPECTED_COLUMNS[i]}". ` +
+                    "The pipeline output does not match the expected schema — rebuild with `pnpm data`.",
+            );
+        }
+    }
 
-  if (rows.length === 0) {
-    throw new DatasetParseError('Dataset header parsed but contains no data rows.');
-  }
+    const rows: HistoricalRow[] = [];
 
-  return rows;
+    for (let lineNo = 1; lineNo < lines.length; lineNo += 1) {
+        const line = lines[lineNo];
+        if (line === "") {
+            throw new DatasetParseError(
+                `Dataset has a blank line at row ${lineNo}.`,
+            );
+        }
+
+        const cells = line.split(",");
+        if (cells.length !== COLUMN_COUNT) {
+            throw new DatasetParseError(
+                `Dataset row ${lineNo} has ${cells.length} cells; expected ${COLUMN_COUNT}. ` +
+                    `Row starts: ${line.slice(0, 120)}`,
+            );
+        }
+
+        const date = cells[0];
+        if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) {
+            throw new DatasetParseError(
+                `Dataset row ${lineNo} has an invalid date "${date}".`,
+            );
+        }
+
+        const numeric: Record<string, number> = {};
+        for (let c = 1; c < COLUMN_COUNT; c += 1) {
+            const name = EXPECTED_COLUMNS[c];
+            if (STRING_COLUMNS.has(name)) continue;
+
+            const raw = cells[c];
+            const value = Number(raw);
+            if (raw === "" || !Number.isFinite(value)) {
+                throw new DatasetParseError(
+                    `Dataset row ${lineNo} column "${name}" is not a finite number: "${raw}".`,
+                );
+            }
+            numeric[name] = value;
+        }
+
+        rows.push({
+            date,
+            ...(numeric as unknown as Omit<
+                HistoricalRow,
+                "date" | "risk_tier_pacific" | "source" | "model_basis"
+            >),
+            risk_tier_pacific:
+                cells[EXPECTED_COLUMNS.indexOf("risk_tier_pacific")],
+            source: cells[EXPECTED_COLUMNS.indexOf("source")],
+            model_basis: cells[EXPECTED_COLUMNS.indexOf("model_basis")],
+        });
+    }
+
+    if (rows.length === 0) {
+        throw new DatasetParseError(
+            "Dataset header parsed but contains no data rows.",
+        );
+    }
+
+    return rows;
 }

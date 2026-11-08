@@ -80,9 +80,9 @@ export const PIN_HIT_CLAMP_R = NEAREST_PIN_PAIR_R / 2;
 
 /** Anything with x/y/z, so three's `Vector3` and a plain object both satisfy it. */
 export interface Vec3Like {
-  readonly x: number;
-  readonly y: number;
-  readonly z: number;
+    readonly x: number;
+    readonly y: number;
+    readonly z: number;
 }
 
 /**
@@ -101,25 +101,25 @@ export interface Vec3Like {
  *          A degenerate camera at the globe centre returns false and does not throw.
  */
 export function pinFacesCamera(
-  nWorld: Vec3Like,
-  cameraWorld: Vec3Like,
-  globeCenterWorld: Vec3Like,
-  gate: number = PIN_HIT_GATE,
+    nWorld: Vec3Like,
+    cameraWorld: Vec3Like,
+    globeCenterWorld: Vec3Like,
+    gate: number = PIN_HIT_GATE,
 ): boolean {
-  const nx = nWorld.x;
-  const ny = nWorld.y;
-  const nz = nWorld.z;
-  const dx = cameraWorld.x - globeCenterWorld.x;
-  const dy = cameraWorld.y - globeCenterWorld.y;
-  const dz = cameraWorld.z - globeCenterWorld.z;
+    const nx = nWorld.x;
+    const ny = nWorld.y;
+    const nz = nWorld.z;
+    const dx = cameraWorld.x - globeCenterWorld.x;
+    const dy = cameraWorld.y - globeCenterWorld.y;
+    const dz = cameraWorld.z - globeCenterWorld.z;
 
-  const nLen = Math.hypot(nx, ny, nz);
-  const dLen = Math.hypot(dx, dy, dz);
-  /* A zero-length camera vector is the degenerate "camera at the globe centre" case: no direction to
-   * face, so nothing faces it. A zero-length normal is a malformed pin; refusing it is safer than
-   * letting NaN decide, and neither throws. */
-  if (!(nLen > 0) || !(dLen > 0)) return false;
+    const nLen = Math.hypot(nx, ny, nz);
+    const dLen = Math.hypot(dx, dy, dz);
+    /* A zero-length camera vector is the degenerate "camera at the globe centre" case: no direction to
+     * face, so nothing faces it. A zero-length normal is a malformed pin; refusing it is safer than
+     * letting NaN decide, and neither throws. */
+    if (!(nLen > 0) || !(dLen > 0)) return false;
 
-  const facing = (nx * dx + ny * dy + nz * dz) / (nLen * dLen);
-  return facing > gate;
+    const facing = (nx * dx + ny * dy + nz * dz) / (nLen * dLen);
+    return facing > gate;
 }

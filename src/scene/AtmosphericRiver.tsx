@@ -5,17 +5,17 @@ import * as THREE from "three";
 import { getLookFlags, subscribeLookFlags } from "@/scene/globeLook";
 import { lookTime } from "@/scene/lookTime";
 import {
-  ATMOSPHERIC_RIVER_RENDER_ORDER,
-  buildAtmosphericRiverGeometry,
+    ATMOSPHERIC_RIVER_RENDER_ORDER,
+    buildAtmosphericRiverGeometry,
 } from "@/lib/atmosphericRiverGeometry";
 
 export interface AtmosphericRiverProps {
-  /** Live or simulated sea surface temperature anomaly (°C). */
-  sst: number;
-  /** Jet stream latitudinal displacement in degrees (-5 to +5). */
-  jetShiftDegrees?: number;
-  /** Overall visibility toggle. Defaults to true. */
-  visible?: boolean;
+    /** Live or simulated sea surface temperature anomaly (°C). */
+    sst: number;
+    /** Jet stream latitudinal displacement in degrees (-5 to +5). */
+    jetShiftDegrees?: number;
+    /** Overall visibility toggle. Defaults to true. */
+    visible?: boolean;
 }
 
 const atmosphericRiverVertexShader = /* glsl */ `
@@ -87,128 +87,134 @@ const _camDir = new THREE.Vector3();
 const _surfaceNormal = new THREE.Vector3();
 
 export function AtmosphericRiver({
-  sst,
-  jetShiftDegrees = 0,
-  visible = true,
+    sst,
+    jetShiftDegrees = 0,
+    visible = true,
 }: AtmosphericRiverProps) {
-  const materialRef = useRef<THREE.ShaderMaterial>(null);
-  const anchorRef = useRef<THREE.Group>(null);
-  const pillDomRef = useRef<HTMLDivElement>(null);
+    const materialRef = useRef<THREE.ShaderMaterial>(null);
+    const anchorRef = useRef<THREE.Group>(null);
+    const pillDomRef = useRef<HTMLDivElement>(null);
 
-  const look = useSyncExternalStore(
-    subscribeLookFlags,
-    getLookFlags,
-    getLookFlags,
-  );
+    const look = useSyncExternalStore(
+        subscribeLookFlags,
+        getLookFlags,
+        getLookFlags,
+    );
 
-  const intensity = Math.min(Math.max(0.3 + (sst / 2.5) * 0.7, 0.15), 1.0);
-  const flowSpeed = 0.35 + intensity * 0.25;
+    const intensity = Math.min(Math.max(0.3 + (sst / 2.5) * 0.7, 0.15), 1.0);
+    const flowSpeed = 0.35 + intensity * 0.25;
 
-  const { geometry, midpoint } = useMemo(() => {
-    const data = buildAtmosphericRiverGeometry({
-      jetShiftDegrees,
-      width: 0.038 + intensity * 0.02,
+    const { geometry, midpoint } = useMemo(() => {
+        const data = buildAtmosphericRiverGeometry({
+            jetShiftDegrees,
+            width: 0.038 + intensity * 0.02,
+        });
+
+        const geom = new THREE.BufferGeometry();
+        geom.setAttribute(
+            "position",
+            new THREE.BufferAttribute(data.positions, 3),
+        );
+        geom.setAttribute("uv", new THREE.BufferAttribute(data.uvs, 2));
+        geom.setIndex(new THREE.BufferAttribute(data.indices, 1));
+
+        const midIdx = Math.floor(data.centerline.length / 6) * 3;
+        const midVec: [number, number, number] = [
+            data.centerline[midIdx + 0],
+            data.centerline[midIdx + 1],
+            data.centerline[midIdx + 2],
+        ];
+
+        return { geometry: geom, midpoint: midVec };
+    }, [jetShiftDegrees, intensity]);
+
+    const uniforms = useMemo(
+        () => ({
+            uTime: { value: 0 },
+            uSpeed: { value: 0.35 },
+            uIntensity: { value: 0.3 },
+            uColorCore: { value: new THREE.Color("#f0f9ff") },
+            uColorEdge: { value: new THREE.Color("#0284c7") },
+        }),
+        [],
+    );
+
+    useFrame((state) => {
+        // 1. Advance shader uniforms deterministically (freezes to 0 when look.animate is false)
+        if (materialRef.current) {
+            materialRef.current.uniforms.uTime.value = lookTime(
+                look.animate,
+                state.clock.elapsedTime,
+            );
+            materialRef.current.uniforms.uSpeed.value = flowSpeed;
+            materialRef.current.uniforms.uIntensity.value = intensity;
+        }
+
+        // 2. Direct DOM limb-fade calculation
+        if (anchorRef.current && pillDomRef.current) {
+            anchorRef.current.getWorldPosition(_worldPos);
+            _camDir.subVectors(state.camera.position, _worldPos).normalize();
+            _surfaceNormal.copy(_worldPos).normalize();
+            const dot = _surfaceNormal.dot(_camDir);
+
+            const opacity = Math.min(Math.max((dot - 0.08) / 0.14, 0), 1);
+            pillDomRef.current.style.opacity = opacity.toFixed(2);
+            pillDomRef.current.style.display =
+                opacity <= 0.01 ? "none" : "flex";
+        }
     });
 
-    const geom = new THREE.BufferGeometry();
-    geom.setAttribute(
-      "position",
-      new THREE.BufferAttribute(data.positions, 3),
+    if (!visible) return null;
+
+    const moistureFluxPct = Math.round(intensity * 100);
+
+    return (
+        <group>
+            <mesh
+                geometry={geometry}
+                renderOrder={ATMOSPHERIC_RIVER_RENDER_ORDER}
+            >
+                <shaderMaterial
+                    ref={materialRef}
+                    vertexShader={atmosphericRiverVertexShader}
+                    fragmentShader={atmosphericRiverFragmentShader}
+                    uniforms={uniforms}
+                    transparent
+                    depthWrite={false}
+                    depthTest
+                    side={THREE.DoubleSide}
+                />
+            </mesh>
+
+            {/* Floating telemetry label anchored at mid-ocean */}
+            <group ref={anchorRef} position={midpoint}>
+                <Html
+                    center
+                    distanceFactor={2.6}
+                    style={{
+                        pointerEvents: "none",
+                        willChange: "transform",
+                    }}
+                >
+                    <div
+                        ref={pillDomRef}
+                        className="flex items-center gap-1.5 rounded-full border border-sky-500/30 bg-slate-950/75 px-2 py-0.5 text-[8.5px] font-mono tracking-wider text-slate-100 backdrop-blur-sm whitespace-nowrap select-none shadow-sm shadow-black/40"
+                        style={{
+                            transition: "opacity 120ms linear",
+                            transform: "translateZ(0)",
+                        }}
+                    >
+                        <span className="text-sky-400 font-sans text-[9px]">
+                            ≈
+                        </span>
+                        <span className="font-medium">ATMOSPHERIC RIVER</span>
+                        <span className="text-slate-500">·</span>
+                        <span className="text-sky-300 font-semibold">
+                            +{moistureFluxPct}% FLUX
+                        </span>
+                    </div>
+                </Html>
+            </group>
+        </group>
     );
-    geom.setAttribute("uv", new THREE.BufferAttribute(data.uvs, 2));
-    geom.setIndex(new THREE.BufferAttribute(data.indices, 1));
-
-    const midIdx = Math.floor(data.centerline.length / 6) * 3;
-    const midVec: [number, number, number] = [
-      data.centerline[midIdx + 0],
-      data.centerline[midIdx + 1],
-      data.centerline[midIdx + 2],
-    ];
-
-    return { geometry: geom, midpoint: midVec };
-  }, [jetShiftDegrees, intensity]);
-
-  const uniforms = useMemo(
-    () => ({
-      uTime: { value: 0 },
-      uSpeed: { value: 0.35 },
-      uIntensity: { value: 0.3 },
-      uColorCore: { value: new THREE.Color("#f0f9ff") },
-      uColorEdge: { value: new THREE.Color("#0284c7") },
-    }),
-    [],
-  );
-
-  useFrame((state) => {
-    // 1. Advance shader uniforms deterministically (freezes to 0 when look.animate is false)
-    if (materialRef.current) {
-      materialRef.current.uniforms.uTime.value = lookTime(
-        look.animate,
-        state.clock.elapsedTime,
-      );
-      materialRef.current.uniforms.uSpeed.value = flowSpeed;
-      materialRef.current.uniforms.uIntensity.value = intensity;
-    }
-
-    // 2. Direct DOM limb-fade calculation
-    if (anchorRef.current && pillDomRef.current) {
-      anchorRef.current.getWorldPosition(_worldPos);
-      _camDir.subVectors(state.camera.position, _worldPos).normalize();
-      _surfaceNormal.copy(_worldPos).normalize();
-      const dot = _surfaceNormal.dot(_camDir);
-
-      const opacity = Math.min(Math.max((dot - 0.08) / 0.14, 0), 1);
-      pillDomRef.current.style.opacity = opacity.toFixed(2);
-      pillDomRef.current.style.display = opacity <= 0.01 ? "none" : "flex";
-    }
-  });
-
-  if (!visible) return null;
-
-  const moistureFluxPct = Math.round(intensity * 100);
-
-  return (
-    <group>
-      <mesh geometry={geometry} renderOrder={ATMOSPHERIC_RIVER_RENDER_ORDER}>
-        <shaderMaterial
-          ref={materialRef}
-          vertexShader={atmosphericRiverVertexShader}
-          fragmentShader={atmosphericRiverFragmentShader}
-          uniforms={uniforms}
-          transparent
-          depthWrite={false}
-          depthTest
-          side={THREE.DoubleSide}
-        />
-      </mesh>
-
-      {/* Floating telemetry label anchored at mid-ocean */}
-      <group ref={anchorRef} position={midpoint}>
-        <Html
-          center
-          distanceFactor={2.6}
-          style={{
-            pointerEvents: "none",
-            willChange: "transform",
-          }}
-        >
-          <div
-            ref={pillDomRef}
-            className="flex items-center gap-1.5 rounded-full border border-sky-500/30 bg-slate-950/75 px-2 py-0.5 text-[8.5px] font-mono tracking-wider text-slate-100 backdrop-blur-sm whitespace-nowrap select-none shadow-sm shadow-black/40"
-            style={{
-              transition: "opacity 120ms linear",
-              transform: "translateZ(0)",
-            }}
-          >
-            <span className="text-sky-400 font-sans text-[9px]">≈</span>
-            <span className="font-medium">ATMOSPHERIC RIVER</span>
-            <span className="text-slate-500">·</span>
-            <span className="text-sky-300 font-semibold">
-              +{moistureFluxPct}% FLUX
-            </span>
-          </div>
-        </Html>
-      </group>
-    </group>
-  );
 }

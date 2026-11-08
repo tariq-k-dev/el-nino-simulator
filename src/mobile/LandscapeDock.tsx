@@ -31,102 +31,114 @@
  * the region selection.
  */
 
-import type { AnalyticsPayload, RegionDefinition, RegionId, ScenarioMetrics, ScenarioState, UnitSystem } from '@/types/enso';
-import { dockWidth } from '@/mobile/layoutMath';
-import { SheetBody } from '@/mobile/SheetBody';
+import type {
+    AnalyticsPayload,
+    RegionDefinition,
+    RegionId,
+    ScenarioMetrics,
+    ScenarioState,
+    UnitSystem,
+} from "@/types/enso";
+import { dockWidth } from "@/mobile/layoutMath";
+import { SheetBody } from "@/mobile/SheetBody";
 
 interface LandscapeDockProps {
-  /** Layout-viewport width, so the dock can be exactly `dockWidth(w)` wide. */
-  viewportW: number;
-  /** The compact header's published bottom edge. The dock starts there. */
-  headerBottom: number;
-  metrics: ScenarioMetrics;
-  analytics: AnalyticsPayload;
-  scenarioSst: number;
-  region: RegionDefinition | null;
-  units: UnitSystem;
-  activeRegion: RegionId | null;
-  onSelect: (id: RegionId) => void;
-  onClearSelection: () => void;
-  onSstChange: (value: number) => void;
-  onChangeScenario: (patch: Pick<Partial<ScenarioState>, 'jetStreamShift' | 'agricultureWeight'>) => void;
-  /** The Niño box last flown to (C2.1), forwarded to the cards for `aria-pressed`. */
-  activeNinoBox: string | null;
-  /** The "Show on globe" trigger. The ONLY way a Niño box is flown to. */
-  onShowOnGlobe: (boxId: string) => void;
+    /** Layout-viewport width, so the dock can be exactly `dockWidth(w)` wide. */
+    viewportW: number;
+    /** The compact header's published bottom edge. The dock starts there. */
+    headerBottom: number;
+    metrics: ScenarioMetrics;
+    analytics: AnalyticsPayload;
+    scenarioSst: number;
+    region: RegionDefinition | null;
+    units: UnitSystem;
+    activeRegion: RegionId | null;
+    onSelect: (id: RegionId) => void;
+    onClearSelection: () => void;
+    onSstChange: (value: number) => void;
+    onChangeScenario: (
+        patch: Pick<
+            Partial<ScenarioState>,
+            "jetStreamShift" | "agricultureWeight"
+        >,
+    ) => void;
+    /** The Niño box last flown to (C2.1), forwarded to the cards for `aria-pressed`. */
+    activeNinoBox: string | null;
+    /** The "Show on globe" trigger. The ONLY way a Niño box is flown to. */
+    onShowOnGlobe: (boxId: string) => void;
 }
 
 export function LandscapeDock({
-  viewportW,
-  headerBottom,
-  metrics,
-  analytics,
-  scenarioSst,
-  region,
-  units,
-  activeRegion,
-  onSelect,
-  onClearSelection,
-  onSstChange,
-  onChangeScenario,
-  activeNinoBox,
-  onShowOnGlobe,
+    viewportW,
+    headerBottom,
+    metrics,
+    analytics,
+    scenarioSst,
+    region,
+    units,
+    activeRegion,
+    onSelect,
+    onClearSelection,
+    onSstChange,
+    onChangeScenario,
+    activeNinoBox,
+    onShowOnGlobe,
 }: LandscapeDockProps) {
-  const width = dockWidth(viewportW);
+    const width = dockWidth(viewportW);
 
-  return (
-    <aside
-      data-landscape-dock=""
-      aria-label="Impact analysis"
-      className="fixed right-0 z-30 flex flex-col border-l border-white/[0.08] bg-slate-950/90"
-      style={{
-        width: `${width}px`,
-        top: `${headerBottom}px`,
-        bottom: 0,
-        paddingRight: 'env(safe-area-inset-right)',
-        boxShadow: '-8px 0 40px -12px rgba(0,0,0,0.9)',
-      }}
-    >
-      {/*
+    return (
+        <aside
+            data-landscape-dock=""
+            aria-label="Impact analysis"
+            className="fixed right-0 z-30 flex flex-col border-l border-white/[0.08] bg-slate-950/90"
+            style={{
+                width: `${width}px`,
+                top: `${headerBottom}px`,
+                bottom: 0,
+                paddingRight: "env(safe-area-inset-right)",
+                boxShadow: "-8px 0 40px -12px rgba(0,0,0,0.9)",
+            }}
+        >
+            {/*
         The title row. It WRAPS rather than truncating, for the same reason the sheet's does: `GLOBAL ENSO STATE`
         is the whole label and an ellipsis in a 250 px column would hide the subject of every number under it.
       */}
-      <div className="shrink-0 border-b border-white/[0.06] px-3 py-2">
-        <div className="flex flex-wrap items-baseline gap-x-2 gap-y-0.5">
-          <span
-            data-testid="dock-title"
-            className="min-w-0 break-words font-mono text-[10px] uppercase tracking-[0.16em] text-slate-400"
-          >
-            {region ? region.name : 'Global ENSO state'}
-          </span>
-        </div>
-      </div>
+            <div className="shrink-0 border-b border-white/[0.06] px-3 py-2">
+                <div className="flex flex-wrap items-baseline gap-x-2 gap-y-0.5">
+                    <span
+                        data-testid="dock-title"
+                        className="min-w-0 break-words font-mono text-[10px] uppercase tracking-[0.16em] text-slate-400"
+                    >
+                        {region ? region.name : "Global ENSO state"}
+                    </span>
+                </div>
+            </div>
 
-      {/*
+            {/*
         The scroll container. `touch-action: pan-y` lets the browser own vertical scroll while a horizontal drag
         still reaches nothing in here; `overscroll-behavior: contain` keeps the bounce local.
       */}
-      <div
-        data-dock-scroll=""
-        className="scroll-thin min-h-0 flex-1 overflow-y-auto px-3 pb-[env(safe-area-inset-bottom)] pt-2"
-        style={{ touchAction: 'pan-y', overscrollBehavior: 'contain' }}
-      >
-        <SheetBody
-          surface="dock"
-          metrics={metrics}
-          analytics={analytics}
-          scenarioSst={scenarioSst}
-          region={region}
-          units={units}
-          activeRegion={activeRegion}
-          onSelect={onSelect}
-          onClearSelection={onClearSelection}
-          onSstChange={onSstChange}
-          onChangeScenario={onChangeScenario}
-          activeNinoBox={activeNinoBox}
-          onShowOnGlobe={onShowOnGlobe}
-        />
-      </div>
-    </aside>
-  );
+            <div
+                data-dock-scroll=""
+                className="scroll-thin min-h-0 flex-1 overflow-y-auto px-3 pb-[env(safe-area-inset-bottom)] pt-2"
+                style={{ touchAction: "pan-y", overscrollBehavior: "contain" }}
+            >
+                <SheetBody
+                    surface="dock"
+                    metrics={metrics}
+                    analytics={analytics}
+                    scenarioSst={scenarioSst}
+                    region={region}
+                    units={units}
+                    activeRegion={activeRegion}
+                    onSelect={onSelect}
+                    onClearSelection={onClearSelection}
+                    onSstChange={onSstChange}
+                    onChangeScenario={onChangeScenario}
+                    activeNinoBox={activeNinoBox}
+                    onShowOnGlobe={onShowOnGlobe}
+                />
+            </div>
+        </aside>
+    );
 }

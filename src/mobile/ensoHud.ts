@@ -34,31 +34,31 @@ export const VERY_STRONG_FROM = 2.0;
 
 /** The six states, warm spelled out and cold mirrored. `neutral` is the shared middle. */
 export type EnsoCategory =
-  | 'neutral'
-  | 'weak-el-nino'
-  | 'moderate-el-nino'
-  | 'strong-el-nino'
-  | 'very-strong-el-nino'
-  | 'weak-la-nina'
-  | 'moderate-la-nina'
-  | 'strong-la-nina'
-  | 'very-strong-la-nina';
+    | "neutral"
+    | "weak-el-nino"
+    | "moderate-el-nino"
+    | "strong-el-nino"
+    | "very-strong-el-nino"
+    | "weak-la-nina"
+    | "moderate-la-nina"
+    | "strong-la-nina"
+    | "very-strong-la-nina";
 
 /** The label the island prints for each state. Uppercase, because it is a badge, not a sentence. */
 const LABEL: Record<EnsoCategory, string> = {
-  neutral: 'NEUTRAL',
-  'weak-el-nino': 'WEAK EL NIÑO',
-  'moderate-el-nino': 'MODERATE EL NIÑO',
-  'strong-el-nino': 'STRONG EL NIÑO',
-  'very-strong-el-nino': 'VERY STRONG EL NIÑO',
-  'weak-la-nina': 'WEAK LA NIÑA',
-  'moderate-la-nina': 'MODERATE LA NIÑA',
-  'strong-la-nina': 'STRONG LA NIÑA',
-  'very-strong-la-nina': 'VERY STRONG LA NIÑA',
+    neutral: "NEUTRAL",
+    "weak-el-nino": "WEAK EL NIÑO",
+    "moderate-el-nino": "MODERATE EL NIÑO",
+    "strong-el-nino": "STRONG EL NIÑO",
+    "very-strong-el-nino": "VERY STRONG EL NIÑO",
+    "weak-la-nina": "WEAK LA NIÑA",
+    "moderate-la-nina": "MODERATE LA NIÑA",
+    "strong-la-nina": "STRONG LA NIÑA",
+    "very-strong-la-nina": "VERY STRONG LA NIÑA",
 };
 
 /** The band, by magnitude, ignoring sign. */
-type Band = 'neutral' | 'weak' | 'moderate' | 'strong' | 'very-strong';
+type Band = "neutral" | "weak" | "moderate" | "strong" | "very-strong";
 
 /**
  * Band for an absolute anomaly.
@@ -68,11 +68,11 @@ type Band = 'neutral' | 'weak' | 'moderate' | 'strong' | 'very-strong';
  * word "from" in every band's definition.
  */
 function bandOf(magnitude: number): Band {
-  if (magnitude < WEAK_FROM) return 'neutral';
-  if (magnitude < MODERATE_FROM) return 'weak';
-  if (magnitude < STRONG_FROM) return 'moderate';
-  if (magnitude < VERY_STRONG_FROM) return 'strong';
-  return 'very-strong';
+    if (magnitude < WEAK_FROM) return "neutral";
+    if (magnitude < MODERATE_FROM) return "weak";
+    if (magnitude < STRONG_FROM) return "moderate";
+    if (magnitude < VERY_STRONG_FROM) return "strong";
+    return "very-strong";
 }
 
 /**
@@ -83,20 +83,21 @@ function bandOf(magnitude: number): Band {
  * magnitude. The `magnitude < WEAK_FROM` early return makes that impossible regardless.
  */
 export function ensoCategory(anomalyC: number): EnsoCategory {
-  if (!Number.isFinite(anomalyC)) return 'neutral';
-  const magnitude = Math.abs(anomalyC);
-  const band = bandOf(magnitude);
-  if (band === 'neutral') return 'neutral';
-  const cold = anomalyC < 0;
-  if (band === 'weak') return cold ? 'weak-la-nina' : 'weak-el-nino';
-  if (band === 'moderate') return cold ? 'moderate-la-nina' : 'moderate-el-nino';
-  if (band === 'strong') return cold ? 'strong-la-nina' : 'strong-el-nino';
-  return cold ? 'very-strong-la-nina' : 'very-strong-el-nino';
+    if (!Number.isFinite(anomalyC)) return "neutral";
+    const magnitude = Math.abs(anomalyC);
+    const band = bandOf(magnitude);
+    if (band === "neutral") return "neutral";
+    const cold = anomalyC < 0;
+    if (band === "weak") return cold ? "weak-la-nina" : "weak-el-nino";
+    if (band === "moderate")
+        return cold ? "moderate-la-nina" : "moderate-el-nino";
+    if (band === "strong") return cold ? "strong-la-nina" : "strong-el-nino";
+    return cold ? "very-strong-la-nina" : "very-strong-el-nino";
 }
 
 /** The uppercase label for a state, for a badge. */
 export function ensoLabel(category: EnsoCategory): string {
-  return LABEL[category];
+    return LABEL[category];
 }
 
 /**
@@ -106,7 +107,7 @@ export function ensoLabel(category: EnsoCategory): string {
  * next to a degree glyph where the difference is visible. This is the only place the character is chosen,
  * so a reader cannot get a hyphen from one call site and a minus from another.
  */
-export const MINUS = '\u2212';
+export const MINUS = "\u2212";
 
 /**
  * One decimal place, with an explicit `+` for positive values and `MINUS` for negative ones.
@@ -118,11 +119,11 @@ export const MINUS = '\u2212';
  * island prints. Both directions therefore collapse to the same `0.0°C`.
  */
 export function formatAnomaly(anomalyC: number): string {
-  if (!Number.isFinite(anomalyC)) return `0.0°C`;
-  const rounded = Math.round(Math.abs(anomalyC) * 10) / 10;
-  if (rounded === 0) return '0.0°C';
-  const sign = anomalyC < 0 ? MINUS : '+';
-  return `${sign}${rounded.toFixed(1)}°C`;
+    if (!Number.isFinite(anomalyC)) return `0.0°C`;
+    const rounded = Math.round(Math.abs(anomalyC) * 10) / 10;
+    if (rounded === 0) return "0.0°C";
+    const sign = anomalyC < 0 ? MINUS : "+";
+    return `${sign}${rounded.toFixed(1)}°C`;
 }
 
 /**
@@ -133,5 +134,5 @@ export function formatAnomaly(anomalyC: number): string {
  * would fail the moment the store moved.
  */
 export function formatIsland(anomalyC: number): string {
-  return `ENSO: ${formatAnomaly(anomalyC)} | ${ensoLabel(ensoCategory(anomalyC))}`;
+    return `ENSO: ${formatAnomaly(anomalyC)} | ${ensoLabel(ensoCategory(anomalyC))}`;
 }

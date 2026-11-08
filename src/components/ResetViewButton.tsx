@@ -50,61 +50,66 @@
  * swallowed orbit drags would be unusable). Every interactive child re-enables pointer events for itself —
  * same construction as the unit toggle and Snapshot beside it.
  */
-import { useCallback, useRef, useSyncExternalStore } from 'react';
-import { RotateCcw } from 'lucide-react';
+import { useCallback, useRef, useSyncExternalStore } from "react";
+import { RotateCcw } from "lucide-react";
 import {
-  getViewState,
-  publishHasRegion,
-  requestReset,
-  subscribeViewState,
-} from '@/scene/viewStore';
-import { resetView } from '@/scene/resetView';
+    getViewState,
+    publishHasRegion,
+    requestReset,
+    subscribeViewState,
+} from "@/scene/viewStore";
+import { resetView } from "@/scene/resetView";
 
 interface ResetViewButtonProps {
-  /** The selection clearer — `App.tsx`'s `selectRegion`, i.e. the drawer X / Escape path. */
-  onClearSelection: () => void;
+    /** The selection clearer — `App.tsx`'s `selectRegion`, i.e. the drawer X / Escape path. */
+    onClearSelection: () => void;
 }
 
 export function ResetViewButton({ onClearSelection }: ResetViewButtonProps) {
-  const { viewIsDefault, hasRegion } = useSyncExternalStore(
-    subscribeViewState,
-    getViewState,
-    getViewState,
-  );
-  const buttonRef = useRef<HTMLButtonElement>(null);
-
-  const disabled = viewIsDefault && !hasRegion;
-
-  const onClick = useCallback(() => {
-    /*
-     * Capture whether focus is inside the drawer BEFORE closing it: after `resetView()` the panel is
-     * `aria-hidden` and off-canvas, so the check would still pass but the intent would be harder to read.
-     */
-    const active = document.activeElement;
-    const focusWasInDrawer = Boolean(
-      active && active instanceof Element && active.closest('[data-occluder="right-drawer"]'),
+    const { viewIsDefault, hasRegion } = useSyncExternalStore(
+        subscribeViewState,
+        getViewState,
+        getViewState,
     );
+    const buttonRef = useRef<HTMLButtonElement>(null);
 
-    resetView({ clearSelection: onClearSelection, requestViewReset: requestReset });
+    const disabled = viewIsDefault && !hasRegion;
 
-    if (focusWasInDrawer) buttonRef.current?.focus();
-    /* The selection is now cleared by construction, so the published region flag must follow at once. */
-    publishHasRegion(false);
-  }, [onClearSelection]);
+    const onClick = useCallback(() => {
+        /*
+         * Capture whether focus is inside the drawer BEFORE closing it: after `resetView()` the panel is
+         * `aria-hidden` and off-canvas, so the check would still pass but the intent would be harder to read.
+         */
+        const active = document.activeElement;
+        const focusWasInDrawer = Boolean(
+            active &&
+            active instanceof Element &&
+            active.closest('[data-occluder="right-drawer"]'),
+        );
 
-  return (
-    <button
-      ref={buttonRef}
-      type="button"
-      onClick={onClick}
-      disabled={disabled}
-      aria-disabled={disabled}
-      aria-label="Reset view"
-      data-testid="reset-view"
-      className="pointer-events-auto flex items-center gap-1.5 rounded-full border border-white/[0.08] bg-black/40 px-3 py-1.5 text-[10px] font-medium uppercase tracking-[0.12em] text-slate-300 backdrop-blur-md transition-all duration-300 hover:border-white/20 hover:text-slate-100 disabled:opacity-40 disabled:hover:border-white/[0.08] disabled:hover:text-slate-300"
-    >
-      <RotateCcw size={12} />
-      <span className="hidden sm:inline">Reset view</span>
-    </button>
-  );
+        resetView({
+            clearSelection: onClearSelection,
+            requestViewReset: requestReset,
+        });
+
+        if (focusWasInDrawer) buttonRef.current?.focus();
+        /* The selection is now cleared by construction, so the published region flag must follow at once. */
+        publishHasRegion(false);
+    }, [onClearSelection]);
+
+    return (
+        <button
+            ref={buttonRef}
+            type="button"
+            onClick={onClick}
+            disabled={disabled}
+            aria-disabled={disabled}
+            aria-label="Reset view"
+            data-testid="reset-view"
+            className="pointer-events-auto flex items-center gap-1.5 rounded-full border border-white/[0.08] bg-black/40 px-3 py-1.5 text-[10px] font-medium uppercase tracking-[0.12em] text-slate-300 backdrop-blur-md transition-all duration-300 hover:border-white/20 hover:text-slate-100 disabled:opacity-40 disabled:hover:border-white/[0.08] disabled:hover:text-slate-300"
+        >
+            <RotateCcw size={12} />
+            <span className="hidden sm:inline">Reset view</span>
+        </button>
+    );
 }
