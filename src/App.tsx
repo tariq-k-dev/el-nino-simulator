@@ -411,13 +411,8 @@ export default function App() {
                     analytics={analytics}
                     units={units}
                     onClose={() => selectRegion(null)}
-                    /*
-                     * The switcher retargets through the SAME path the cards use, so the drawer stays open (its
-                     * open/closed state is a function of `activeRegion`) and the camera flies the same arc it would
-                     * have flown from a card click. Deliberately NOT `clearSelection` + select: that would close and
-                     * reopen the drawer, moving focus off the chip the user just pressed.
-                     */
                     onSelect={selectRegion}
+                    telemetry={telemetry}
                 />
             ) : null}
 
