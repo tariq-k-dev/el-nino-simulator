@@ -60,9 +60,8 @@ Rather than relying on latency-heavy server-side spatial database clusters, this
 ## 🔬 Core Engineering Challenges & Graphics Pipeline
 
 ### 1. In-Browser Analytics via Columnar WebAssembly
-
-- **Problem:** Scanning decades of historical ENSO observations across 6 global teleconnection regions usually requires high-concurrency cloud databases, introducing 200–800ms of network latency per slider drag.
-- **Solution:** Embedded DuckDB-WASM inside a dedicated Web Worker. Pre-compiled Snappy-compressed Parquet datasets are fetched once, cached in IndexedDB, and queried via SQL in memory. Nearest-neighbor analog queries run with sub-millisecond execution, completely offloading the main UI thread.
+* **Problem:** Scanning decades of historical ENSO observations across 6 global teleconnection regions usually requires high-concurrency cloud databases, introducing 200–800ms of network latency per slider drag.
+* **Solution:** Embedded DuckDB-WASM inside a dedicated Web Worker. Pre-compiled Snappy-compressed Parquet datasets are fetched once, cached in IndexedDB, and queried via SQL in memory. Nearest-neighbor analog queries run with sub-millisecond execution, completely offloading the main UI thread.
 
 ### 2. High-DPI Canvas Capture & Composite Export
 
@@ -70,14 +69,12 @@ Rather than relying on latency-heavy server-side spatial database clusters, this
 - **Solution:** Implemented a synchronous renderer registration pattern (`src/lib/canvasCapture.ts`). The export pipeline coordinates a single dedicated WebGL render call in lockstep with the off-screen compositor before reading the data URL, wrapping the visual state with client-side query timing, observation bounds, and nearest historical analogs into an instant HTML diagnostic report.
 
 ### 3. Camera Framing & Viewport Inset Mathematics
-
-- **Problem:** On mobile and tablet devices, responsive drawers cover up to 50% of the viewport, throwing the globe off-center and causing camera oscillation (jitter) when switching regions.
-- **Solution:** Designed an inset-aware framing engine (`src/layout/insets.ts` and `src/scene/CameraDirector.tsx`). Calculates dynamic NDC bounding boxes that offset the globe's target vector into the remaining visible optical center, paired with an independent dual-channel slerp/lerp easing pipeline that halts rotation before terminal zoom settle.
+* **Problem:** On mobile and tablet devices, responsive drawers cover up to 50% of the viewport, throwing the globe off-center and causing camera oscillation (jitter) when switching regions.
+* **Solution:** Designed an inset-aware framing engine (`src/layout/insets.ts` and `src/scene/CameraDirector.tsx`). Calculates dynamic NDC bounding boxes that offset the globe's target vector into the remaining visible optical center, paired with an independent dual-channel slerp/lerp easing pipeline that halts rotation before terminal zoom settle.
 
 ### 4. PBR Texture & Atmosphere Tuning
-
-- **Ocean Gloss Inversion:** `earth_specular.jpg` is white on water (a gloss mask), but Three.js's `roughnessMap` reads white as rough. The mask is inverted once on an off-screen canvas at load time; binding it raw made oceans matte and continents mirror-like.
-- **Single-Shell Rayleigh/Mie Atmosphere:** The rim stays a thin cyan-to-deep-blue fringe; SST anomalies drive thermal intensity and latitude-band heat, never the sky colour (Rayleigh scattering is an intrinsic property of the gas column, not the sea surface).
+* **Ocean Gloss Inversion:** `earth_specular.jpg` is white on water (a gloss mask), but Three.js's `roughnessMap` reads white as rough. The mask is inverted once on an off-screen canvas at load time; binding it raw made oceans matte and continents mirror-like.
+* **Single-Shell Rayleigh/Mie Atmosphere:** The rim stays a thin cyan-to-deep-blue fringe; SST anomalies drive thermal intensity and latitude-band heat, never the sky colour (Rayleigh scattering is an intrinsic property of the gas column, not the sea surface).
 
 ## 🛠️ Tech Stack
 
