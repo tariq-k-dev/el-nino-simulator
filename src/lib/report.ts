@@ -120,7 +120,7 @@ export function buildReportHtml({
 <html lang="en">
 <head>
 <meta charset="utf-8" />
-<title>Super El Niño Impact Report — ${new Date().toISOString().slice(0, 10)}</title>
+<title>super-el-nino-report-${new Date().toISOString().replace(/[:.]/g, "-").slice(0, 19)}</title>
 <style>
   @page { size: A4; margin: 14mm; }
   * { box-sizing: border-box; }
@@ -141,7 +141,10 @@ export function buildReportHtml({
     text-transform: uppercase; background: ${accent}1f; color: ${accent};
     border: 1px solid ${accent}55; }
   .grid { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
-  .card { border: 1px solid #e5e7eb; border-radius: 8px; padding: 10px 12px; }
+  .card {
+    border: 1px solid #e5e7eb; border-radius: 8px; padding: 10px 12px;
+    font-size: 14px; line-height: 1.6; color: #1e293b;
+  }
   .k { font-family: ui-monospace, monospace; font-size: 8px; letter-spacing: .14em;
     text-transform: uppercase; color: #6b7280; }
   .big { font-family: ui-monospace, monospace; font-size: 21px; font-weight: 600;
@@ -154,8 +157,9 @@ export function buildReportHtml({
   td.v .u { font-weight: 400; color: #9ca3af; font-size: 8px; margin-left: 1px; }
   .dim { color: #9ca3af; font-weight: 400; }
   .shot { width: 100%; border-radius: 8px; border: 1px solid #e5e7eb; display: block; }
-  footer { margin-top: 22px; padding-top: 10px; border-top: 1px solid #e5e7eb;
-    font-size: 8.5px; color: #9ca3af; display: flex; justify-content: space-between; }
+  footer { margin-top: 22px; padding: 16px 0; border-top: 1px solid #e5e7eb;
+    font-size: 14px; font-weight: 600; color: #334155;
+    display: flex; justify-content: space-between; }
   .no-print { margin-bottom: 18px; }
   .btn { font: inherit; font-size: 11px; padding: 7px 16px; border-radius: 6px;
     border: 1px solid #10151f; background: #10151f; color: #fff; cursor: pointer; }
@@ -216,7 +220,7 @@ export function buildReportHtml({
   }
 
   <h2>Model Basis</h2>
-  <div class="card" style="font-size:9.5px;color:#374151">
+  <div class="card">
     Regional equations follow the published Super El Niño impact specification:
     Pacific SST deviation = anomaly × 1.15 and convection = min(100, anomaly × 35);
     Western US precip = +15% + 18%·anomaly with a −0.5 °F − 0.8 °F·anomaly thermal term;
@@ -236,11 +240,8 @@ export function buildReportHtml({
 }
 
 export function openReport(html: string): void {
-    const win = window.open("", "_blank");
-    if (!win) return;
-    win.document.open();
-    win.document.write(html);
-    win.document.title =
-        html.match(/<title>(.*?)<\/title>/)?.[1] ?? "Super El Niño Report";
-    win.document.close();
+    const blob = new Blob([html], { type: "text/html;charset=utf-8" });
+    const url = URL.createObjectURL(blob);
+    const reportWin = window.open(url, "_blank");
+    if (!reportWin) return;
 }
