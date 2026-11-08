@@ -370,6 +370,24 @@ export async function composeSnapshot({
         OUT_H - 28,
     );
     ctx.textAlign = "left";
+}
+
+/**
+ * Compose the snapshot and return it as a PNG blob.
+ *
+ * Rejects if the 2D context cannot be created (extremely rare; a browser with
+ * WebGL but no 2D canvas is not a real configuration).
+ */
+export async function composeSnapshot(
+    input: SnapshotInput,
+): Promise<Blob> {
+    const canvas = document.createElement("canvas");
+    canvas.width = OUT_W;
+    canvas.height = OUT_H;
+    const ctx = canvas.getContext("2d");
+    if (!ctx) throw new Error("snapshot: 2D context unavailable");
+
+    composeSnapshotToCanvas(ctx, input);
 
     return new Promise<Blob>((resolve, reject) => {
         canvas.toBlob(
@@ -381,4 +399,25 @@ export async function composeSnapshot({
             1,
         );
     });
+}
+
+/**
+ * Compose the snapshot and return it as a `data:image/png;base64,…` URL.
+ *
+ * Used by the HTML report, which embeds the image inline. A blob URL would
+ * break the moment the report is saved to disk or emailed as an attachment —
+ * the URL is scoped to the originating document — so the report needs a
+ * self-contained string, not a handle.
+ */
+export async function composeSnapshotToDataUrl(
+    input: SnapshotInput,
+): Promise<string> {
+    const canvas = document.createElement("canvas");
+    canvas.width = OUT_W;
+    canvas.height = OUT_H;
+    const ctx = canvas.getContext("2d");
+    if (!ctx) throw new Error("snapshot: 2D context unavailable");
+
+    composeSnapshotToCanvas(ctx, input);
+    return canvas.toDataURL("image/png");
 }
