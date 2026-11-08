@@ -107,17 +107,6 @@ function drawValue(
     ctx.fillText(text, x, y);
 }
 
-function drawValue(
-    ctx: CanvasRenderingContext2D,
-    text: string,
-    x: number,
-    y: number,
-): void {
-    ctx.fillStyle = TEXT_PRIMARY;
-    ctx.font = "600 26px ui-monospace, 'JetBrains Mono', monospace";
-    ctx.fillText(text, x, y);
-}
-
 /**
  * Compose the snapshot and return it as a PNG blob.
  *
