@@ -475,7 +475,7 @@ export function Hotspot({
 
                 THREE.Mesh.prototype.raycast.call(proxy, raycaster, intersects);
             },
-        [baseNormal, earthRef, region.id],
+        [baseNormal, earthRef],
     );
 
     return (
