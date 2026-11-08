@@ -161,7 +161,7 @@ function drawDomLabels(
         const py = v * source.height;
         return {
             x: ((px - sx) / sw) * OUT_W,
-            y: ((py - sh * 0 + sy) - sy) / sh * OUT_H + 0,
+            y: ((py - sy) / sh) * OUT_H,
         };
     };
 
