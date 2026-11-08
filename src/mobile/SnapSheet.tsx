@@ -49,6 +49,7 @@ import type {
     RegionId,
     ScenarioMetrics,
     ScenarioState,
+    TelemetryBundle,
     UnitSystem,
 } from "@/types/enso";
 import { Sparkline } from "@/components/ui/Sparkline";
@@ -142,6 +143,8 @@ interface SnapSheetProps {
     activeNinoBox: string | null;
     /** The "Show on globe" trigger. The ONLY way a Niño box is flown to. */
     onShowOnGlobe: (boxId: string) => void;
+    /** Live telemetry, forwarded to the shared body. */
+    telemetry?: TelemetryBundle | null;
 }
 
 /**
@@ -176,6 +179,7 @@ export const SnapSheet = forwardRef<SnapSheetHandle, SnapSheetProps>(
             onChangeScenario,
             activeNinoBox,
             onShowOnGlobe,
+            telemetry,
         },
         ref,
     ) {
@@ -419,6 +423,7 @@ export const SnapSheet = forwardRef<SnapSheetHandle, SnapSheetProps>(
                         onChangeScenario={onChangeScenario}
                         activeNinoBox={activeNinoBox}
                         onShowOnGlobe={onShowOnGlobe}
+                        telemetry={telemetry}
                     />
                     {/*
           The full tier's sections live in `SheetBody` behind `surface`. This latch is what keeps MOBILE1's

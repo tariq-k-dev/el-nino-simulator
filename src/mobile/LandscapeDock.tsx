@@ -66,6 +66,8 @@ interface LandscapeDockProps {
     activeNinoBox: string | null;
     /** The "Show on globe" trigger. The ONLY way a Niño box is flown to. */
     onShowOnGlobe: (boxId: string) => void;
+    /** Live telemetry, forwarded to the shared body. */
+    telemetry?: TelemetryBundle | null;
 }
 
 export function LandscapeDock({
@@ -83,6 +85,7 @@ export function LandscapeDock({
     onChangeScenario,
     activeNinoBox,
     onShowOnGlobe,
+    telemetry,
 }: LandscapeDockProps) {
     const width = dockWidth(viewportW);
 
@@ -137,6 +140,7 @@ export function LandscapeDock({
                     onChangeScenario={onChangeScenario}
                     activeNinoBox={activeNinoBox}
                     onShowOnGlobe={onShowOnGlobe}
+                    telemetry={telemetry}
                 />
             </div>
         </aside>
