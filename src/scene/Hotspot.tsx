@@ -305,7 +305,21 @@ export function Hotspot({
 
             const el = labelWrapRef.current;
             el.style.opacity = facingRef.current.toFixed(3);
-            el.style.pointerEvents = facingRef.current > 0.35 ? "auto" : "none";
+            /*
+             * The WRAPPER stays non-interactive; only the button inside it takes pointer events.
+             *
+             * The wrapper is a full-size div around the pill, so `pointerEvents: "auto"` on it made the whole
+             * box a click target — including the transparent margin around the button. A press aimed at the
+             * pin head that landed in that margin hit the wrapper, not the proxy, and the proxy's
+             * `onPointerDown` never ran. Keeping the wrapper `none` and toggling the button alone means a
+             * click passes through to the canvas unless it is actually on the pill.
+             */
+            el.style.pointerEvents = "none";
+            const btn = el.querySelector("button");
+            if (btn) {
+                btn.style.pointerEvents =
+                    facingRef.current > 0.35 ? "auto" : "none";
+            }
             el.style.visibility =
                 facingRef.current < 0.03 ? "hidden" : "visible";
         }
