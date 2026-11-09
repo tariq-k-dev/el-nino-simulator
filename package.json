@@ -18,7 +18,7 @@
         "preview": "vite preview",
         "lint": "eslint . --max-warnings 0",
         "test": "vitest run",
-        "typecheck": "tsc -b --noEmit false --pretty false",
+        "typecheck": "tsc -b --pretty false",
         "//e2e": "Batched: ONE Playwright process per spec file, each with its own server port. The full suite is recorded crashing the browser worker (0xC0000142) part-way through one long serial run under SwiftShader; splitting per file sidesteps it. Retries once ONLY on a worker crash. For a targeted subset use `e2e:raw`, e.g. `pnpm e2e:raw -- --grep globe`; PLAYWRIGHT_HTML_OPEN=never keeps CI from blocking on the report.",
         "//e2e:raw": "Single Playwright process over whichever specs the arguments select. The old `pnpm e2e` behaviour, kept for --grep runs against one feature area.",
         "e2e": "node scripts/e2e-batched.mjs",
