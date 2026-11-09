@@ -157,12 +157,12 @@ export interface FrameProbeState {
      * animation runs.
      */
     focus: "idle" | "focusing" | "focused" | "returning";
-    /** Step 3B: has a writer other than the fit moved the distance? Gates the fit's distance channel. */
+    /** Has a writer other than the fit moved the distance? Gates the fit's distance channel. */
     userZoomed: boolean;
-    /** Step 3B: the region being targeted, or null. */
+    /** The region being targeted, or null. */
     regionId: string | null;
     /**
-     * Step 3B2: is the camera at the framed default pose with nothing selected and no user zoom?
+     * Is the camera at the framed default pose with nothing selected and no user zoom?
      *
      * OPTIONAL on purpose. It is a new field of a total type that several existing fixtures build by
      * hand (`frameProbe.test.ts`'s `liveState()`), and a required field there would force edits to tests
