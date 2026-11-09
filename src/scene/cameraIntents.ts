@@ -1,5 +1,12 @@
 /**
- * The intent channel between the E2E hook and the `CameraDirector`.
+ * Communication channel between external systems and the camera director.
+ *
+ * Allows:
+ * - Direct camera pose updates (for debugging/tests)
+ * - Niño box focus requests
+ * - Runtime camera state inspection
+ *
+ * Prevents direct camera manipulation outside the director module.
  *
  * ## Why this indirection exists
  *

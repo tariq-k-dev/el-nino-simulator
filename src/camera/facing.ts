@@ -1,5 +1,14 @@
 /**
- * `facingPose` and `arcStep` — the PURE geometry of the live focus policy.
+ * Geometric calculations for camera positioning relative to surface points.
+ *
+ * Handles:
+ * - Great-circle interpolation paths
+ * - Polar angle constraints
+ * - Antipodal edge cases
+ * - Unit vector operations
+ * - Convergence testing
+ *
+ * Uses pure vector math without Three.js dependencies.
  *
  * ## What changes from the legacy fly-to
  *

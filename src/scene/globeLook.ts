@@ -1,5 +1,14 @@
 /**
- * GLOBE_LOOK — every constant that decides how the Earth *looks*.
+ * Global lighting and material configuration for the Earth visualization.
+ *
+ * Contains tuned parameters for:
+ * - Pin emissive properties and positioning
+ * - Atmospheric scattering effects
+ * - Ocean surface reflectance
+ * - Bloom post-processing
+ * - Light rig intensities and colors
+ *
+ * Exported as a frozen object for easy inspection and testing.
  *
  * Why one object: the look is the product of six independent contributions
  * (pin emissive, atmosphere shell, sun glint, cloud shell, bloom, tone mapping).

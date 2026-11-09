@@ -1,5 +1,18 @@
 /**
- * `CameraDirector` — the ONLY module that writes the camera after mount.
+ * The sole module responsible for camera positioning and movement.
+ *
+ * Handles:
+ * - Orbit controls damping and constraints
+ * - Viewport framing calculations
+ * - Focus transitions between regions
+ * - Mobile viewport adaptations
+ * - Reset behavior coordination
+ *
+ * Maintains synchronization between:
+ * - Three.js camera/controls
+ * - React state
+ * - Viewport insets
+ * - Layout modes
  *
  * ## What this replaces, and what it must not change
  *

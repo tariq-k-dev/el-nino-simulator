@@ -230,9 +230,19 @@ interface GlobeSceneProps {
 }
 
 /**
- * Canvas host. Everything inside <Canvas> is a separate React reconciler, so
- * state that the DOM also needs (selection, metrics) is passed down as props —
- * never bridged through context across the boundary.
+ * Main 3D scene container and WebGL canvas host.
+ *
+ * Manages:
+ * - Three.js renderer setup
+ * - Texture loading state
+ * - Error boundaries
+ * - Pointer event handling
+ * - Scene lighting configuration
+ * - Post-processing effects
+ *
+ * Everything inside <Canvas> is a separate React reconciler, so state that the
+ * DOM also needs (selection, metrics) is passed down as props — never bridged
+ * through context across the boundary.
  */
 export function GlobeScene({
     sst,

@@ -103,6 +103,22 @@ function coarsePointer(): boolean {
 }
 
 /**
+ * Interactive region markers on the globe surface.
+ *
+ * Features:
+ * - Pulsing shader rings
+ * - Emissive pin heads
+ * - Screen-space hit targets
+ * - SST-driven color ramping
+ * - Limb fade effects
+ * - Accessible labels
+ *
+ * Raycasting accounts for:
+ * - Surface normal visibility
+ * - Camera distance scaling
+ * - Motion prediction
+ * - Pointer coarseness
+ *
  * A hotspot = pulsing shader ring lying tangent to the surface + a pin stem +
  * a clickable label. Colour is driven by the global SST anomaly so the whole
  * constellation shifts from cyan to red as the slider moves.

@@ -1,5 +1,11 @@
 /**
- * The easing constants the fly-to has always used, in ONE place.
+ * Shared easing constants for camera animations.
+ *
+ * Provides:
+ * - Target tracking damping factors
+ * - Distance interpolation curves
+ * - Convergence thresholds
+ * - Frame-rate independent calculations
  *
  * ## Why this file exists
  *

@@ -1,15 +1,12 @@
 /**
- * The Reset View rule, as one handler (step 3B2-FIX1 B2).
+ * Resets both the camera view and app state to their default configuration.
  *
- * ## The defect this closes
+ * Coordinates two synchronous operations:
+ * 1. Resets the camera position/orientation via viewStore.requestReset()
+ * 2. Clears any active selection via selectRegion(null)
  *
- * Reset used to raise only `requestReset()`, which reached `CameraDirector` and returned the camera to the
- * framed default pose with the spin resumed. The React selection in `App.tsx` was never touched, so the
- * region card and the drawer STAYED OPEN over a default-pose globe: the app was left in a state no load
- * ever produces.
- *
- * Reset now means "the load state": no region, drawer closed, idle, default direction, `d_fit`,
- * `userZoomed` false, spin running.
+ * The order ensures the camera machine transitions to 'returning' before React
+ * processes the selection change, preventing race conditions between the two paths.
  *
  * ## Why both channels, and why in this order
  *

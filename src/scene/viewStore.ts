@@ -1,5 +1,14 @@
 /**
- * `viewStore` — the tiny store that lets React see what the camera is doing without per-frame renders.
+ * Manages shared view state between React and the Three.js render loop.
+ *
+ * Tracks:
+ * - Whether the view is in default position
+ * - Current spin/animation state
+ * - Active region selections
+ * - Reset request counter
+ * - Layout mode changes
+ *
+ * Uses stable references to minimize React re-renders.
  *
  * ## Two jobs, one file
  *
