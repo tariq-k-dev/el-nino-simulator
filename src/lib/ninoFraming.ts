@@ -1,5 +1,5 @@
 /**
- * The pure maths for the Niño "Show on globe" fly-to (step 2.3c-1, C2.2).
+ * The pure maths for the Niño "Show on globe" fly-to.
  *
  * Nothing here touches three.js, React or the DOM: it takes a `NinoBox` plus the camera's fov and
  * aspect and returns a (lat, lon) aim point and a camera distance. That keeps the part with the
@@ -17,10 +17,9 @@
  *
  *     d = cos(a) + sin(a) / tan(half)
  *
- * For small `a` this reduces to `1 + tan(a)/tan(half)`, which is the small-angle form the 2.3a memo
- * carried. The exact form is used because a Niño box is up to ~25° wide and the small-angle version
- * under-estimates the needed distance there — the box would sit against the frame edge with its
- * outline clipped.
+ * For small `a` this reduces to `1 + tan(a)/tan(half)`, the small-angle form. The exact form is
+ * used because a Niño box is up to ~25° wide and the small-angle version under-estimates the needed
+ * distance there — the box would sit against the frame edge with its outline clipped.
  *
  * Vertically `half` is fov/2; horizontally it is `atan(tan(fov/2) * aspect)`, which is what makes the
  * portrait case width-limited and therefore FURTHER away, not nearer.
@@ -28,7 +27,7 @@
 
 import type { NinoBox } from "@/lib/regions";
 
-/** Slack on the fitted distance, per the step: `max(needed * 1.1, 1.25)`. */
+/** Slack on the fitted distance: `max(needed * 1.1, 1.25)`. */
 export const NINO_FLYTO_MARGIN = 1.1;
 
 /** The controls' own floor (`GlobeScene.tsx:726-727`). This file may not change it, only respect it. */
@@ -77,8 +76,7 @@ export function crossesAntimeridian(fromLon: number, toLon: number): boolean {
      * shortest arc is +10. |−350| > |10|, so the path crosses.
      * -150 -> -120: naive difference 30, shortest 30, so it does not.
      *
-     * The first version of this had the comparison inverted and reported false for the 175 -> 185
-     * case, which its own test caught.
+     * An inverted comparison here reports false for the 175 -> 185 case, which the test pins.
      */
     const naive = wrapLon180(toLon) - wrapLon180(fromLon);
     return Math.abs(naive) > Math.abs(shortestLonDelta(fromLon, toLon)) + 1e-9;
@@ -88,9 +86,9 @@ export function crossesAntimeridian(fromLon: number, toLon: number): boolean {
  * The box centre in 360 space, then wrapped.
  *
  * The centre is the registry anchor (`anchorLat`/`anchorLon`), which for Niño 4 is lat 0, lon -175
- * and wraps to 185. Anchor rule from C1.1: the CENTRE is used, because it is front-facing at every
- * shipped viewport (dot +0.0819 > the 0.06 facing threshold) and the western alternative at 170E is
- * back-facing there (-0.1631).
+ * and wraps to 185. The CENTRE is used because it is front-facing at every shipped viewport
+ * (dot +0.0819 > the 0.06 facing threshold) and the western alternative at 170E is back-facing
+ * there (-0.1631).
  */
 export function boxCentreLon360(box: NinoBox): number {
     return wrapLon360(box.anchorLon);
@@ -146,12 +144,11 @@ export function boxHalfExtents(box: NinoBox): {
  * `d = cos(a) + sin(a)/tan(half)`.
  *
  * Degenerate cases. At `a = 0` the distance is 1: the point is on the axis, so any distance frames it.
- * At `a >= half` the old version returned `Infinity`, on the theory that a point beyond the frame edge
- * cannot be framed. That is wrong, and it silently broke the free-rect fit: `d` is the distance at
- * which the point lands exactly ON the edge, so for a WIDE point it is a finite, LARGER distance — the
- * frame does not get narrower as you back away, so pulling back far enough always works. Returning
- * `Infinity` there clamped every wide box to the 5.0 ceiling and skipped the fit entirely. Measured:
- * Nino 4 at 1280x720 with the free rect came back 4.997 (the ceiling) instead of ~2.44.
+ * At `a >= half` the distance is NOT `Infinity`: `d` is the distance at which the point lands exactly
+ * ON the edge, so for a WIDE point it is a finite, LARGER distance — the frame does not get narrower
+ * as you back away, so pulling back far enough always works. Returning `Infinity` there would clamp
+ * every wide box to the 5.0 ceiling and skip the fit entirely. Measured: Nino 4 at 1280x720 with the
+ * free rect comes back ~2.44, not the ceiling.
  *
  * The genuine degenerate case is `d <= 1`, which happens only as `a` approaches 180 degrees and the
  * point sits behind the camera; `Infinity` is still the honest answer there.
@@ -188,7 +185,7 @@ export function horizontalHalfFovDeg(
  * Both fields are the free extent as a fraction of the FULL viewport extent, so 1 means "the free
  * rect spans the whole viewport" and 0.471 means "it spans 47.1% of it". They are a FRACTION OF THE
  * EXTENT, not of the half-extent — getting that wrong halves the fov and pushes every box twice as
- * far away, which is exactly what the first version did.
+ * far away.
  */
 export interface FreeRectFrac {
     /** Free width as a fraction of the viewport width, in (0, 1]. */
@@ -241,8 +238,8 @@ export function scaledHalfFovDeg(halfFovDeg: number, frac: number): number {
  *
  * `freeRect` (optional) narrows the fit from the viewport to the free rectangle. Without it the box
  * is fitted to the whole viewport, which at 1280x720 lets a wide box slide under the 316 px right
- * panel: measured, the Niño 4 outline spanned x 153..1173 against a free rect ending at 964, so
- * ~209 px of the outline sat beneath the UI. With it, the same box is fitted to the panel's edge.
+ * panel: the Niño 4 outline spans x 153..1173 against a free rect ending at 964, so ~209 px of the
+ * outline sits beneath the UI. With it, the same box is fitted to the panel's edge.
  */
 export function ninoFlyToDistance(
     box: NinoBox,

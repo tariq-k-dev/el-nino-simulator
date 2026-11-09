@@ -13,7 +13,7 @@
  * | build | URL | mode | camera |
  * |---|---|---|---|
  * | production | anything | **live** | offset + fit |
- * | `VITE_E2E=1` | no `framing` | **locked** | untouched — byte-identical to pre-3A2 |
+ * | `VITE_E2E=1` | no `framing` | **locked** | untouched — byte-identical to the pre-framing look |
  * | `VITE_E2E=1` | `?framing=live` | **live** | offset + fit |
  *
  * ## Why the guard is a single `import.meta.env` expression
@@ -52,9 +52,9 @@ export const FOV_DEG = 42;
  *
  * `DEFAULT_POSITION` lives at `src/scene/CameraRig.tsx:17` (not exported from there), so this
  * reconstructs the vector from the same three numbers and takes its length, which is the
- * operation that produced 3.3533565 in `docs/STEP3-FRAME.md` §1. A hardcoded 3.3534 would be a
- * fifth decimal away from the real value and would make the "distance equals d0 exactly" assertion
- * in F1 a lie about a number nobody set.
+ * operation that produced 3.3533565. A hardcoded 3.3534 would be a fifth decimal away from the
+ * real value and would make the "distance equals d0 exactly" assertion a lie about a number nobody
+ * set.
  */
 export const CAMERA_START = { x: 0, y: 1.15, z: 3.15 } as const;
 export const D0 = new THREE.Vector3(
@@ -151,7 +151,7 @@ export interface FrameProbeState {
     /** True when `camera.view` is null, i.e. no view offset is installed. */
     cameraViewIsNull: boolean;
     /**
-     * Step 3B: the focus machine's state, published so a spec can poll a STATE rather than infer one
+     * The focus machine's state, published so a spec can poll a STATE rather than infer one
      * from a pose. `'idle'` outside a selection; `'focusing'` while a fly-to is in flight;
      * `'focused'` once it has arrived or the user took the camera; `'returning'` while the close
      * animation runs.
@@ -170,39 +170,39 @@ export interface FrameProbeState {
      * `frameProbe.ts`), and the director always publishes it.
      */
     viewIsDefault?: boolean;
-    /** Step 3B2: is the planet's spin running? Optional for the same reason. */
+    /** Is the planet's spin running? Optional for the same reason. */
     spinning?: boolean;
     /**
-     * Step 3B2-FIX1: is a region open (card / drawer)?
+     * Is a region open (card / drawer)?
      *
      * Optional for the same reason as the two above: `frameProbe.test.ts` builds this type by hand. The
      * director publishes it from the machine and `GlobeScene` publishes it from the `activeRegion` prop, so
      * the Reset control's enable test never has to infer it from the pose.
      */
     hasRegion?: boolean;
-    /** Step 3B2: which focus policy this build runs. Optional for the same reason. */
+    /** Which focus policy this build runs. Optional for the same reason. */
     focusPolicy?: "locked" | "live";
     /**
-     * Step 3-MOBILE1: which layout the page is running.
+     * Which layout the page is running.
      *
      * OPTIONAL for the same reason as the four fields above — several fixtures build this type by hand, and a
      * required field would force edits in files this step must not touch. A reader defaults it to `'desktop'`,
      * which is the pre-step behaviour and stays true on every existing spec viewport.
      */
     layoutMode?: "desktop" | "mobile" | "portrait" | "phoneLandscape";
-    /** Step 3-MOBILE1: the mobile window offset in px, positive-down as `setViewOffset` takes it. */
+    /** The mobile window offset in px, positive-down as `setViewOffset` takes it. */
     viewOffsetY?: number;
-    /** Step MOBILE2: the horizontal half of the lens shift, positive-right as `setViewOffset` takes it. */
+    /** The horizontal half of the lens shift, positive-right as `setViewOffset` takes it. */
     viewOffsetX?: number;
-    /** Step MOBILE2: `controls.maxDistance` as the director last wrote it. 5 on desktop. */
+    /** `controls.maxDistance` as the director last wrote it. 5 on desktop. */
     dMax?: number;
-    /** Step MOBILE2: the fit distance (`dContain` on mobile). */
+    /** The fit distance (`dContain` on mobile). */
     dFit?: number;
-    /** Step MOBILE2: the radius budget `Rb` the fit was computed from. */
+    /** The radius budget `Rb` the fit was computed from. */
     radiusBudget?: number;
-    /** Step MOBILE2: the published compact-header bottom, px. */
+    /** The published compact-header bottom, px. */
     headerBottom?: number;
-    /** Step 3-MOBILE1: true when `dMax` bound the mobile fit, so the disc is bigger than `rMax` allows. */
+    /** True when `dMax` bound the mobile fit, so the disc is bigger than `rMax` allows. */
     clampedByMax?: boolean;
 }
 

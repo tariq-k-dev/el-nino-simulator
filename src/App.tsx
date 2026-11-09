@@ -129,7 +129,7 @@ export default function App() {
 
     const [activeRegion, setActiveRegion] = useState<RegionId | null>(null);
     /**
-     * The Niño box the user last pressed "Show on globe" for (step 2.3c-1, C2.4).
+     * The Niño box the user last pressed "Show on globe" for.
      *
      * Lives here rather than in the scene because it drives BOTH the card's `aria-pressed` and the
      * outline highlight, and those are on opposite sides of the canvas. The camera flight itself is
@@ -143,18 +143,18 @@ export default function App() {
 
     const selectRegion = useCallback((id: RegionId | null) => {
         /*
-         * NINO-HARDEN B3a (A2a): selecting a region CANCELS a Niño box focus.
+         * Selecting a region CANCELS a Niño box focus.
          *
-         * A box flight and a region flight are two camera destinations, and before this only one side of
-         * the pair was wired: `showNinoOnGlobe` cleared the region, but `selectRegion` left `activeNinoBox`
-         * set and left the box flight running. Measured at 1280x720 (A2a): after clicking the Pacific
-         * region while Niño 4 was focused, `d` stayed at the box's 2.44292 instead of moving to the
-         * region's own flight distance, the drawer said `pacific`, and the Niño 4 button was still
-         * `aria-pressed=true` because nothing had cleared the state that drives it.
+         * A box flight and a region flight are two camera destinations, and both sides of the pair must be
+         * wired: `showNinoOnGlobe` clears the region, and `selectRegion` must clear `activeNinoBox` and
+         * cancel the box flight. Otherwise, after clicking the Pacific region while Niño 4 is focused, `d`
+         * stays at the box's 2.44292 instead of moving to the region's own flight distance, the drawer
+         * says `pacific`, and the Niño 4 button is still `aria-pressed=true` because nothing cleared the
+         * state that drives it.
          *
-         * Both calls sit inside `if (NINO_UI)` for the same reason as `clearSelection` (B2): flag-off must
-         * not run Niño code at all. Unlike `clearSelection`, this is the NON-NULL arm — pressing "Reset" or
-         * the drawer's X is `id === null` and is handled by `clearSelection`, which already clears the box.
+         * Both calls sit inside `if (NINO_UI)` for the same reason as `clearSelection`: flag-off must not
+         * run Niño code at all. Unlike `clearSelection`, this is the NON-NULL arm — pressing "Reset" or the
+         * drawer's X is `id === null` and is handled by `clearSelection`, which already clears the box.
          */
         if (id !== null && NINO_UI) {
             setActiveNinoBox(null);
@@ -168,26 +168,21 @@ export default function App() {
     }, []);
 
     /**
-     * The selection clearer on its own, for Reset (step 3B2-FIX1 B).
+     * The selection clearer on its own, for Reset.
      *
-     * Deliberately the SAME `selectRegion(null)` the drawer's X and the Escape key call — the prompt's
-     * requirement is that Reset take the existing close path rather than a parallel one, so there is one
+     * Deliberately the SAME `selectRegion(null)` the drawer's X and the Escape key call, so there is one
      * piece of code that knows how the app deselects. Its signature takes no arguments, so a caller cannot
      * accidentally select a region through it.
      *
-     * Step 2.3c-1 C2.4 extends it to the Niño box highlight: "clear it on view reset using the existing
-     * reset path". Folding the box clear in HERE rather than adding a second call at the Reset button is
-     * what keeps Reset a single rule — the drawer's X and Escape now dim the outline too, which is the
-     * behaviour "cleared via the existing reset path" implies rather than a Reset-only exception.
+     * It also clears the Niño box highlight, using the existing reset path. Folding the box clear in HERE
+     * rather than adding a second call at the Reset button keeps Reset a single rule — the drawer's X and
+     * Escape dim the outline too, which is the behaviour "cleared via the existing reset path" implies
+     * rather than a Reset-only exception.
      *
-     * NINO-HARDEN B2: both Niño calls are inside `if (NINO_UI)`.
-     *
-     * Flag-off, `setActiveNinoBox(null)` and `submitNinoFocus(null)` were still running on every reset,
-     * deselect and Escape — which made the flag-off tree call the new Niño code even though nothing on
-     * screen was Niño-shaped. Both are cheap and both were behaviourally inert (`activeNinoBox` is null,
-     * and `submitNinoFocus(null)` clears a `ninoFlight` that is already null), so this is not a bug fix
-     * in the observable sense; it is what makes the flag-off claim literally true rather than true-by-
-     * effect, and it is what the flag-off fingerprint below checks.
+     * Both Niño calls are inside `if (NINO_UI)`: flag-off must not run Niño code at all, even though both
+     * calls are behaviourally inert when the flag is off (`activeNinoBox` is null, and
+     * `submitNinoFocus(null)` clears a `ninoFlight` that is already null). This is what makes the flag-off
+     * claim literally true rather than true-by-effect, and it is what the flag-off fingerprint checks.
      *
      * `NINO_UI` is a module const, so it is not a dependency of this callback and the hook list is
      * unchanged: the callback's identity still only moves when `selectRegion` does.
@@ -201,7 +196,7 @@ export default function App() {
     }, [selectRegion]);
 
     /**
-     * "Show on globe" — the only Niño trigger (C2.1).
+     * "Show on globe" — the only Niño trigger.
      *
      * Clears any region selection first: a region focus and a box focus are two different camera
      * destinations, and leaving both latched would have the focus machine and the box flight tweening
@@ -211,7 +206,7 @@ export default function App() {
     const showNinoOnGlobe = useCallback(
         (boxId: string) => {
             /*
-             * NINO-HARDEN B6(c): a SECOND press of the same card toggles OFF.
+             * A SECOND press of the same card toggles OFF.
              *
              * Implemented here rather than in the card, because all three shells (desktop cards, portrait
              * sheet body, landscape dock) forward to this one callback — wiring the toggle into any of them
@@ -221,9 +216,8 @@ export default function App() {
              *
              * The clear path is the SAME one Reset and the drawer's X use (`clearSelection`), so there is one
              * definition of "no box": it clears the highlight, cancels a flight in progress (via
-             * `submitNinoFocus(null)`) and, through the director's derived pause, resumes the spin. The brief's
-             * rule that the camera STAYS is satisfied because nothing here touches the camera pose — only the
-             * flight target and the selection.
+             * `submitNinoFocus(null)`) and, through the director's derived pause, resumes the spin. The camera
+             * STAYS because nothing here touches the camera pose — only the flight target and the selection.
              */
             if (NINO_UI && activeNinoBox === boxId) {
                 clearSelection();
@@ -395,7 +389,7 @@ export default function App() {
             </div>
 
             {/*
-        The desktop header renders only in desktop mode (step 3-MOBILE1 D). On a phone the island carries the live
+        The desktop header renders only in desktop mode. On a phone the island carries the live
         ENSO state and the scrubber, and the `MobileShell` renders an `sr-only` h1 in its place — so the document
         has exactly one level-one heading either way and never two.
       */}
@@ -415,7 +409,7 @@ export default function App() {
             {/*
         Left column: control deck.
 
-        `data-occluder` is a MEASUREMENT MARKER for the framing work (step C): the insets registry
+        `data-occluder` is a MEASUREMENT MARKER for the framing work: the insets registry
         reads it to know which side of the canvas this element covers. It carries no styling and
         changes no layout — the attribute is the whole change.
       */}
@@ -487,14 +481,14 @@ export default function App() {
 
             The ON branch introduces ONE wrapper (`flex w-[268px] flex-col gap-2`) for a measured reason: this
             element is a flex ROW (`className` above), so a bare second child would sit BESIDE the region cards
-            and — with no width of its own — shrink-wrap to its longest caption. The first M2 run measured
-            exactly that: the section stretched to 614 px and the cards landed at x=642, to the right of the
-            panel instead of under it. The wrapper pins both stacks to the same 268 px column.
+            and — with no width of its own — shrink-wrap to its longest caption. Measured: the section
+            stretches to 614 px and the cards land at x=642, to the right of the panel instead of under it.
+            The wrapper pins both stacks to the same 268 px column.
 
             The OFF branch is the ORIGINAL single child, unwrapped, so the flag-OFF DOM is identical to the
-            commit before this one — proven by the M1 fingerprint, not asserted. `max-h` + `overflow-y-auto`
-            sit on the WRAPPER, so the panel scrolls when two more cards outgrow a 720 px viewport; adding them
-            to the panel itself would have changed the OFF branch.
+            pre-flag tree — proven by the fingerprint, not asserted. `max-h` + `overflow-y-auto` sit on the
+            WRAPPER, so the panel scrolls when two more cards outgrow a 720 px viewport; adding them to the
+            panel itself would have changed the OFF branch.
           */}
                     {NINO_UI ? (
                         <div className="flex max-h-[calc(100vh-3rem)] w-[268px] shrink-0 flex-col gap-2 overflow-y-auto">
@@ -543,7 +537,7 @@ export default function App() {
             {/*
         THE MOBILE SHELL. A sibling of `#globe-canvas`, never a descendant: R3F connects its DOM listeners to the
         Canvas WRAPPER div and fires `onPointerMissed` on any click that hits nothing in the scene, so a sheet
-        inside that wrapper would clear the selection on every tap. See `MOBILE-AUDIT.md` section 5.
+        inside that wrapper would clear the selection on every tap.
       */}
             {isMobile ? (
                 <MobileShell

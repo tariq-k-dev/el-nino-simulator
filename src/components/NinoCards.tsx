@@ -19,11 +19,10 @@
  * cards been rendered as a sibling outside that element, they would have covered the globe
  * without the framing knowing.
  *
- * This reconciles the step 2.3a memo, which warned the new stack must sit outside the
- * occluder. That warning was about the flag being ON-but-EMPTY — an empty wrapper would
- * have widened the inset for nothing. Here nothing is rendered at all when the flag is off
- * (the mount is `{flag ? <NinoCards …/> : null}`, not a wrapper with a class), so the OFF
- * case is structurally identical to `4a2c185`, and the ON case SHOULD move the inset.
+ * The stack must sit INSIDE the occluder, not outside it: an empty wrapper outside would
+ * widen the inset for nothing. Here nothing is rendered at all when the flag is off (the
+ * mount is `{flag ? <NinoCards …/> : null}`, not a wrapper with a class), so the OFF case
+ * is structurally identical to the pre-flag tree, and the ON case moves the inset.
  *
  * ## Numbers
  *
@@ -60,11 +59,11 @@ interface NinoCardsProps {
      */
     layout: "desktop" | "mobile";
     /**
-     * The only trigger that flies the globe to a Niño box (step 2.3c-1, C2.1).
+     * The only trigger that flies the globe to a Niño box.
      *
      * The pins are deliberately NON-interactive (`dotOnly` on `Hotspot`), so this callback is the
-     * whole of the flight surface. Optional so the 2.3b unit tests that render the cards without a
-     * flight handler keep working unchanged.
+     * whole of the flight surface. Optional so unit tests that render the cards without a flight
+     * handler keep working unchanged.
      */
     onShowOnGlobe?: (boxId: string) => void;
     /** The box currently flown to, for `aria-pressed`. `null` when nothing is selected. */
@@ -129,12 +128,12 @@ function NinoCard({
             </p>
 
             {/*
-        C2.1 — the ONLY trigger that flies the globe to this box.
+        The ONLY trigger that flies the globe to this box.
 
-        `min-h-11` is the 44 px touch target the step requires; `min-w-11` keeps a short label from
-        producing a narrow target. `aria-pressed` carries the selected state (the outline highlight
-        mirrors it), and the aria-label spells out which box, because "Show on globe" alone would be
-        ambiguous read out of context. Keyboard-accessible by being a real <button>.
+        `min-h-11` is the 44 px touch target; `min-w-11` keeps a short label from producing a narrow
+        target. `aria-pressed` carries the selected state (the outline highlight mirrors it), and the
+        aria-label spells out which box, because "Show on globe" alone would be ambiguous read out of
+        context. Keyboard-accessible by being a real <button>.
       */}
             {onShowOnGlobe ? (
                 <button
@@ -176,13 +175,13 @@ export function NinoCards({
             data-testid="nino-cards"
             aria-labelledby="nino-cards-heading"
             /*
-             * `pointer-events-auto` — REQUIRED, and its absence was a real defect found by the C2 driver.
+             * `pointer-events-auto` — REQUIRED.
              *
              * The desktop right panel is `pointer-events-none` on purpose (it is an overlay above a
              * full-viewport canvas), so every interactive child re-enables pointer events for itself:
              * `RegionCards.tsx:31` does exactly this. Without it, `elementFromPoint` at the "Show on globe"
-             * button returned the `#globe-canvas` div and Playwright reported "canvas intercepts pointer
-             * events" on every retry — the only trigger for a Niño flight was unclickable on desktop.
+             * button returns the `#globe-canvas` div and Playwright reports "canvas intercepts pointer
+             * events" on every retry — the only trigger for a Niño flight is unclickable on desktop.
              * Harmless on mobile, where the sheet body is not inside a pointer-events-none ancestor.
              */
             className={[

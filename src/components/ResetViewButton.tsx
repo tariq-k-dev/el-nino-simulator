@@ -1,5 +1,5 @@
 /**
- * The Reset View control — the one new rect step 3B2 adds, and the reason `viewIsDefault` exists.
+ * The Reset View control, and the reason `viewIsDefault` exists.
  *
  * ## Why a component and not three lines in `Header.tsx`
  *
@@ -8,23 +8,22 @@
  * header's metrics/units/export props. Keeping it separate is also what lets the header stay a purely
  * presentational component.
  *
- * ## Step 3B2-FIX1 B: Reset means "the load state", and the button is the whole rule's entry point
+ * ## Reset means "the load state"
  *
- * The first version raised only `viewStore.requestReset()`. Reset therefore returned the CAMERA to the
- * framed default pose but left `activeRegion` set, so the region card and the drawer stayed open over a
- * default-pose globe — a state the app never loads into. It now calls `scene/resetView.ts`'s `resetView()`,
- * which drives BOTH channels: the camera's RESET intent and `selectRegion(null)`, the same selection
- * clearer the drawer's X and the Escape key use.
+ * Reset must return the CAMERA to the framed default pose AND clear `activeRegion`, so the region card
+ * and the drawer do not stay open over a default-pose globe — a state the app never loads into. It
+ * therefore calls `scene/resetView.ts`'s `resetView()`, which drives BOTH channels: the camera's RESET
+ * intent and `selectRegion(null)`, the same selection clearer the drawer's X and the Escape key use.
  *
  * ## Enabled whenever a region is open, even if the camera looks default
  *
- * `viewIsDefault` alone was the enable test, and it is a question about the POSE. With a region open the
- * camera can be exactly at the default pose (gaze on the pin's normal is not implied by any pose, but the
- * distance and direction channels can both be at their defaults after a Reset that never closed the
- * drawer), and the button then disabled itself in the one state where it had work to do. An open region is
- * by itself a reason to be able to Reset: `hasRegion` from `viewStore` (published by `GlobeScene` from the
- * `activeRegion` prop) is OR-ed into the disabled test, so the control is only ever disabled when the app
- * is genuinely at its load state.
+ * `viewIsDefault` alone is a question about the POSE. With a region open the camera can be exactly at the
+ * default pose (gaze on the pin's normal is not implied by any pose, but the distance and direction
+ * channels can both be at their defaults after a Reset that never closed the drawer), and the button
+ * would disable itself in the one state where it has work to do. An open region is by itself a reason to
+ * be able to Reset: `hasRegion` from `viewStore` (published by `GlobeScene` from the `activeRegion` prop)
+ * is OR-ed into the disabled test, so the control is only ever disabled when the app is genuinely at its
+ * load state.
  *
  * ## Keyboard focus
  *

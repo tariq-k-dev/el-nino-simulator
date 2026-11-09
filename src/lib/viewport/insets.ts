@@ -1,13 +1,12 @@
 /**
  * Occluder insets — how much of the canvas is covered on each side.
  *
- * STEP 3 replaces the measurement below. The shape (`Insets` + a
- * `useSyncExternalStore` subscription) is defined here in STEP 1 because the
- * `window.__globe` probe exposes `insets()` as part of its contract, and the
- * e2e specs must compile against a stable signature.
+ * The shape (`Insets` + a `useSyncExternalStore` subscription) is defined here
+ * because the `window.__globe` probe exposes `insets()` as part of its contract,
+ * and the e2e specs must compile against a stable signature.
  *
- * For now every inset is zero, which is the honest answer while no occluder is
- * registered — and it makes `<FrameOffset>` a no-op until STEP 3 lands.
+ * Every inset is zero until an occluder is registered, which makes
+ * `<FrameOffset>` a no-op in that state.
  */
 
 export type OccluderSide = "top" | "right" | "bottom" | "left";
@@ -37,7 +36,7 @@ export function subscribeInsets(listener: () => void): () => void {
     };
 }
 
-/** Test/STEP-3 seam: replace the measured insets and notify subscribers. */
+/** Test seam: replace the measured insets and notify subscribers. */
 export function __setInsets(next: Insets): void {
     if (
         next.top === current.top &&
