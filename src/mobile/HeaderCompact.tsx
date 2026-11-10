@@ -337,7 +337,7 @@ export function HeaderCompact({
                                 : "Live NOAA telemetry offline. Retry"
                         }
                         className={[
-                            "flex h-9 shrink-0 items-center gap-1 rounded-full border px-2.5 font-mono text-[9px] uppercase tracking-[0.1em] backdrop-blur-md transition-colors duration-200",
+                            "flex h-9 min-w-[44px] shrink-0 items-center justify-center gap-1 whitespace-nowrap rounded-full border px-2.5 font-mono text-[9px] uppercase tracking-[0.1em] backdrop-blur-md transition-colors duration-200",
                             telemetry?.tao.status === "active"
                                 ? "border-emerald-400/40 bg-emerald-400/10 text-emerald-300"
                                 : "border-amber-400/40 bg-amber-400/10 text-amber-300",
