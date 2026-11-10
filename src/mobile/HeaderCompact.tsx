@@ -307,7 +307,7 @@ export function HeaderCompact({
                         : undefined
                 }
             >
-                <div className="-mx-0.5 flex items-center overflow-hidden rounded-full border border-white/[0.08] bg-black/40 p-0.5 backdrop-blur-md">
+                <div className="-mx-0.5 flex items-center overflow-hidden rounded-full border border-white/20 bg-black/50 p-0.5 backdrop-blur-md">
                     {(["metric", "imperial"] as const).map((system) => (
                         <button
                             key={system}
@@ -321,7 +321,7 @@ export function HeaderCompact({
                                 "h-11 min-w-[44px] rounded-full px-2 font-mono text-[9px] uppercase tracking-[0.12em] transition-all duration-200",
                                 units === system
                                     ? "bg-white/12 text-slate-50 shadow-sm"
-                                    : "text-slate-500",
+                                    : "text-slate-300",
                             ].join(" ")}
                             aria-pressed={units === system}
                             aria-label={
@@ -340,7 +340,7 @@ export function HeaderCompact({
                     onClick={onExportPng}
                     disabled={exporting}
                     aria-label="Snapshot PNG"
-                    className={`${TOUCH} -mx-0.5 border border-sky-300/25 bg-sky-400/10 px-2 text-[10px] font-medium uppercase tracking-[0.12em] text-sky-100 backdrop-blur-md disabled:opacity-50`}
+                    className={`${TOUCH} -mx-0.5 border border-white/20 bg-white/[0.05] px-2 text-[10px] font-medium uppercase tracking-[0.12em] text-sky-100 backdrop-blur-md disabled:opacity-50`}
                 >
                     {exporting ? (
                         <Gauge size={12} className="animate-pulse" />
@@ -357,7 +357,7 @@ export function HeaderCompact({
                     onClick={exporting ? undefined : onExportReport}
                     disabled={exporting}
                     aria-label="Open report"
-                    className={`${TOUCH} -mx-0.5 border border-sky-300/25 bg-sky-400/10 px-2 text-[10px] font-medium uppercase tracking-[0.12em] text-sky-100 backdrop-blur-md disabled:opacity-50`}
+                    className={`${TOUCH} -mx-0.5 border border-white/20 bg-white/[0.05] px-2 text-[10px] font-medium uppercase tracking-[0.12em] text-sky-100 backdrop-blur-md disabled:opacity-50`}
                 >
                     <FileText size={12} />
                     <span className="sr-only sm:not-sr-only">Report</span>
@@ -369,7 +369,7 @@ export function HeaderCompact({
           under the prompt's touch minimum. Stretching it from a flex parent leaves `ResetViewButton` (and therefore
           the DESKTOP header, which mounts the same component) byte-identical: the wrapper exists only in this file.
         */}
-                <div className="-mx-0.5 flex h-11 min-w-[44px] items-stretch [&>button]:w-full">
+                <div className="-mx-0.5 flex h-11 min-w-[44px] items-stretch [&>button]:w-full [&>button]:border-white/20 [&>button]:bg-white/[0.05] [&>button]:text-slate-200 [&>button:disabled:hover]:border-white/20 [&>button:disabled:hover]:text-slate-200">
                     <ResetViewButton onClearSelection={onClearSelection} />
                 </div>
             </div>
@@ -474,7 +474,7 @@ function EnsoChip({
                 aria-label="ENSO state and live anomaly"
                 data-testid="enso-chip"
                 className={[
-                    "flex min-h-[44px] items-center gap-2 rounded-full border border-white/12 bg-slate-950/80 px-3 backdrop-blur-md",
+                    "flex min-h-[44px] items-center gap-2 rounded-full border border-white/20 bg-slate-950/80 px-3 backdrop-blur-md",
                     wide ? "w-full justify-between" : "",
                 ].join(" ")}
             >
@@ -513,7 +513,7 @@ function EnsoChip({
                     <span
                         className={`absolute h-1.5 w-1.5 rounded-full ${
                             telemetry?.status === "active"
-                                ? "bg-emerald-400 animate-pulse"
+                                ? "bg-emerald-400 shadow-[0_0_8px_rgba(52,211,153,0.8)] animate-pulse"
                                 : "bg-amber-400"
                         }`}
                     />
@@ -539,18 +539,18 @@ function EnsoChip({
                 <div
                     id={scrubberId}
                     data-testid="enso-popover"
-                    className="absolute left-0 top-full z-50 mt-1.5 w-[min(320px,86vw)] rounded-2xl border border-white/12 bg-slate-950/95 p-3 backdrop-blur-md"
+                    className="absolute left-0 top-full z-50 mt-1.5 w-[min(320px,86vw)] rounded-2xl border border-white/20 bg-slate-950/95 p-3 backdrop-blur-md"
                     style={{ touchAction: "pan-y" }}
                 >
                     <div className="mb-1.5 flex items-baseline justify-between gap-2">
-                        <span className="font-mono text-[8.5px] uppercase tracking-[0.16em] text-slate-500">
+                        <span className="font-mono text-[8.5px] font-medium uppercase tracking-[0.16em] text-slate-300">
                             Global SST anomaly
                         </span>
                         {/* The DELTA conversion: ×1.8, no +32. A deviation has no zero-offset. */}
                         <span className="num text-[13px] font-semibold text-slate-100">
                             {delta.value >= 0 ? "+" : ""}
                             {fixed(delta.value, 1)}
-                            <span className="ml-0.5 text-[9px] text-slate-400">
+                            <span className="ml-0.5 text-[9px] text-slate-300">
                                 {delta.unit}
                             </span>
                         </span>
@@ -566,7 +566,7 @@ function EnsoChip({
                         className="slider w-full"
                         style={{ touchAction: "none", minHeight: "44px" }}
                     />
-                    <div className="mt-1 flex items-center justify-between font-mono text-[8px] uppercase tracking-[0.12em] text-slate-500">
+                    <div className="mt-1 flex items-center justify-between font-mono text-[8px] font-medium uppercase tracking-[0.12em] text-slate-300">
                         <span>Neutral</span>
                         {/* The category is always a °C classification — the ONI bands are °C thresholds. */}
                         <span className="text-slate-300">

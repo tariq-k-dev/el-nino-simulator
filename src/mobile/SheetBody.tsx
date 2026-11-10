@@ -129,7 +129,7 @@ export function SheetBody({
             {showControls ? (
                 <div data-sheet-section="controls" className="mt-3 space-y-3">
                     <label className="block">
-                        <span className="mb-1 flex items-center justify-between font-mono text-[9px] uppercase tracking-[0.14em] text-slate-500">
+                        <span className="mb-1 flex items-center justify-between font-mono text-[9px] uppercase tracking-[0.14em] text-slate-300 font-medium">
                             <span>Global SST anomaly</span>
                             <span className="text-slate-300">
                                 {fixed(
@@ -156,7 +156,7 @@ export function SheetBody({
                         />
                     </label>
                     <label className="block">
-                        <span className="mb-1 flex items-center justify-between font-mono text-[9px] uppercase tracking-[0.14em] text-slate-500">
+                        <span className="mb-1 flex items-center justify-between font-mono text-[9px] uppercase tracking-[0.14em] text-slate-300 font-medium">
                             <span>Jet stream shift</span>
                             <span className="text-slate-300">
                                 {fixed(metrics.jet, 2)}
@@ -179,7 +179,7 @@ export function SheetBody({
                         />
                     </label>
                     <label className="block">
-                        <span className="mb-1 flex items-center justify-between font-mono text-[9px] uppercase tracking-[0.14em] text-slate-500">
+                        <span className="mb-1 flex items-center justify-between font-mono text-[9px] uppercase tracking-[0.14em] text-slate-300 font-medium">
                             <span>Agriculture exposure weight</span>
                             <span className="text-slate-300">
                                 {fixed(metrics.agri, 2)}
@@ -202,7 +202,7 @@ export function SheetBody({
                         />
                     </label>
 
-                    <div className="grid grid-cols-2 gap-2">
+                    <div className="grid grid-cols-2 gap-2 [&>div>div:first-child>span]:text-slate-300">
                         <Stat
                             label="Global impact"
                             value={fixed(metrics.globalImpactIndex, 1)}
@@ -242,7 +242,7 @@ export function SheetBody({
                                         "min-h-[44px] focus:outline-none focus-visible:ring-1 focus-visible:ring-white/50",
                                         active
                                             ? "border-white/35 bg-white/12 text-white"
-                                            : "border-white/[0.1] bg-black/25 text-slate-400",
+                                            : "border-white/20 bg-black/50 text-slate-300",
                                     ].join(" ")}
                                     style={
                                         active
@@ -365,7 +365,7 @@ function FullSections({
             ) : null}
 
             <div className="space-y-2.5">
-                <div className="font-mono text-[8.5px] uppercase tracking-[0.2em] text-slate-500">
+                <div className="font-mono text-[8.5px] uppercase tracking-[0.2em] text-slate-300 font-medium">
                     Impact breakdown
                 </div>
                 {bars.map((b) => (
@@ -379,7 +379,7 @@ function FullSections({
                 ))}
             </div>
 
-            <div className="grid grid-cols-2 gap-2">
+            <div className="grid grid-cols-2 gap-2 [&>div>div:first-child>span]:text-slate-300">
                 <Stat
                     label="US precip"
                     value={formatDelta(metrics.usPrecip, "%")}
@@ -417,7 +417,7 @@ function FullSections({
 
             {/* The DuckDB-backed analog table. */}
             <div>
-                <div className="mb-2 flex items-center justify-between font-mono text-[8.5px] uppercase tracking-[0.2em] text-slate-500">
+                <div className="mb-2 flex items-center justify-between font-mono text-[8.5px] uppercase tracking-[0.2em] text-slate-300 font-medium">
                     <span>Historical analogs</span>
                     <span>{analytics.summary.analogCount} within ±0.35°C</span>
                 </div>
@@ -430,7 +430,7 @@ function FullSections({
                                         (col) => (
                                             <th
                                                 key={col}
-                                                className="px-2 py-1.5 font-mono text-[8px] font-medium uppercase tracking-[0.12em] text-slate-500"
+                                                className="px-2 py-1.5 font-mono text-[8px] font-medium uppercase tracking-[0.12em] text-slate-300"
                                             >
                                                 {col}
                                             </th>
@@ -450,12 +450,12 @@ function FullSections({
                                         <td className="num px-2 py-1.5 text-[10px] text-slate-100">
                                             {fixed(a.anomaly, 2)}
                                         </td>
-                                        <td className="num px-2 py-1.5 text-[9.5px] text-slate-400">
+                                        <td className="num px-2 py-1.5 text-[9.5px] text-slate-300">
                                             {a.absoluteSst > 0
                                                 ? fixed(a.absoluteSst, 1)
                                                 : "—"}
                                         </td>
-                                        <td className="px-2 py-1.5 text-[8px] text-slate-400">
+                                        <td className="px-2 py-1.5 text-[8px] font-medium text-slate-200">
                                             {a.riskTier}
                                         </td>
                                     </tr>
@@ -464,7 +464,7 @@ function FullSections({
                         </table>
                     </div>
                 ) : (
-                    <div className="rounded-xl border border-dashed border-white/10 px-3 py-4 text-center text-[10px] text-slate-500">
+                    <div className="rounded-xl border border-dashed border-white/10 px-3 py-4 text-center text-[10px] text-slate-300 font-medium">
                         Analog matching unavailable — DuckDB engine is not
                         running.
                     </div>
@@ -472,9 +472,9 @@ function FullSections({
             </div>
 
             <div className="rounded-xl border border-white/[0.05] bg-black/25 p-2.5">
-                <div className="mb-1 flex items-center justify-between font-mono text-[8px] uppercase tracking-[0.14em] text-slate-500">
+                <div className="mb-1 flex items-center justify-between font-mono text-[8px] uppercase tracking-[0.14em] text-slate-300 font-medium">
                     <span>Dataset window</span>
-                    <span className="text-slate-400">
+                    <span className="text-slate-300">
                         {analytics.summary.firstDate} →{" "}
                         {analytics.summary.lastDate}
                     </span>
@@ -485,7 +485,7 @@ function FullSections({
                     accent={accent}
                     ariaLabel="Dataset anomaly timeline"
                 />
-                <div className="mt-1 flex items-center justify-between font-mono text-[8px] uppercase tracking-[0.1em] text-slate-500">
+                <div className="mt-1 flex items-center justify-between font-mono text-[8px] uppercase tracking-[0.1em] text-slate-300 font-medium">
                     <span>{analytics.summary.rowCount} monthly obs</span>
                     <span className="flex items-center gap-1.5">
                         <span>
@@ -499,7 +499,7 @@ function FullSections({
                                 live tao
                             </span>
                         ) : (
-                            <span className="flex items-center gap-1 text-slate-500">
+                            <span className="flex items-center gap-1 text-slate-300 font-medium">
                                 <span className="h-1 w-1 rounded-full bg-emerald-400" />
                                 local · no server
                             </span>
@@ -512,7 +512,7 @@ function FullSections({
                 <button
                     type="button"
                     onClick={onClearSelection}
-                    className="min-h-[44px] w-full rounded-xl border border-white/[0.08] bg-white/[0.03] font-mono text-[9px] uppercase tracking-[0.14em] text-slate-300"
+                    className="min-h-[44px] w-full rounded-xl border border-white/20 bg-white/[0.05] font-mono text-[9px] uppercase tracking-[0.14em] text-slate-300"
                 >
                     Clear selection
                 </button>
