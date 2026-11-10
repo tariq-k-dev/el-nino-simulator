@@ -25,7 +25,7 @@
  * business.
  */
 
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import type {
     AnalyticsPayload,
     RegionDefinition,
@@ -199,6 +199,25 @@ export function MobileShell({
         ? `Showing ${announcedBox.label} on the globe`
         : "";
 
+    /*
+     * Stable callbacks for the sheet's drag path.
+     *
+     * `SnapSheet` receives `onSstChange` and `onChangeScenario` and calls them from its drag handlers. Inline
+     * arrows here would be a new function identity on every shell render — and the shell re-renders on every
+     * `scenario.sstAnomaly` tick, which is exactly what a drag produces — so the sheet's memoised children would
+     * re-render once per pointer move. `useCallback` keyed on `onScenarioChange` (which `App` already holds
+     * stable) keeps the identity fixed for the life of the shell.
+     */
+    const handleSstChange = useCallback(
+        (value: number) => onScenarioChange({ sstAnomaly: value }),
+        [onScenarioChange],
+    );
+
+    const handleScenarioPatch = useCallback(
+        (patch: Partial<ScenarioState>) => onScenarioChange(patch),
+        [onScenarioChange],
+    );
+
     return (
         <>
             {/*
@@ -271,10 +290,8 @@ export function MobileShell({
                     activeNinoBox={activeNinoBox}
                     onShowOnGlobe={onShowOnGlobe}
                     onClearSelection={onClearSelection}
-                    onSstChange={(value) =>
-                        onScenarioChange({ sstAnomaly: value })
-                    }
-                    onChangeScenario={(patch) => onScenarioChange(patch)}
+                    onSstChange={handleSstChange}
+                    onChangeScenario={handleScenarioPatch}
                     telemetry={telemetry}
                     onTierChange={setSheetTier}
                 />

@@ -337,7 +337,7 @@ export function HeaderCompact({
                                 : "Live NOAA telemetry offline. Retry"
                         }
                         className={[
-                            "flex h-9 min-w-[44px] shrink-0 items-center justify-center gap-1 whitespace-nowrap rounded-full border px-2.5 font-mono text-[9px] uppercase tracking-[0.1em] backdrop-blur-md transition-colors duration-200",
+                            "flex h-9 shrink-0 items-center justify-center gap-1 rounded-full border px-2.5 font-mono text-[9px] uppercase tracking-[0.1em] backdrop-blur-md transition-colors duration-200",
                             telemetry?.tao.status === "active"
                                 ? "border-emerald-400/40 bg-emerald-400/10 text-emerald-300"
                                 : "border-amber-400/40 bg-amber-400/10 text-amber-300",
@@ -452,7 +452,7 @@ export function HeaderCompact({
                         "flex items-stretch [&>button:disabled:hover]:border-white/20 [&>button:disabled:hover]:text-slate-200 [&>button]:w-full [&>button]:border-white/20 [&>button]:bg-white/[0.05] [&>button]:text-slate-200",
                         landscape
                             ? "-mx-0.5 h-11 min-w-[44px]"
-                            : "h-8 min-w-8 [&>button]:justify-center [&>button]:px-2 [&>button]:py-0",
+                            : "h-11 min-w-[44px] [&>button]:h-full [&>button]:w-full [&>button]:justify-center [&>button]:px-2",
                     ].join(" ")}
                 >
                     <ResetViewButton
