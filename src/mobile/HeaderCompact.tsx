@@ -130,13 +130,11 @@ export function HeaderCompact({
      */
     const rows = landscapeHeaderRows(landscape ? viewportW : 0);
     /**
-     * The PNG / Report button box. Landscape keeps the 44 px touch box (its fixed row heights in `headerMath` are
-     * built on it); portrait uses a balanced `h-8 min-w-8 px-2` box with no negative margin — the cluster's
-     * `gap-1.5` is what separates the icons.
+     * The PNG / Report button box. Both modes use the 44 px touch box: landscape's fixed row heights in
+     * `headerMath` are built on it, and portrait must not ship a 32 px target beside 44 px ones. The
+     * `-mx-0.5` keeps the cluster's optical edge flush with the header padding.
      */
-    const actionBox = landscape
-        ? `${TOUCH} -mx-0.5 px-2`
-        : "flex h-8 min-w-8 items-center justify-center rounded-full px-2";
+    const actionBox = `${TOUCH} -mx-0.5 px-2`;
     const landscapeStyle: CSSProperties | undefined = landscape
         ? rows === 1
             ? {
@@ -393,9 +391,7 @@ export function HeaderCompact({
                                 onToggleUnits();
                             }}
                             className={[
-                                landscape
-                                    ? "h-11 min-w-[44px] px-2"
-                                    : "h-7 min-w-8 px-1.5",
+                                "h-11 min-w-[44px] px-2",
                                 "rounded-full font-mono text-[9px] uppercase tracking-[0.12em] transition-all duration-200",
                                 units === system
                                     ? "bg-white/12 text-slate-50 shadow-sm"
