@@ -45,4 +45,4 @@ playwright-report/
 El_Nino_Simulator_Roadmap.md
 
 # Ignore repomix generated xml output file
-repomix-output.xml
+repomix*.xml
