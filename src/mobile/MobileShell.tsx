@@ -85,6 +85,10 @@ interface MobileShellProps {
     telemetry?: TelemetryBundle | null;
     /** Re-fetch telemetry; wired to the header's LIVE NOAA pill. */
     onRefreshTelemetry?: () => void;
+    /** Apply the live NOAA bundle to the scenario; wired to the header's LIVE NOAA pill and status dot. */
+    onApplyLiveTelemetry?: (bundle: TelemetryBundle) => void;
+    /** Reset the scenario to baseline; wired to the header's Reset control. */
+    onReset?: () => void;
 }
 
 export function MobileShell({
@@ -108,6 +112,8 @@ export function MobileShell({
     onShowOnGlobe,
     telemetry,
     onRefreshTelemetry,
+    onApplyLiveTelemetry,
+    onReset,
 }: MobileShellProps) {
     const sheetRef = useRef<SnapSheetHandle>(null);
     /** The sheet's current tier, mirrored here so the header can hide the chip at full. */
@@ -248,6 +254,8 @@ export function MobileShell({
                 hideChip={mode === "portrait" && sheetTier === "full"}
                 telemetry={telemetry}
                 onRefreshTelemetry={onRefreshTelemetry}
+                onApplyLiveTelemetry={onApplyLiveTelemetry}
+                onReset={onReset}
             />
 
             {mode === "portrait" ? (

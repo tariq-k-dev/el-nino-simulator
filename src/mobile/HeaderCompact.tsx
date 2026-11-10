@@ -82,6 +82,10 @@ interface HeaderCompactProps {
     telemetry?: TelemetryBundle | null;
     /** Re-fetch telemetry when the status dot is tapped. */
     onRefreshTelemetry?: () => void;
+    /** Apply the live NOAA bundle to the scenario, alongside the refresh. */
+    onApplyLiveTelemetry?: (bundle: TelemetryBundle) => void;
+    /** Reset the scenario to baseline, alongside the view reset. */
+    onReset?: () => void;
 }
 
 /**
@@ -107,6 +111,8 @@ export function HeaderCompact({
     hideChip = false,
     telemetry,
     onRefreshTelemetry,
+    onApplyLiveTelemetry,
+    onReset,
 }: HeaderCompactProps) {
     const headerRef = useRef<HTMLElement>(null);
     const landscape = mode === "phoneLandscape";
@@ -308,6 +314,7 @@ export function HeaderCompact({
                     wide={!landscape}
                     telemetry={telemetry}
                     onRefreshTelemetry={onRefreshTelemetry}
+                    onApplyLiveTelemetry={onApplyLiveTelemetry}
                 />
                 {/*
           The LIVE NOAA pill — portrait row 2, beside the ENSO chip (landscape's row is height-pinned by
@@ -318,7 +325,10 @@ export function HeaderCompact({
                 {landscape ? null : (
                     <button
                         type="button"
-                        onClick={() => onRefreshTelemetry?.()}
+                        onClick={() => {
+                            onRefreshTelemetry?.();
+                            if (telemetry) onApplyLiveTelemetry?.(telemetry);
+                        }}
                         data-testid="live-noaa"
                         data-live={telemetry?.tao.status === "active"}
                         aria-label={
@@ -445,7 +455,12 @@ export function HeaderCompact({
                             : "h-8 min-w-8 [&>button]:justify-center [&>button]:px-2 [&>button]:py-0",
                     ].join(" ")}
                 >
-                    <ResetViewButton onClearSelection={onClearSelection} />
+                    <ResetViewButton
+                        onClearSelection={() => {
+                            onClearSelection();
+                            onReset?.();
+                        }}
+                    />
                 </div>
             </div>
         </header>
@@ -483,6 +498,7 @@ function EnsoChip({
     wide,
     telemetry,
     onRefreshTelemetry,
+    onApplyLiveTelemetry,
 }: {
     anomalyC: number;
     units: UnitSystem;
@@ -490,6 +506,7 @@ function EnsoChip({
     wide: boolean;
     telemetry?: TelemetryBundle | null;
     onRefreshTelemetry?: () => void;
+    onApplyLiveTelemetry?: (bundle: TelemetryBundle) => void;
 }) {
     const [open, setOpen] = useState(false);
     const rootRef = useRef<HTMLDivElement>(null);
@@ -576,12 +593,14 @@ function EnsoChip({
                         onClick={(e) => {
                             e.stopPropagation();
                             onRefreshTelemetry?.();
+                            if (telemetry) onApplyLiveTelemetry?.(telemetry);
                         }}
                         onKeyDown={(e) => {
                             if (e.key !== "Enter" && e.key !== " ") return;
                             e.preventDefault();
                             e.stopPropagation();
                             onRefreshTelemetry?.();
+                            if (telemetry) onApplyLiveTelemetry?.(telemetry);
                         }}
                         className="relative flex h-1.5 w-1.5 shrink-0 items-center justify-center"
                     >

@@ -562,6 +562,8 @@ export default function App() {
                     onShowOnGlobe={showNinoOnGlobe}
                     telemetry={telemetry}
                     onRefreshTelemetry={refreshTelemetry}
+                    onApplyLiveTelemetry={applyLiveTelemetry}
+                    onReset={reset}
                 />
             ) : null}
 
