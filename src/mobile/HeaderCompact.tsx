@@ -568,8 +568,9 @@ function EnsoChip({
                 data-testid="enso-chip"
                 className={[
                     "flex items-center gap-2 rounded-full border border-white/20 bg-slate-950/80 px-3 backdrop-blur-md",
-                    /* Portrait is height-tight (header <= 80 px): a 36 px chip. Landscape keeps its 44 px box. */
-                    wide ? "min-h-9 w-full min-w-0 justify-between" : "min-h-[44px]",
+                    /* Both modes keep the 44 px touch minimum; portrait pays for it in header height. */
+                    "min-h-[44px]",
+                    wide ? "w-full min-w-0 justify-between" : "",
                 ].join(" ")}
             >
                 {/*
