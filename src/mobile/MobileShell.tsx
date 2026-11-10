@@ -243,6 +243,7 @@ export function MobileShell({
                 onClearSelection={onClearSelection}
                 onSstChange={(value) => onScenarioChange({ sstAnomaly: value })}
                 hideChip={mode === "portrait" && sheetTier === "full"}
+                telemetry={telemetry}
             />
 
             {mode === "portrait" ? (

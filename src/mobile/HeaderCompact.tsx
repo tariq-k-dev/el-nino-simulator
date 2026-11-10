@@ -34,7 +34,7 @@
 import { useCallback, useEffect, useId, useRef, useState } from "react";
 import type { CSSProperties } from "react";
 import { Download, FileText, Gauge, Globe2 } from "lucide-react";
-import type { UnitSystem } from "@/types/enso";
+import type { TelemetryBundle, UnitSystem } from "@/types/enso";
 import { REGIONS } from "@/lib/regions";
 import { SST_MAX, SST_MIN, thermalColor } from "@/lib/model";
 import { fixed } from "@/lib/format";
@@ -77,6 +77,10 @@ interface HeaderCompactProps {
     onSstChange: (value: number) => void;
     /** Hide the ENSO chip (portrait, sheet at full). Fades out rather than unmounting. */
     hideChip?: boolean;
+    /** Live telemetry, so the chip can show a status dot. */
+    telemetry?: TelemetryBundle | null;
+    /** Re-fetch telemetry when the status dot is tapped. */
+    onRefreshTelemetry?: () => void;
 }
 
 /**
@@ -100,6 +104,8 @@ export function HeaderCompact({
     onClearSelection,
     onSstChange,
     hideChip = false,
+    telemetry,
+    onRefreshTelemetry,
 }: HeaderCompactProps) {
     const headerRef = useRef<HTMLElement>(null);
     const landscape = mode === "phoneLandscape";
@@ -279,13 +285,15 @@ export function HeaderCompact({
                     units={units}
                     onSstChange={onSstChange}
                     wide={!landscape}
+                    telemetry={telemetry}
+                    onRefreshTelemetry={onRefreshTelemetry}
                 />
             </div>
 
             {/* ------------------------------------------------------------------ row 1: controls */}
             <div
                 className={[
-                    "flex shrink-0 items-center gap-1.5 transition-opacity duration-200",
+                    "flex shrink-0 items-center transition-opacity duration-200",
                     hideChip
                         ? "pointer-events-none opacity-0"
                         : "pointer-events-auto opacity-100",
@@ -299,7 +307,7 @@ export function HeaderCompact({
                         : undefined
                 }
             >
-                <div className="flex items-center overflow-hidden rounded-full border border-white/[0.08] bg-black/40 p-0.5 backdrop-blur-md">
+                <div className="-mx-0.5 flex items-center overflow-hidden rounded-full border border-white/[0.08] bg-black/40 p-0.5 backdrop-blur-md">
                     {(["metric", "imperial"] as const).map((system) => (
                         <button
                             key={system}
@@ -332,7 +340,7 @@ export function HeaderCompact({
                     onClick={onExportPng}
                     disabled={exporting}
                     aria-label="Snapshot PNG"
-                    className={`${TOUCH} gap-1.5 border border-sky-300/25 bg-sky-400/10 px-3 text-[10px] font-medium uppercase tracking-[0.12em] text-sky-100 backdrop-blur-md disabled:opacity-50`}
+                    className={`${TOUCH} -mx-0.5 border border-sky-300/25 bg-sky-400/10 px-2 text-[10px] font-medium uppercase tracking-[0.12em] text-sky-100 backdrop-blur-md disabled:opacity-50`}
                 >
                     {exporting ? (
                         <Gauge size={12} className="animate-pulse" />
@@ -349,7 +357,7 @@ export function HeaderCompact({
                     onClick={exporting ? undefined : onExportReport}
                     disabled={exporting}
                     aria-label="Open report"
-                    className="flex min-h-[44px] min-w-[44px] items-center justify-center gap-1.5 rounded-full border border-sky-300/25 bg-sky-400/10 px-3 text-[10px] font-medium uppercase tracking-[0.12em] text-sky-100 backdrop-blur-md disabled:opacity-50"
+                    className={`${TOUCH} -mx-0.5 border border-sky-300/25 bg-sky-400/10 px-2 text-[10px] font-medium uppercase tracking-[0.12em] text-sky-100 backdrop-blur-md disabled:opacity-50`}
                 >
                     <FileText size={12} />
                     <span className="sr-only sm:not-sr-only">Report</span>
@@ -361,7 +369,7 @@ export function HeaderCompact({
           under the prompt's touch minimum. Stretching it from a flex parent leaves `ResetViewButton` (and therefore
           the DESKTOP header, which mounts the same component) byte-identical: the wrapper exists only in this file.
         */}
-                <div className="flex h-11 min-w-[44px] items-stretch [&>button]:w-full">
+                <div className="-mx-0.5 flex h-11 min-w-[44px] items-stretch [&>button]:w-full">
                     <ResetViewButton onClearSelection={onClearSelection} />
                 </div>
             </div>
@@ -398,11 +406,15 @@ function EnsoChip({
     units,
     onSstChange,
     wide,
+    telemetry,
+    onRefreshTelemetry,
 }: {
     anomalyC: number;
     units: UnitSystem;
     onSstChange: (value: number) => void;
     wide: boolean;
+    telemetry?: TelemetryBundle | null;
+    onRefreshTelemetry?: () => void;
 }) {
     const [open, setOpen] = useState(false);
     const rootRef = useRef<HTMLDivElement>(null);
@@ -474,6 +486,36 @@ function EnsoChip({
                     <span
                         className="relative inline-flex h-1.5 w-1.5 rounded-full"
                         style={{ background: accent }}
+                    />
+                </span>
+                {/*
+          The telemetry status dot. A sibling of the accent dot, not a replacement: the accent dot is the
+          ENSO state, this one is the data feed. Tapping it re-fetches; `stopPropagation` keeps the tap from
+          also toggling the popover, which is what a reader pressing "refresh" does NOT want.
+        */}
+                <span
+                    role="button"
+                    tabIndex={0}
+                    aria-label="Refresh telemetry"
+                    data-testid="telemetry-dot"
+                    onClick={(e) => {
+                        e.stopPropagation();
+                        onRefreshTelemetry?.();
+                    }}
+                    onKeyDown={(e) => {
+                        if (e.key !== "Enter" && e.key !== " ") return;
+                        e.preventDefault();
+                        e.stopPropagation();
+                        onRefreshTelemetry?.();
+                    }}
+                    className="relative flex h-1.5 w-1.5 shrink-0 items-center justify-center"
+                >
+                    <span
+                        className={`absolute h-1.5 w-1.5 rounded-full ${
+                            telemetry?.status === "active"
+                                ? "bg-emerald-400 animate-pulse"
+                                : "bg-amber-400"
+                        }`}
                     />
                 </span>
                 {/*
