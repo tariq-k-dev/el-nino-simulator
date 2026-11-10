@@ -47,12 +47,26 @@ export default {
           '0%': { transform: 'translateY(-100%)' },
           '100%': { transform: 'translateY(1200%)' },
         },
+        /* Subtle breathing border for the header status pill. `box-shadow` (not
+           border-color) so the pill's own `transition-colors` — which animates the
+           border colour on an alert change — is never fought over. `currentColor`
+           lets the caller tint the halo by the pill's text colour. */
+        'border-pulse': {
+          '0%, 100%': {
+            boxShadow: '0 0 0 0 currentColor, inset 0 0 0 0 currentColor',
+          },
+          '50%': {
+            boxShadow:
+              '0 0 0 2px color-mix(in srgb, currentColor 45%, transparent), inset 0 0 0 1px color-mix(in srgb, currentColor 28%, transparent)',
+          },
+        },
       },
       animation: {
         'fade-up': 'fade-up 0.45s cubic-bezier(0.22, 1, 0.36, 1) both',
         'pulse-ring': 'pulse-ring 2.4s cubic-bezier(0.22, 1, 0.36, 1) infinite',
         shimmer: 'shimmer 2.6s linear infinite',
         'scan-line': 'scan-line 7s linear infinite',
+        'border-pulse': 'border-pulse 3.2s ease-in-out infinite',
       },
     },
   },

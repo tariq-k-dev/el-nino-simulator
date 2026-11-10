@@ -66,12 +66,20 @@ export function Header({
                     </div>
                 </div>
 
+                {/*
+                    The status pill carries a slow `animate-border-pulse` halo (see
+                    tailwind.config.js). Its colour is the pill's own text colour via
+                    `currentColor` — slate-200 normally, orange-300 under an alert — so
+                    the breathing border tracks the alert tier without extra palette
+                    entries, and it is a box-shadow rather than a border colour so the
+                    `transition-colors` hand-off between tiers stays intact.
+                */}
                 <div
                     className={[
-                        "pointer-events-auto inline-flex w-fit items-center gap-2 rounded-full border px-2.5 py-1 backdrop-blur-md transition-colors duration-500",
+                        "pointer-events-auto inline-flex w-fit animate-border-pulse items-center gap-2 rounded-full border px-2.5 py-1 backdrop-blur-md transition-colors duration-500",
                         isAlert
-                            ? "border-orange-400/30 bg-orange-500/10"
-                            : "border-sky-300/20 bg-sky-400/[0.07]",
+                            ? "border-orange-400/30 bg-orange-500/10 text-orange-300"
+                            : "border-sky-300/20 bg-sky-400/[0.07] text-slate-200",
                     ].join(" ")}
                 >
                     <span className="relative flex h-1.5 w-1.5">
@@ -84,7 +92,7 @@ export function Header({
                             style={{ background: alertColor }}
                         />
                     </span>
-                    <span className="font-mono text-[9.5px] uppercase tracking-[0.16em] text-slate-200">
+                    <span className="font-mono text-[9.5px] uppercase tracking-[0.16em]">
                         ENSO Alert: {metrics.riskTier}
                     </span>
                     <span className="hidden h-2.5 w-px bg-white/15 sm:block" />

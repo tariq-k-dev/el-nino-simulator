@@ -30,6 +30,8 @@ export interface ScenarioHandle {
     reset: () => void;
     /** Sets the scenario sliders directly to the live NOAA telemetry readings. */
     applyLiveTelemetry: () => void;
+    /** Force a re-fetch of the NOAA bundle (bypassing the module cache). Leaves the sliders alone. */
+    refreshTelemetry: () => void;
     analytics: AnalyticsPayload;
     status: EngineStatus;
     /** History availability, independent of the engine state. */
@@ -168,6 +170,14 @@ export function useScenario(): ScenarioHandle {
         }));
     }, [telemetry]);
 
+    // 4. Re-fetch the bundle on demand (the mobile LIVE NOAA pill). A failed fetch resolves null and keeps the
+    //    previous bundle rather than blanking a live reading.
+    const refreshTelemetry = useCallback(() => {
+        void fetchTelemetryBundle(true).then((bundle) => {
+            if (bundle) setTelemetry(bundle);
+        });
+    }, []);
+
     // On the transition into `ready`, recompute once. Keyed on the phase so it
     // fires once per boot rather than on every render.
     useEffect(() => {
@@ -242,6 +252,7 @@ export function useScenario(): ScenarioHandle {
         setScenario,
         reset,
         applyLiveTelemetry,
+        refreshTelemetry,
         analytics,
         status,
         history,

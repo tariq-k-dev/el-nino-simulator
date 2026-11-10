@@ -83,6 +83,8 @@ interface MobileShellProps {
     onShowOnGlobe: (boxId: string) => void;
     /** Live telemetry, forwarded to the sheet and dock bodies. */
     telemetry?: TelemetryBundle | null;
+    /** Re-fetch telemetry; wired to the header's LIVE NOAA pill. */
+    onRefreshTelemetry?: () => void;
 }
 
 export function MobileShell({
@@ -105,6 +107,7 @@ export function MobileShell({
     activeNinoBox,
     onShowOnGlobe,
     telemetry,
+    onRefreshTelemetry,
 }: MobileShellProps) {
     const sheetRef = useRef<SnapSheetHandle>(null);
     /** The sheet's current tier, mirrored here so the header can hide the chip at full. */
@@ -244,6 +247,7 @@ export function MobileShell({
                 onSstChange={(value) => onScenarioChange({ sstAnomaly: value })}
                 hideChip={mode === "portrait" && sheetTier === "full"}
                 telemetry={telemetry}
+                onRefreshTelemetry={onRefreshTelemetry}
             />
 
             {mode === "portrait" ? (

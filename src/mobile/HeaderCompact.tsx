@@ -20,9 +20,10 @@
  *
  * ## The rows, per mode
  *
- *   - **portrait**: two rows — `h1` and the controls on the first, the ENSO chip on the second. The `h1` may wrap
- *     to two lines and is NEVER ellipsised: it is the page's only heading and its subject, so a truncated title
- *     would be a content loss rather than a style choice.
+ *   - **portrait**: a tight two-tier header — `h1` and the controls share the first row, the ENSO chip sits
+ *     directly under it (`mt-1`), and there is no bottom padding. Below 480 px the logo tile and the
+ *     "Global Impact Simulator" subtitle are hidden (the full title stays in the document for the tab title and
+ *     `<h1>` text), so "Super El Niño" and the action cluster fit one line on a 375 px iPhone SE.
  *   - **phoneLandscape**: one row — `h1`, then the chip, then the controls. Height is the scarce dimension there,
  *     so a second row would eat the globe's band.
  *
@@ -33,10 +34,10 @@
 
 import { useCallback, useEffect, useId, useRef, useState } from "react";
 import type { CSSProperties } from "react";
-import { Download, FileText, Gauge, Globe2 } from "lucide-react";
+import { Download, FileText, Gauge, Globe2, Radio } from "lucide-react";
 import type { TelemetryBundle, UnitSystem } from "@/types/enso";
 import { REGIONS } from "@/lib/regions";
-import { SST_MAX, SST_MIN, thermalColor } from "@/lib/model";
+import { SST_MAX, SST_MIN } from "@/lib/model";
 import { fixed } from "@/lib/format";
 import { ResetViewButton } from "@/components/ResetViewButton";
 import { ensoCategory, ensoLabel, formatIsland } from "@/mobile/ensoHud";
@@ -122,6 +123,14 @@ export function HeaderCompact({
      * CSS decided, not an input to it.
      */
     const rows = landscapeHeaderRows(landscape ? viewportW : 0);
+    /**
+     * The PNG / Report button box. Landscape keeps the 44 px touch box (its fixed row heights in `headerMath` are
+     * built on it); portrait uses a balanced `h-8 min-w-8 px-2` box with no negative margin — the cluster's
+     * `gap-1.5` is what separates the icons.
+     */
+    const actionBox = landscape
+        ? `${TOUCH} -mx-0.5 px-2`
+        : "flex h-8 min-w-8 items-center justify-center rounded-full px-2";
     const landscapeStyle: CSSProperties | undefined = landscape
         ? rows === 1
             ? {
@@ -186,19 +195,25 @@ export function HeaderCompact({
             className={
                 landscape
                     ? "pointer-events-none absolute inset-x-0 top-0 z-40 px-3"
-                    : "pointer-events-none absolute inset-x-0 top-0 z-40 flex flex-wrap gap-x-3 gap-y-1.5 px-3 pb-2 flex-col"
+                    : /*
+                       * Portrait: a two-tier header. The header IS the row-1 flex container
+                       * (`flex w-full items-center justify-between gap-x-2`): identity and the action
+                       * cluster share one line, and the chip is `order-last w-full`, which wraps it onto
+                       * row 2. No bottom padding, so the measured bottom edge is the chip's bottom.
+                       */
+                      "pointer-events-none absolute inset-x-0 top-0 z-40 flex w-full flex-row flex-wrap items-center justify-between gap-x-2 px-3 pb-0"
             }
             style={
                 landscape
                     ? landscapeStyle
-                    : { paddingTop: "calc(env(safe-area-inset-top) + 8px)" }
+                    : { paddingTop: "calc(env(safe-area-inset-top) + 2px)" }
             }
         >
             {/* ------------------------------------------------------------------ row 1: identity */}
             <div
                 className={[
                     "pointer-events-auto flex min-w-0 items-center gap-2",
-                    landscape ? "flex-none" : "",
+                    landscape ? "flex-none" : "flex-1",
                 ].join(" ")}
                 style={
                     landscape
@@ -212,7 +227,7 @@ export function HeaderCompact({
                     className={
                         landscape
                             ? "relative flex h-5 w-5 shrink-0 items-center justify-center rounded-md border border-sky-300/25 bg-sky-400/10"
-                            : "relative flex h-9 w-9 shrink-0 items-center justify-center rounded-xl border border-sky-300/25 bg-sky-400/10"
+                            : "relative hidden h-9 w-9 shrink-0 items-center justify-center rounded-xl border border-sky-300/25 bg-sky-400/10 min-[480px]:flex"
                     }
                 >
                     <Globe2
@@ -240,7 +255,13 @@ export function HeaderCompact({
                     ].join(" ")}
                 >
                     Super El&nbsp;Niño{" "}
-                    <span className="font-normal text-slate-400">
+                    <span
+                        className={
+                            landscape
+                                ? "font-normal text-slate-400"
+                                : "hidden font-normal text-slate-400 min-[480px]:inline"
+                        }
+                    >
                         Global Impact Simulator
                     </span>
                 </h1>
@@ -267,7 +288,7 @@ export function HeaderCompact({
                     hideChip ? "pointer-events-none opacity-0" : "opacity-100",
                     landscape
                         ? "flex-none [&>div]:w-full [&_button]:w-full"
-                        : "order-last w-full",
+                        : "order-last mt-1 flex w-full items-center gap-1.5",
                 ].join(" ")}
                 style={
                     landscape
@@ -288,6 +309,43 @@ export function HeaderCompact({
                     telemetry={telemetry}
                     onRefreshTelemetry={onRefreshTelemetry}
                 />
+                {/*
+          The LIVE NOAA pill — portrait row 2, beside the ENSO chip (landscape's row is height-pinned by
+          `headerMath` and its chip keeps the in-chip status dot instead). The same control the desktop Scenario
+          Engine card carries: a `Radio` icon `((•))`, pulsing emerald while `telemetry.tao.status === "active"`,
+          amber when the feed is offline or stale. A tap calls `onRefreshTelemetry`.
+        */}
+                {landscape ? null : (
+                    <button
+                        type="button"
+                        onClick={() => onRefreshTelemetry?.()}
+                        data-testid="live-noaa"
+                        data-live={telemetry?.tao.status === "active"}
+                        aria-label={
+                            telemetry?.tao.status === "active"
+                                ? "Live NOAA telemetry active. Refresh"
+                                : "Live NOAA telemetry offline. Retry"
+                        }
+                        className={[
+                            "flex h-9 shrink-0 items-center gap-1 rounded-full border px-2.5 font-mono text-[9px] uppercase tracking-[0.1em] backdrop-blur-md transition-colors duration-200",
+                            telemetry?.tao.status === "active"
+                                ? "border-emerald-400/40 bg-emerald-400/10 text-emerald-300"
+                                : "border-amber-400/40 bg-amber-400/10 text-amber-300",
+                        ].join(" ")}
+                    >
+                        <Radio
+                            size={11}
+                            className={
+                                telemetry?.tao.status === "active"
+                                    ? "animate-pulse text-emerald-400"
+                                    : "text-amber-400"
+                            }
+                        />
+                        <span>Live</span>
+                        {/* Dropped below 360 px so the chip's one-line text keeps its room; the aria-label keeps the word. */}
+                        <span className="max-[359px]:hidden">NOAA</span>
+                    </button>
+                )}
             </div>
 
             {/* ------------------------------------------------------------------ row 1: controls */}
@@ -297,7 +355,9 @@ export function HeaderCompact({
                     hideChip
                         ? "pointer-events-none opacity-0"
                         : "pointer-events-auto opacity-100",
-                    landscape ? "flex-none [&_button_span]:hidden" : "",
+                    landscape
+                        ? "flex-none [&_button_span]:hidden"
+                        : "gap-1.5",
                 ].join(" ")}
                 style={
                     landscape
@@ -307,7 +367,12 @@ export function HeaderCompact({
                         : undefined
                 }
             >
-                <div className="-mx-0.5 flex items-center overflow-hidden rounded-full border border-white/20 bg-black/50 p-0.5 backdrop-blur-md">
+                <div
+                    className={[
+                        "flex items-center overflow-hidden rounded-full border border-white/20 bg-black/50 p-0.5 backdrop-blur-md",
+                        landscape ? "-mx-0.5" : "",
+                    ].join(" ")}
+                >
                     {(["metric", "imperial"] as const).map((system) => (
                         <button
                             key={system}
@@ -318,7 +383,10 @@ export function HeaderCompact({
                                 onToggleUnits();
                             }}
                             className={[
-                                "h-11 min-w-[44px] rounded-full px-2 font-mono text-[9px] uppercase tracking-[0.12em] transition-all duration-200",
+                                landscape
+                                    ? "h-11 min-w-[44px] px-2"
+                                    : "h-7 min-w-8 px-1.5",
+                                "rounded-full font-mono text-[9px] uppercase tracking-[0.12em] transition-all duration-200",
                                 units === system
                                     ? "bg-white/12 text-slate-50 shadow-sm"
                                     : "text-slate-300",
@@ -340,7 +408,7 @@ export function HeaderCompact({
                     onClick={onExportPng}
                     disabled={exporting}
                     aria-label="Snapshot PNG"
-                    className={`${TOUCH} -mx-0.5 border border-white/20 bg-white/[0.05] px-2 text-[10px] font-medium uppercase tracking-[0.12em] text-sky-100 backdrop-blur-md disabled:opacity-50`}
+                    className={`${actionBox} border border-white/20 bg-white/[0.05] text-[10px] font-medium uppercase tracking-[0.12em] text-sky-100 backdrop-blur-md disabled:opacity-50`}
                 >
                     {exporting ? (
                         <Gauge size={12} className="animate-pulse" />
@@ -357,7 +425,7 @@ export function HeaderCompact({
                     onClick={exporting ? undefined : onExportReport}
                     disabled={exporting}
                     aria-label="Open report"
-                    className={`${TOUCH} -mx-0.5 border border-white/20 bg-white/[0.05] px-2 text-[10px] font-medium uppercase tracking-[0.12em] text-sky-100 backdrop-blur-md disabled:opacity-50`}
+                    className={`${actionBox} border border-white/20 bg-white/[0.05] text-[10px] font-medium uppercase tracking-[0.12em] text-sky-100 backdrop-blur-md disabled:opacity-50`}
                 >
                     <FileText size={12} />
                     <span className="sr-only sm:not-sr-only">Report</span>
@@ -369,7 +437,14 @@ export function HeaderCompact({
           under the prompt's touch minimum. Stretching it from a flex parent leaves `ResetViewButton` (and therefore
           the DESKTOP header, which mounts the same component) byte-identical: the wrapper exists only in this file.
         */}
-                <div className="-mx-0.5 flex h-11 min-w-[44px] items-stretch [&>button]:w-full [&>button]:border-white/20 [&>button]:bg-white/[0.05] [&>button]:text-slate-200 [&>button:disabled:hover]:border-white/20 [&>button:disabled:hover]:text-slate-200">
+                <div
+                    className={[
+                        "flex items-stretch [&>button:disabled:hover]:border-white/20 [&>button:disabled:hover]:text-slate-200 [&>button]:w-full [&>button]:border-white/20 [&>button]:bg-white/[0.05] [&>button]:text-slate-200",
+                        landscape
+                            ? "-mx-0.5 h-11 min-w-[44px]"
+                            : "h-8 min-w-8 [&>button]:justify-center [&>button]:px-2 [&>button]:py-0",
+                    ].join(" ")}
+                >
                     <ResetViewButton onClearSelection={onClearSelection} />
                 </div>
             </div>
@@ -419,7 +494,6 @@ function EnsoChip({
     const [open, setOpen] = useState(false);
     const rootRef = useRef<HTMLDivElement>(null);
     const scrubberId = useId();
-    const accent = thermalColor(anomalyC, 0.95);
     const delta = anomalyDeltaUnit(anomalyC, units);
     const category = ensoCategory(anomalyC);
 
@@ -465,7 +539,13 @@ function EnsoChip({
     const toggle = useCallback(() => setOpen((v) => !v), []);
 
     return (
-        <div ref={rootRef} className="relative flex flex-col items-start">
+        <div
+            ref={rootRef}
+            className={[
+                "relative flex flex-col items-start",
+                wide ? "min-w-0 flex-1" : "",
+            ].join(" ")}
+        >
             <button
                 type="button"
                 onClick={toggle}
@@ -474,50 +554,46 @@ function EnsoChip({
                 aria-label="ENSO state and live anomaly"
                 data-testid="enso-chip"
                 className={[
-                    "flex min-h-[44px] items-center gap-2 rounded-full border border-white/20 bg-slate-950/80 px-3 backdrop-blur-md",
-                    wide ? "w-full justify-between" : "",
+                    "flex items-center gap-2 rounded-full border border-white/20 bg-slate-950/80 px-3 backdrop-blur-md",
+                    /* Portrait is height-tight (header <= 80 px): a 36 px chip. Landscape keeps its 44 px box. */
+                    wide ? "min-h-9 w-full min-w-0 justify-between" : "min-h-[44px]",
                 ].join(" ")}
             >
-                <span className="relative flex h-1.5 w-1.5 shrink-0">
-                    <span
-                        className="absolute inline-flex h-full w-full animate-ping rounded-full opacity-75"
-                        style={{ background: accent }}
-                    />
-                    <span
-                        className="relative inline-flex h-1.5 w-1.5 rounded-full"
-                        style={{ background: accent }}
-                    />
-                </span>
                 {/*
-          The telemetry status dot. A sibling of the accent dot, not a replacement: the accent dot is the
-          ENSO state, this one is the data feed. Tapping it re-fetches; `stopPropagation` keeps the tap from
-          also toggling the popover, which is what a reader pressing "refresh" does NOT want.
+          The ONE telemetry indicator dot (the former leading ENSO-accent dot is gone: two dots side by side read
+          as two competing statuses). Emerald pulse when the feed is active, amber otherwise. Tapping it
+          re-fetches; `stopPropagation` keeps the tap from also toggling the popover, which is what a reader
+          pressing "refresh" does NOT want.
+          Portrait (`wide`) shows the LIVE NOAA pill beside the chip instead, so the dot is landscape-only —
+          one telemetry indicator per layout, never two.
         */}
-                <span
-                    role="button"
-                    tabIndex={0}
-                    aria-label="Refresh telemetry"
-                    data-testid="telemetry-dot"
-                    onClick={(e) => {
-                        e.stopPropagation();
-                        onRefreshTelemetry?.();
-                    }}
-                    onKeyDown={(e) => {
-                        if (e.key !== "Enter" && e.key !== " ") return;
-                        e.preventDefault();
-                        e.stopPropagation();
-                        onRefreshTelemetry?.();
-                    }}
-                    className="relative flex h-1.5 w-1.5 shrink-0 items-center justify-center"
-                >
+                {wide ? null : (
                     <span
-                        className={`absolute h-1.5 w-1.5 rounded-full ${
-                            telemetry?.status === "active"
-                                ? "bg-emerald-400 shadow-[0_0_8px_rgba(52,211,153,0.8)] animate-pulse"
-                                : "bg-amber-400"
-                        }`}
-                    />
-                </span>
+                        role="button"
+                        tabIndex={0}
+                        aria-label="Refresh telemetry"
+                        data-testid="telemetry-dot"
+                        onClick={(e) => {
+                            e.stopPropagation();
+                            onRefreshTelemetry?.();
+                        }}
+                        onKeyDown={(e) => {
+                            if (e.key !== "Enter" && e.key !== " ") return;
+                            e.preventDefault();
+                            e.stopPropagation();
+                            onRefreshTelemetry?.();
+                        }}
+                        className="relative flex h-1.5 w-1.5 shrink-0 items-center justify-center"
+                    >
+                        <span
+                            className={`absolute h-1.5 w-1.5 rounded-full ${
+                                telemetry?.tao.status === "active"
+                                    ? "animate-pulse bg-emerald-400 shadow-[0_0_8px_rgba(52,211,153,0.8)]"
+                                    : "bg-amber-400"
+                            }`}
+                        />
+                    </span>
+                )}
                 {/*
           One line, down to 320 px. `whitespace-nowrap` PLUS `text-[9px]` and a tightened tracking: at 320 the
           string is 28 characters of monospace and the chip has 296 px of header to live in. Measured in the LM2

@@ -99,6 +99,7 @@ export default function App() {
         setScenario,
         reset,
         applyLiveTelemetry,
+        refreshTelemetry,
         analytics,
         history,
         retryHistory,
@@ -560,6 +561,7 @@ export default function App() {
                     activeNinoBox={activeNinoBox}
                     onShowOnGlobe={showNinoOnGlobe}
                     telemetry={telemetry}
+                    onRefreshTelemetry={refreshTelemetry}
                 />
             ) : null}
 
