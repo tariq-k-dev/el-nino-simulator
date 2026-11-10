@@ -46,3 +46,6 @@ El_Nino_Simulator_Roadmap.md
 
 # Ignore repomix generated xml output file
 repomix*.xml
+
+# Environment variables
+.env
