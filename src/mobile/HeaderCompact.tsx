@@ -394,8 +394,8 @@ export function HeaderCompact({
                                 "h-11 min-w-[44px] px-2",
                                 "rounded-full font-mono text-[9px] uppercase tracking-[0.12em] transition-all duration-200",
                                 units === system
-                                    ? "bg-white/12 text-slate-50 shadow-sm"
-                                    : "text-slate-300",
+                                    ? "bg-white/12 font-semibold text-slate-50 shadow-sm"
+                                    : "text-slate-500 hover:text-slate-300",
                             ].join(" ")}
                             aria-pressed={units === system}
                             aria-label={
