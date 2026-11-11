@@ -1,32 +1,47 @@
 <!doctype html>
 <html lang="en" class="dark">
-  <head>
-    <meta charset="UTF-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
-    <meta name="theme-color" content="#04070d" />
-    <!-- Absolute /favicon.svg: public/ is served at the site root, and the leading
-         slash keeps the reference correct from nested routes as well. -->
-    <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
-    <title>Super El Niño Global Impact Simulator</title>
-    <meta
-      name="description"
-      content="An interactive 3D Earth simulator for exploring the global impact of Super El Niño SST anomalies. React Three Fiber + DuckDB-WASM."
-    />
-    <meta property="og:title" content="Super El Niño Global Impact Simulator" />
-    <meta
-      property="og:description"
-      content="Move one climate lever. Watch the planet respond. A WebGL + in-browser OLAP climate scenario engine."
-    />
-    <meta property="og:type" content="website" />
-    <link rel="preconnect" href="https://fonts.googleapis.com" />
-    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
-    <link
-      href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap"
-      rel="stylesheet"
-    />
-  </head>
-  <body>
-    <div id="root"></div>
-    <script type="module" src="/src/main.tsx"></script>
-  </body>
+
+    <head>
+        <meta charset="UTF-8" />
+        <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
+        <meta name="theme-color" content="#04070d" />
+
+        <!-- Absolute /favicon.svg: public/ is served at the site root -->
+        <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
+
+        <title>Super El Niño Global Impact Simulator</title>
+
+        <!-- Primary Meta Description -->
+        <meta name="description"
+            content="An interactive 3D Earth simulator for exploring the global impact of Super El Niño SST anomalies. React Three Fiber + DuckDB-WASM." />
+
+        <!-- Open Graph / LinkedIn Preview Meta Tags -->
+        <meta property="og:type" content="website" />
+        <meta property="og:url" content="https://el-nino-simulator.pages.dev" />
+        <meta property="og:title" content="Super El Niño Global Impact Simulator" />
+        <meta property="og:description"
+            content="Interactive 3D climate teleconnection engine powered by NOAA telemetry and DuckDB-WASM." />
+        <meta property="og:image" content="https://el-nino-simulator.pages.dev/og-image.png" />
+
+        <!-- Twitter Card Meta Tags -->
+        <meta name="twitter:card" content="summary_large_image" />
+        <meta name="twitter:url" content="https://el-nino-simulator.pages.dev" />
+        <meta name="twitter:title" content="Super El Niño Global Impact Simulator" />
+        <meta name="twitter:description"
+            content="Interactive 3D climate teleconnection engine powered by NOAA telemetry and DuckDB-WASM." />
+        <meta name="twitter:image" content="https://el-nino-simulator.pages.dev/og-image.png" />
+
+        <!-- Font Preconnects & Stylesheets -->
+        <link rel="preconnect" href="https://fonts.googleapis.com" />
+        <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+        <link
+            href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap"
+            rel="stylesheet" />
+    </head>
+
+    <body>
+        <div id="root"></div>
+        <script type="module" src="/src/main.tsx"></script>
+    </body>
+
 </html>
